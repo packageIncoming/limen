@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-03: Two-Sided Transfer — Prior Knowledge</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-03: Two-Sided Transfer</h1>
+  <div class="subtitle">Prior Knowledge — Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-02 &nbsp;|&nbsp; Difficulty: Medium-High &nbsp;|&nbsp; Estimated: 3–5 sessions</div>
+</div>
+
+<h2>1 &nbsp; Where This Fits</h2>
+
+<p>TRD-02 left you with a connected queue pair in <code>RTS</code> on both nodes, verified by readback and carrying no traffic. The registered buffer from TRD-01 has been dragged through two rungs unused.</p>
+
+<p>This rung moves bytes. You will post receive requests, post send requests, poll a completion queue, interpret what comes out of it, and run a ping-pong loop that verifies its own payload. At the end you will have a working RDMA transfer and a program that can tell you why a transfer failed.</p>
+
+<p>You will also, deliberately, break it. The receiver-not-ready condition is the defining behavioural fact of two-sided RDMA, and section 8 requires you to provoke it on purpose — because meeting it by accident, in a program you believe is correct, is how people conclude the fabric is broken.</p>
+
+<p>This is the first rung where a mistake made earlier surfaces. Crossed sequence numbers from TRD-02 produce their symptom here, not there.</p>
+
+<h2>2 &nbsp; The Posting Model</h2>
+
+<p>Nothing in verbs sends. You describe work and hand the description to the adapter; the adapter performs it and later reports that it finished. Posting and completion are separate events, and everything about the API's shape follows from that separation.</p>
+
+<div class="diagram">
+  <svg viewBox="0 0 680 250" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif" font-size="8.5">
+    <defs><marker id="a5" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000"/></marker></defs>
+
+    <rect x="16" y="34" width="150" height="86" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="91" y="52" text-anchor="middle" font-weight="bold" font-size="9">YOUR CODE</text>
+    <text x="91" y="70" text-anchor="middle">1. fill ibv_sge</text>
+    <text x="91" y="84" text-anchor="middle">2. fill ibv_send_wr</text>
+    <text x="91" y="98" text-anchor="middle">3. ibv_post_send</text>
+    <text x="91" y="112" text-anchor="middle" font-style="italic">returns immediately</text>
+
+    <line x1="166" y1="60" x2="248" y2="60" stroke="#000" stroke-width="1.3" marker-end="url(#a5)"/>
+    <text x="207" y="53" text-anchor="middle" font-size="7.5">post</text>
+
+    <rect x="250" y="34" width="150" height="40" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="325" y="50" text-anchor="middle" font-weight="bold">send queue</text>
+    <text x="325" y="64" text-anchor="middle" font-size="8">depth = max_send_wr</text>
+
+    <line x1="400" y1="54" x2="470" y2="54" stroke="#000" stroke-width="1.3" marker-end="url(#a5)"/>
+
+    <rect x="472" y="34" width="190" height="86" fill="none" stroke="#000" stroke-width="2.5"/>
+    <text x="567" y="54" text-anchor="middle" font-weight="bold" font-size="9">ADAPTER</text>
+    <text x="567" y="72" text-anchor="middle">reads the buffer by DMA</text>
+    <text x="567" y="86" text-anchor="middle">transmits</text>
+    <text x="567" y="100" text-anchor="middle">awaits acknowledgement</text>
+    <text x="567" y="114" text-anchor="middle">writes a completion</text>
+
+    <path d="M 567,120 L 567,160 L 325,160" fill="none" stroke="#000" stroke-width="1.3" marker-end="url(#a5)"/>
+
+    <rect x="250" y="166" width="150" height="40" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="325" y="182" text-anchor="middle" font-weight="bold">completion queue</text>
+    <text x="325" y="196" text-anchor="middle" font-size="8">depth = cqe</text>
+
+    <line x1="248" y1="186" x2="168" y2="186" stroke="#000" stroke-width="1.3" marker-end="url(#a5)"/>
+    <text x="207" y="179" text-anchor="middle" font-size="7.5">poll</text>
+
+    <rect x="16" y="152" width="150" height="68" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="91" y="170" text-anchor="middle" font-weight="bold" font-size="9">YOUR CODE</text>
+    <text x="91" y="186" text-anchor="middle">4. ibv_poll_cq</text>
+    <text x="91" y="200" text-anchor="middle">5. check wc.status</text>
+    <text x="91" y="214" text-anchor="middle" font-style="italic">now the buffer is free</text>
+
+    <text x="340" y="238" text-anchor="middle" font-size="8" font-style="italic">Between step 3 and step 5 the buffer belongs to the adapter. Touching it is undefined.</text>
+  </svg>
+  <div class="diagram-caption">Figure 1 — The post-and-complete cycle. Steps 3 and 4 are separated by an unbounded interval.</div>
+</div>
+
+<p>The consequence stated in the caption is the rule that governs every buffer in an RDMA program: <strong>a buffer named in a posted work request may not be read, written, or freed until a completion for that request has been retrieved.</strong><span class="cite">[1]</span> The adapter may be reading it at any moment in between, and neither the compiler nor the operating system knows that.</p>
+
+<h2>3 &nbsp; Describing a Buffer: the Scatter-Gather Entry</h2>
+
+<pre>struct ibv_sge {
+    uint64_t addr;    /* virtual address                      */
+    uint32_t length;  /* bytes                                */
+    uint32_t lkey;    /* local key from the memory region     */
+};</pre>
+
+<p>Three fields, and the third is where TRD-01 pays off. The local key is the value <code>ibv_reg_mr()</code> returned, and it is how the adapter verifies that this address belongs to a registered region in the right protection domain. An address without a matching key is refused.</p>
+
+<p>A work request carries an <em>array</em> of these, which is what "scatter-gather" names: a send gathers from several buffers into one message; a receive scatters one message into several buffers. The array length is bounded by the <code>max_send_sge</code> and <code>max_recv_sge</code> values the provider granted in TRD-02 — the granted values, not the ones you requested.</p>
+
+<p>Limen uses a single entry throughout this rung. Multiple entries change nothing conceptually and are worth knowing exist.</p>
+
+<h2>4 &nbsp; Posting a Receive</h2>
+
+<pre>struct ibv_recv_wr {
+    uint64_t             wr_id;    /* your identifier, returned in the completion */
+    struct ibv_recv_wr  *next;     /* linked list, or NULL                        */
+    struct ibv_sge      *sg_list;
+    int                  num_sge;
+};
+
+int ibv_post_recv(struct ibv_qp *qp, struct ibv_recv_wr *wr,
+                  struct ibv_recv_wr **bad_wr);</pre>
+
+<p>A posted receive is a <em>promise of a landing place</em>. It says: when a message arrives, put it here. It names no peer and no expected size — any incoming send consumes the next posted receive, in order.</p>
+
+<p><code>wr_id</code> is an opaque 64-bit value the adapter does not interpret. It comes back in the completion and it is the only link between a completion and the request that caused it. Use it to identify which buffer, which slot, or which operation — anything you need to know when the completion arrives, because the completion tells you nothing else about the request.</p>
+
+<p>Requests may be chained through <code>next</code> and posted in one call. Posting stops at the first request that fails immediately, and the failing one is returned through <code>bad_wr</code>.<span class="cite">[1]</span></p>
+
+<div class="callout">
+  <div class="callout-label">The receive must exist before the send arrives</div>
+  <p>Not before the send is <em>posted</em> — before it <em>arrives</em>. There is no buffering. If a message arrives at a queue pair with no posted receive, it cannot be delivered, and the consequences are section 8.</p>
+</div>
+
+<h3>Size mismatch</h3>
+
+<p>A posted receive larger than the incoming message is fine; <code>byte_len</code> in the completion reports what actually arrived. A posted receive <em>smaller</em> than the incoming message fails on both sides: the receiver gets <code>IBV_WC_LOC_LEN_ERR</code> and the sender gets <code>IBV_WC_REM_INV_REQ_ERR</code>.<span class="cite">[4]</span> Since the receiver cannot know the size in advance, the standard answer is to post receives at the maximum message size the protocol allows.</p>
+
+<h2>5 &nbsp; Posting a Send</h2>
+
+<pre>struct ibv_send_wr {
+    uint64_t             wr_id;
+    struct ibv_send_wr  *next;
+    struct ibv_sge      *sg_list;
+    int                  num_sge;
+    enum ibv_wr_opcode   opcode;
+    unsigned int         send_flags;
+    /* ... opcode-specific unions: rdma, atomic, ud ... */
+};
+
+int ibv_post_send(struct ibv_qp *qp, struct ibv_send_wr *wr,
+                  struct ibv_send_wr **bad_wr);</pre>
+
+<p>Two fields beyond the receive form. The opcode is <code>IBV_WR_SEND</code> here; <code>IBV_WR_RDMA_WRITE</code> and <code>IBV_WR_RDMA_READ</code> arrive in TRD-06 and use the same structure with its union populated.</p>
+
+<h3>Send flags</h3>
+
+<table>
+  <tr><th style="width:190px;">Flag</th><th>Effect</th></tr>
+  <tr><td><code>IBV_SEND_SIGNALED</code></td><td>Generate a completion for this request. Relevant only when the queue pair was created with <code>sq_sig_all = 0</code>.<span class="cite">[1]</span></td></tr>
+  <tr><td><code>IBV_SEND_INLINE</code></td><td>Copy the payload into the work request itself rather than having the adapter fetch it. The local key is not checked, and the buffer is reusable immediately. Bounded by <code>max_inline_data</code>. TRD-07.</td></tr>
+  <tr><td><code>IBV_SEND_FENCE</code></td><td>Do not begin this request until all prior requests on this queue have completed. Valid only on reliable-connected queue pairs.</td></tr>
+  <tr><td><code>IBV_SEND_SOLICITED</code></td><td>Mark the message so the receiver's completion raises a solicited event. Relevant to event-driven reaping in TRD-07.</td></tr>
+</table>
+
+<div class="warning">
+  TRD-02 zeroed the initialization structure before creating the queue pair, which set <code>sq_sig_all</code> to 0. <strong>Sends therefore produce no completion unless you set <code>IBV_SEND_SIGNALED</code>.</strong> An unsignalled send that succeeds is invisible — the transfer happens, no completion appears, and a loop waiting for one waits forever. This is not a bug in the fabric; it is the consequence of a field you set two rungs ago. TRD-07 exploits it deliberately; here, signal every send.
+</div>
+
+<h3>Receives are always signalled</h3>
+
+<p>There is no unsignalled receive. Every consumed receive request produces a completion, because a completion is the only mechanism by which you learn that data arrived. The asymmetry with sends is not an inconsistency — a send's completion tells you something you could in principle infer, while a receive's completion is the arrival notification itself.</p>
+
+<h2>6 &nbsp; Polling for Completions</h2>
+
+<pre>int ibv_poll_cq(struct ibv_cq *cq, int num_entries, struct ibv_wc *wc);</pre>
+
+<p>Fills up to <code>num_entries</code> completions into your array and <strong>returns the number it found</strong>. Zero means the queue was empty — not an error, and by far the most common return. A negative value is a failure.<span class="cite">[2]</span></p>
+
+<p>Two consequences worth internalising. First, polling is non-blocking, so waiting for a completion means looping. Second, <strong>each polled completion is removed from the queue permanently and cannot be returned to it.</strong><span class="cite">[2]</span> If you poll a completion and then discard it because it was not the one you wanted, it is gone.</p>
+
+<pre>struct ibv_wc {
+    uint64_t              wr_id;       /* the identifier you chose          */
+    enum ibv_wc_status    status;      /* IBV_WC_SUCCESS or a failure       */
+    enum ibv_wc_opcode    opcode;      /* IBV_WC_SEND, IBV_WC_RECV, ...     */
+    uint32_t              vendor_err;  /* provider-specific detail          */
+    uint32_t              byte_len;    /* bytes transferred                 */
+    union { __be32 imm_data; uint32_t invalidated_rkey; };
+    uint32_t              qp_num;
+    uint32_t              src_qp;      /* UD only                           */
+    int                   wc_flags;
+    uint16_t              pkey_index;
+    uint16_t              slid;
+    uint8_t               sl;
+    uint8_t               dlid_path_bits;
+};</pre>
+
+<div class="callout">
+  <div class="callout-label">On an error completion, most of this structure is garbage</div>
+  <p>When <code>status</code> is anything other than <code>IBV_WC_SUCCESS</code>, only four fields are valid: <code>wr_id</code>, <code>status</code>, <code>qp_num</code>, and <code>vendor_err</code>.<span class="cite">[2]</span> <code>opcode</code> and <code>byte_len</code> in particular are undefined, and printing them in an error path produces confident nonsense — a byte count of zero for a transfer that partly happened, or an opcode naming an operation you never posted. Check <code>status</code> first and branch; never format the whole structure uniformly.</p>
+</div>
+
+<p><code>byte_len</code> is meaningful on a receive completion, where it reports how much arrived. On a send completion it carries nothing useful: the request named the length and the completion adds no information.</p>
+
+<h3>Completion status</h3>
+
+<p><code>ibv_wc_status_str()</code> converts a status to a printable string, which saves writing a table. The ones this rung can produce:</p>
+
+<table>
+  <tr><th style="width:230px;">Status</th><th>Meaning</th></tr>
+  <tr><td><code>IBV_WC_SUCCESS</code></td><td>The only non-error value. Zero.</td></tr>
+  <tr><td><code>IBV_WC_RNR_RETRY_EXC_ERR</code></td><td>The receiver had no posted receive and the retry budget ran out.<span class="cite">[5]</span> Section 8.</td></tr>
+  <tr><td><code>IBV_WC_RETRY_EXC_ERR</code></td><td>The peer did not acknowledge within the timeout, repeatedly. After a first successful message this usually means the peer is gone; as the <em>first</em> failure it frequently means crossed sequence numbers from TRD-02.</td></tr>
+  <tr><td><code>IBV_WC_LOC_LEN_ERR</code></td><td>The posted receive was too small for the incoming message.<span class="cite">[4]</span></td></tr>
+  <tr><td><code>IBV_WC_REM_INV_REQ_ERR</code></td><td>The responder rejected the message. The sender's counterpart to the receiver's length error.</td></tr>
+  <tr><td><code>IBV_WC_LOC_PROT_ERR</code></td><td>A local protection violation — usually a wrong local key, or an address outside the registered region.</td></tr>
+  <tr><td><code>IBV_WC_WR_FLUSH_ERR</code></td><td>This request was outstanding when the queue pair entered the error state.<span class="cite">[6]</span> A consequence, not a cause. Section 9.</td></tr>
+</table>
+
+<h2>7 &nbsp; The Ping-Pong</h2>
+
+<p>Both sides post their receives before either sends. The client sends first. Each side then loops: reap a receive completion, verify the payload, post a fresh receive, send a reply.</p>
+
+<div class="diagram">
+  <svg viewBox="0 0 660 250" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif" font-size="8.5">
+    <defs><marker id="a6" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0, 7 2.5, 0 5" fill="#000"/></marker></defs>
+    <text x="115" y="14" text-anchor="middle" font-weight="bold" font-size="10">SERVER</text>
+    <text x="545" y="14" text-anchor="middle" font-weight="bold" font-size="10">CLIENT</text>
+    <line x1="115" y1="22" x2="115" y2="228" stroke="#000" stroke-width="1"/>
+    <line x1="545" y1="22" x2="545" y2="228" stroke="#000" stroke-width="1"/>
+
+    <text x="115" y="40" text-anchor="middle" font-weight="bold">post N receives</text>
+    <text x="545" y="40" text-anchor="middle" font-weight="bold">post N receives</text>
+    <text x="330" y="56" text-anchor="middle" font-style="italic" font-size="8">— both, before either sends —</text>
+
+    <line x1="537" y1="82" x2="123" y2="82" stroke="#000" stroke-width="1.3" marker-end="url(#a6)"/>
+    <text x="330" y="76" text-anchor="middle" font-style="italic">SEND  (iteration 0)</text>
+
+    <text x="115" y="102" text-anchor="middle">poll → RECV, verify</text>
+    <text x="115" y="116" text-anchor="middle">post replacement receive</text>
+
+    <line x1="123" y1="140" x2="537" y2="140" stroke="#000" stroke-width="1.3" marker-end="url(#a6)"/>
+    <text x="330" y="134" text-anchor="middle" font-style="italic">SEND  (reply)</text>
+
+    <text x="545" y="160" text-anchor="middle">poll → RECV, verify</text>
+    <text x="545" y="174" text-anchor="middle">poll → SEND completion</text>
+    <text x="545" y="188" text-anchor="middle">post replacement receive</text>
+
+    <text x="330" y="216" text-anchor="middle" font-style="italic">repeat N times · each side reaps one RECV and one SEND completion per round</text>
+  </svg>
+  <div class="diagram-caption">Figure 2 — One round. The replacement receive is posted <em>before</em> the reply is sent.</div>
+</div>
+
+<p>The ordering inside the loop is the part worth stating explicitly: <strong>post the replacement receive before sending the reply.</strong> Sending first opens a window in which the peer's answer can arrive at a queue pair with no receive posted — and on a fast link that window is wide enough to hit. The rule generalises: replenish receives before doing anything that could cause the peer to send.</p>
+
+<p>Posting several receives up front rather than one is the same defence with more slack. A depth of <em>N</em> means the peer may run <em>N</em> messages ahead of your replenishment before the condition can occur.</p>
+
+<h2>8 &nbsp; Receiver Not Ready</h2>
+
+<p>When a message arrives at a queue pair with no posted receive, the responder returns an RNR negative acknowledgement — <em>receiver not ready</em>. The sender waits <code>min_rnr_timer</code> and tries again, up to <code>rnr_retry</code> times. Both values were set at the RTR transition in TRD-02.</p>
+
+<div class="warning">
+  TRD-02 had you set <code>rnr_retry = 7</code>. <strong>The value 7 means retry indefinitely.</strong><span class="cite">[5]</span> A send to a peer with no posted receive therefore never fails — it retries forever, and your program hangs in the polling loop with no completion, no error, and no diagnostic. This is the single most confusing failure available in RDMA, and it is a configuration choice rather than a fault.
+</div>
+
+<p>Setting <code>rnr_retry</code> to a finite value converts the hang into an <code>IBV_WC_RNR_RETRY_EXC_ERR</code> completion, which is a far better failure: it names itself. The tradeoff is real in both directions. Infinite retry is correct for a protocol where the peer is expected to replenish receives and a transient shortage should be absorbed. Finite retry is correct for a protocol where a shortage means something is wrong and you want to be told.</p>
+
+<p>Neither value is a substitute for the actual answer, which is <strong>flow control you design</strong>. The peer must not be permitted to send more messages than you have receives posted, and nothing in RDMA enforces that. Credit schemes are the usual mechanism: each side tracks how many receives the peer has outstanding and refuses to exceed it, replenishing the count in message headers. Limen does not build one — the ping-pong is self-limiting because each side sends only in response — but every real transport does, and the reason is exactly this.</p>
+
+<div class="callout">
+  <div class="callout-label">The general point</div>
+  <p>RDMA gives you ordered, reliable delivery of individual messages and nothing else. Flow control, framing, message boundaries above the transfer, and knowing when a buffer is safe to reuse are all yours. This is the price of removing the kernel: everything the kernel was doing on your behalf, you now do or do without.</p>
+</div>
+
+<h2>9 &nbsp; What an Error Completion Does to the Queue Pair</h2>
+
+<p>On a reliable-connected queue pair, a completion with an error status is not a per-request failure. <strong>The queue pair transitions to the error state and cannot be used again.</strong><span class="cite">[3]</span> Recovery requires transitioning back through <code>RESET</code> and repeating the entire bringup on both sides — the whole of TRD-02, including a fresh parameter exchange.</p>
+
+<p>Every work request outstanding when that happens is completed with <code>IBV_WC_WR_FLUSH_ERR</code>.<span class="cite">[6]</span> So one real failure produces a burst of completions, of which exactly one names the cause and the rest are debris. <strong>The first non-success status is the diagnosis; every flush error after it is noise.</strong> A program that reports the last error it saw reports the noise.</p>
+
+<p>The completion queue itself survives and stays usable.<span class="cite">[3]</span> Only the queue pair dies. If several queue pairs share one completion queue, the others are unaffected.</p>
+
+<p>Querying the queue pair with <code>ibv_query_qp()</code> after an error completion confirms <code>IBV_QPS_ERR</code>. R9 requires that check, because it is the difference between "the transfer failed" and "the connection is gone," and those call for different responses.</p>
+
+<h2>10 &nbsp; Buffer Ownership</h2>
+
+<p>Between posting and reaping, the buffer belongs to the adapter.<span class="cite">[1]</span> Reading it may return a partially transmitted state; writing it may transmit data you did not intend; freeing it hands the adapter a pointer into freed memory.</p>
+
+<p>Nothing enforces this. There is no borrow checker, no lock, and no diagnostic — the compiler sees an ordinary buffer and the operating system sees pinned pages. Violations produce corrupted payloads that appear intermittently and only under load, which is the worst available failure profile.</p>
+
+<p>Three practical rules for this rung:</p>
+
+<ul>
+  <li>Use separate buffers for sending and receiving, or separate regions of one buffer. Sharing one buffer for both directions works in a strict ping-pong and breaks the moment anything overlaps.</li>
+  <li>Do not refill a send buffer for iteration <em>n+1</em> until the completion for iteration <em>n</em> has been reaped.</li>
+  <li><code>IBV_SEND_INLINE</code> is the exception — the payload is copied into the work request, so the buffer is free immediately.<span class="cite">[1]</span> That is TRD-07.</li>
+</ul>
+
+<p>This is also the second half of the argument for TRD-04. Ownership that the type system does not express is ownership you enforce by remembering, and this program now has enough moving parts that remembering is not sufficient.</p>
+
+<h2>11 &nbsp; Failure Modes</h2>
+
+<table>
+  <tr><th style="width:225px;">Symptom</th><th style="width:215px;">Cause</th><th>Resolution</th></tr>
+  <tr><td>Hangs in the polling loop, no completion ever</td><td>Peer has no posted receive and <code>rnr_retry = 7</code> means infinite retry.<span class="cite">[5]</span></td><td>Post receives on both sides before either sends. Set a finite retry temporarily to see the error.</td></tr>
+  <tr><td>Send appears to work, no send completion arrives</td><td><code>IBV_SEND_SIGNALED</code> not set, with <code>sq_sig_all = 0</code> from TRD-02.<span class="cite">[1]</span></td><td>Set the flag. The transfer was happening all along.</td></tr>
+  <tr><td>First transfer never completes, <code>IBV_WC_RETRY_EXC_ERR</code></td><td>Crossed sequence numbers at TRD-02: <code>rq_psn</code> holds your value rather than the peer's.</td><td>A TRD-02 defect surfacing here. Compare both sides' printed values.</td></tr>
+  <tr><td><code>IBV_WC_LOC_PROT_ERR</code></td><td>Wrong local key, or an address outside the registered region.</td><td>Print the region's base, length, and key alongside the request's address and key.</td></tr>
+  <tr><td><code>IBV_WC_LOC_LEN_ERR</code> here, <code>IBV_WC_REM_INV_REQ_ERR</code> there</td><td>Posted receive smaller than the incoming message.<span class="cite">[4]</span></td><td>Post receives at the maximum message size.</td></tr>
+  <tr><td>One real error followed by many <code>IBV_WC_WR_FLUSH_ERR</code></td><td>The queue pair entered the error state and outstanding requests were flushed.<span class="cite">[6]</span></td><td>Report the first non-success status. The rest are debris.</td></tr>
+  <tr><td>Everything fails after one failure</td><td>The queue pair is in the error state and stays there.<span class="cite">[3]</span></td><td>Not recoverable in place. Rebuild from RESET on both sides.</td></tr>
+  <tr><td>Payload occasionally wrong under load</td><td>A buffer was written while the adapter still owned it.</td><td>Reap the completion before touching the buffer.</td></tr>
+  <tr><td><code>ibv_post_send</code> returns <code>ENOMEM</code></td><td>The send queue is full — more outstanding requests than <code>max_send_wr</code>.</td><td>Reap completions before posting more. Unsignalled sends make this easy to reach, since nothing drains the queue.</td></tr>
+  <tr><td><code>byte_len</code> is zero or the opcode is nonsense</td><td>Reading fields that are invalid on an error completion.<span class="cite">[2]</span></td><td>Branch on status before formatting anything else.</td></tr>
+  <tr><td>Completion arrives for a request you never posted</td><td>A stale <code>wr_id</code>, or reading an uninitialised completion entry beyond the count that <code>ibv_poll_cq</code> returned.</td><td>Only read the first <em>n</em> entries, where <em>n</em> is the return value.</td></tr>
+</table>
+
+<h2>12 &nbsp; What Is Deliberately Left Out</h2>
+
+<p>No flow control. The ping-pong is self-limiting because each side sends only in reply, which is exactly the property a real protocol does not have. Credit-based flow control is named in section 8 and not built.</p>
+
+<p>No pipelining. One message is outstanding at a time, so the link sits idle during every round trip. TRD-07 addresses this and TRD-08 measures what it was costing.</p>
+
+<p>One scatter-gather entry per request, one buffer, no pooling. Everything is signalled, so every send costs a completion — deliberately, since TRD-07 is where unsignalled sends stop being a trap and become a technique.</p>
+
+<p>Nothing here is one-sided. Both peers are running, both post, both poll. The remote key printed in TRD-01 remains unused until TRD-06, which is the rung where the remote CPU stops participating.</p>
+
+<h2>13 &nbsp; Further Reading</h2>
+
+<p><strong>Read before starting:</strong></p>
+<ul>
+  <li><strong><code>ibv_post_send(3)</code></strong><span class="cite">[1]</span> — the flag table, the opcode list, and the buffer-reuse rule stated normatively. The most important page for this rung.</li>
+  <li><strong><code>ibv_poll_cq(3)</code></strong><span class="cite">[2]</span> — the return convention and, critically, the list of which completion fields are valid when the status is not success.</li>
+</ul>
+
+<p><strong>Read while implementing:</strong></p>
+<ul>
+  <li><strong><code>ibv_post_recv(3)</code></strong><span class="cite">[1]</span> — short; the receive form of the same model.</li>
+  <li><strong><code>rc_pingpong.c</code></strong>, the posting and polling loop<span class="cite">[7]</span> — the fourth read of this file. It is a correct implementation of exactly this rung, including the receive replenishment ordering from section 7.</li>
+</ul>
+
+<p><strong>Reference as needed:</strong></p>
+<ul>
+  <li><strong>RDMAmojo</strong> on <code>ibv_post_send</code><span class="cite">[5]</span> and <code>ibv_poll_cq</code><span class="cite">[3]</span> — the comment threads on both pages are unusually valuable, because they are people hitting exactly the failures in section 11 and being told what they mean.</li>
+  <li><strong>InfiniBand Architecture Specification, Volume 1, ch. 9–11</strong><span class="cite">[8]</span> — normative on completion semantics and error handling. For settling questions, not for learning.</li>
+</ul>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_post_send(3)</em> and <em>ibv_post_recv(3).</em> Linux manual pages, section 3. Work request structures, the send flag table reproduced in section 5, the return convention, and the normative statement that buffers may only be reused after a work completion has been retrieved. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+
+  <li>[2] <em>ibv_poll_cq(3).</em> Linux manual page, section 3. The <code>struct ibv_wc</code> layout, the return convention, the permanent removal of polled completions, and the rule that only <code>wr_id</code>, <code>status</code>, <code>qp_num</code>, and <code>vendor_err</code> are valid when the status is not success. https://man7.org/linux/man-pages/man3/ibv_poll_cq.3.html</li>
+
+  <li>[3] Barak, Dotan. <em>RDMAmojo — ibv_poll_cq().</em> Establishes that a completion with error status transitions a reliable-connected queue pair to the error state permanently while leaving the completion queue usable. Accessed 2026-07. https://www.rdmamojo.com/2013/02/15/ibv_poll_cq/</li>
+
+  <li>[4] <em>RDMA read and write with IB verbs.</em> The Geek in the Corner. Source for the paired failure statuses when a posted receive is smaller than the incoming message — <code>IBV_WC_LOC_LEN_ERR</code> at the receiver and <code>IBV_WC_REM_INV_REQ_ERR</code> at the sender. Accessed 2026-07. https://thegeekinthecorner.wordpress.com/2010/09/28/rdma-read-and-write-with-ib-verbs/</li>
+
+  <li>[5] Barak, Dotan. <em>RDMAmojo — ibv_post_send().</em> Source for <code>rnr_retry = 7</code> meaning infinite retries, and for the interpretation of the retry-exceeded statuses. Accessed 2026-07. https://www.rdmamojo.com/2013/01/26/ibv_post_send/</li>
+
+  <li>[6] <em>ibv_wc completion status reference.</em> Definitions of <code>IBV_WC_WR_FLUSH_ERR</code> as a request outstanding when the queue pair entered the error state, and of <code>IBV_WC_RNR_RETRY_EXC_ERR</code>. Accessed 2026-07. https://docs.rs/ibverbs/0.3.0/ibverbs/ffi/struct.ibv_wc.html</li>
+
+  <li>[7] linux-rdma. <em>rdma-core.</em> <code>libibverbs/examples/rc_pingpong.c</code> — reference posting and polling loop, including receive replenishment ordering. Accessed 2026-07. https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/examples/rc_pingpong.c</li>
+
+  <li>[8] InfiniBand Trade Association. <em>InfiniBand Architecture Specification, Volume 1, Release 1.7.</em> Ch. 9–11, covering transport-layer completion semantics, negative acknowledgement behaviour, and error handling. https://www.infinibandta.org/ibta-specification/</li>
+</ol>
+
+<div class="footer">
+  TRD-03: Two-Sided Transfer &nbsp;|&nbsp; Prior Knowledge &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

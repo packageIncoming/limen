@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-05: Connection Management — Requirements</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.hint-ref { border: 1px solid #000; padding: 3px 8px; margin: 6px 0 2px 0; font-size: 9pt; font-style: italic; display: inline-block; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-05: Connection Management</h1>
+  <div class="subtitle">Requirements — Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-04 &nbsp;|&nbsp; Difficulty: Medium-High &nbsp;|&nbsp; Estimated: 4–5 sessions</div>
+</div>
+
+<h2>Objective</h2>
+
+<p>Extend the RAII layer with wrappers for the event channel, the connection identifier, and the event itself. Establish connections by IP address using the RDMA connection manager, carrying an application payload in the handshake. Port <code>limen_pingpong</code> onto it, deleting its TCP side channel and its hand-rolled queue pair bringup entirely.</p>
+
+<h2>What This Is Not</h2>
+
+<p>No changes to data transfer. Posting, polling, and completion handling are untouched; the queue pair the CM hands you behaves exactly like the one you built by hand, and TRD-03's test suite must pass against the ported program.</p>
+
+<p>No concurrency. One connection at a time, one event at a time, blocking event retrieval. A server holding many connections needs a non-blocking event loop, which is a different topic.</p>
+
+<p>No reconnection, retry, or resolution-timeout policy. All are guesswork without a use case.</p>
+
+<div class="callout">
+  <div class="callout-label">limen_connect is not deleted</div>
+  <p><code>limen_connect</code> keeps its hand-rolled TCP exchange and its manual state machine, and the TRD-02 suite must keep passing against it unchanged. It is the reference for what the CM hides. Only <code>limen_pingpong</code> is ported.</p>
+</div>
+
+<h2>Interface</h2>
+
+<p>New wrappers under <code>include/limen/cm.hpp</code>, namespace <code>limen</code>, satisfying the same contract as TRD-04's types.</p>
+
+<pre>namespace limen {
+
+class EventChannel {                       /* rdma_event_channel * */
+public:
+    EventChannel() noexcept = default;
+    EventChannel(std::nullptr_t) = delete;
+    static EventChannel create();           /* throws VerbsError */
+    /* five special members, move-only, noexcept dtor */
+    rdma_event_channel *get() const noexcept;
+    int close() noexcept;
+};
+
+class ConnectionId {                        /* rdma_cm_id * */
+public:
+    ConnectionId() noexcept = default;
+    ConnectionId(EventChannel&amp; ch, rdma_port_space ps);   /* creates */
+    static ConnectionId adopt(rdma_cm_id *id) noexcept;   /* takes an existing one */
+    /* five special members, move-only, noexcept dtor */
+    rdma_cm_id *get() const noexcept;
+    ibv_qp     *qp()  const noexcept;       /* nullptr before create_qp */
+    int close() noexcept;
+};
+
+class Event {                               /* rdma_cm_event *, acked on destruction */
+public:
+    explicit Event(EventChannel&amp; ch);       /* blocks; throws VerbsError */
+    ~Event() noexcept;                      /* acknowledges */
+    Event(const Event&amp;)            = delete;
+    Event&amp; operator=(const Event&amp;) = delete;
+    Event(Event&amp;&amp;) noexcept;
+    Event&amp; operator=(Event&amp;&amp;) noexcept;
+
+    rdma_cm_event_type type()   const noexcept;
+    const char        *name()   const noexcept;   /* rdma_event_str */
+    int                status() const noexcept;
+    rdma_cm_id        *id()     const noexcept;
+
+    /* Copies at most `len` bytes of private data out. Returns bytes copied.
+       There is no accessor returning the raw pointer, by design. */
+    std::size_t copy_private_data(void *dst, std::size_t len) const noexcept;
+
+    int ack() noexcept;                     /* idempotent; dtor calls it */
+};
+
+struct ConnInfo {                            /* the handshake payload */
+    std::uint64_t addr;
+    std::uint32_t rkey;
+    std::uint32_t length;
+};                                           /* 16 bytes; must fit in 56 */
+
+} /* namespace limen */</pre>
+
+<h2>Output Contract</h2>
+
+<pre>role: client
+cm: resolving 10.0.0.1:18515
+cm: event ADDR_RESOLVED
+cm: event ROUTE_RESOLVED
+cm: qp created qp_num=0x0000012b
+cm: connect private_data_len=16
+cm: event ESTABLISHED
+peer: addr=0x00007f3c1a2b4000 rkey=0x00000105 length=4096
+recv: posted=8 depth=8 size=4096
+pingpong: role=client iterations=100 size=4096 signaled=yes rnr_retry=7
+result: iterations=100 sent=100 received=100 mismatches=0
+cm: disconnect requested
+cm: event DISCONNECTED
+teardown: qp=ok cq=ok rx_mr=ok tx_mr=ok pd=ok id=ok channel=ok context=ok</pre>
+
+<p>Server output is the same shape with <code>role: server</code>, <code>cm: listening</code>, and <code>cm: event CONNECT_REQUEST (new id adopted)</code>.</p>
+
+<h2>Technical Requirements</h2>
+
+<h3>R1 — EventChannel</h3>
+<p>Wrap <code>rdma_create_event_channel</code> and <code>rdma_destroy_event_channel</code>, satisfying TRD-04's static contract: move-only, <code>noexcept</code> destructor, idempotent <code>close()</code>, valid empty state.</p>
+<p>The channel must outlive every identifier created from it and every event retrieved from it. Express that through member declaration order wherever both appear.</p>
+<span class="hint-ref">Stuck? → Hints H1</span>
+
+<h3>R2 — ConnectionId, With Adoption</h3>
+<p>Two ways to obtain one, and the type must support both:</p>
+<ul>
+  <li>A constructor calling <code>rdma_create_id</code> against a channel with port space <code>RDMA_PS_TCP</code>.</li>
+  <li>A static <code>adopt()</code> taking an <code>rdma_cm_id *</code> that already exists and assuming responsibility for destroying it.</li>
+</ul>
+<p>Adoption exists because on a connect request the library creates the identifier and hands it to you through the event.<span class="cite">[1][3]</span> None of TRD-04's five wrappers needed this, and adding it is the first evidence of whether that layer generalises.</p>
+<div class="warning">Exactly one object destroys any given identifier. The listener and the adopted connection are two distinct identifiers with two distinct owners; the event does not retain ownership of the one it delivered.</div>
+<span class="hint-ref">Stuck? → Hints H2</span>
+
+<h3>R3 — Event, Acknowledged by Destruction</h3>
+<p>Wrap <code>rdma_get_cm_event</code> and <code>rdma_ack_cm_event</code> so that acknowledgement happens in the destructor and therefore on every exit path, including exceptions.</p>
+<p>This is not tidiness. An unacknowledged event blocks the destruction of the associated identifier,<span class="cite">[1][6]</span> so a single missed acknowledgement on an error path produces a hang at teardown with no diagnostic and no obvious cause.</p>
+<p><code>ack()</code> is idempotent and the destructor calls it. <code>type()</code>, <code>name()</code>, <code>status()</code>, and <code>id()</code> are accessors. There is no accessor returning the raw event pointer.</p>
+<span class="hint-ref">Stuck? → Hints H3</span>
+
+<h3>R4 — Private Data Copied Out, Never Referenced</h3>
+<p><code>Event</code> exposes only <code>copy_private_data(void *dst, std::size_t len)</code>, which copies at most <code>len</code> bytes and returns how many were available. It must not expose the underlying pointer.</p>
+<p>The buffer is deallocated by the acknowledgement,<span class="cite">[1]</span> and because R3 makes the acknowledgement automatic there is no visible call to notice you are reading past. Removing the pointer from the interface makes the dangling read inexpressible rather than merely discouraged.</p>
+<p>Use <code>private_data_len</code> to determine how much was actually sent. The received buffer may be larger than the payload, with the remainder zeroed,<span class="cite">[1]</span> so its size proves nothing.</p>
+<span class="hint-ref">Stuck? → Hints H4</span>
+
+<h3>R5 — Client Connection Path</h3>
+<p>Resolve the address, wait for <code>ADDR_RESOLVED</code>; resolve the route, wait for <code>ROUTE_RESOLVED</code>; create the queue pair; connect with the payload, wait for <code>ESTABLISHED</code>.<span class="cite">[2]</span></p>
+<p>Print a <code>cm: event</code> line for every event received, naming it with <code>rdma_event_str</code>. An event other than the expected one at any step is fatal: report the name and the status field and exit 7.</p>
+<p>Impose a timeout on address resolution. <code>rdma_get_cm_event</code> blocks indefinitely by default,<span class="cite">[1]</span> and an unreachable peer would otherwise hang with no output.</p>
+<span class="hint-ref">Stuck? → Hints H5</span>
+
+<h3>R6 — Server Listen and Accept Path</h3>
+<p>Bind, listen, wait for <code>CONNECT_REQUEST</code>. Adopt <code>event-&gt;id</code> as a second identifier, copy the payload out, create the queue pair on the adopted identifier, and accept with your own payload. Wait for <code>ESTABLISHED</code>.</p>
+<p><code>rdma_accept</code> is called on the adopted identifier, never on the listener.<span class="cite">[3]</span> The listener stays open.</p>
+<p>Print <code>cm: event CONNECT_REQUEST (new id adopted)</code> so that the ownership transfer is visible in the output rather than implied.</p>
+<span class="hint-ref">Stuck? → Hints H6</span>
+
+<h3>R7 — Handshake Payload</h3>
+<p>Exchange the receive region's address, remote key, and length using <code>ConnInfo</code>, in both directions.</p>
+<p>Fixed-width members converted to network byte order. A packed struct with native padding and native endianness works between two identical nodes and is broken by construction.</p>
+<p>Assert at compile time that <code>sizeof(ConnInfo) &lt;= 56</code>. The connect direction is limited to 56 bytes and the accept direction to 196;<span class="cite">[2][3]</span> a payload sized against the larger limit fails in the other direction, and the assertion is what stops that from being discovered at runtime.</p>
+<p>Print the received values on the <code>peer:</code> line. TRD-06 is the first rung that uses them, and seeing them arrive correctly here is what makes that rung debuggable.</p>
+<span class="hint-ref">Stuck? → Hints H7</span>
+
+<h3>R8 — Connection Parameters</h3>
+<p>Populate <code>rdma_conn_param</code>: <code>private_data</code> and its length, <code>responder_resources</code> and <code>initiator_depth</code> clamped against the device's <code>max_qp_rd_atom</code> and <code>max_qp_init_rd_atom</code>, <code>retry_count</code>, and <code>rnr_retry_count</code>.</p>
+<p>TRD-03's <code>--rnr-retry</code> flag maps to <code>rnr_retry_count</code>. It is a 3-bit value and 7 still means infinite.<span class="cite">[2]</span> Do not set <code>qp_num</code>; it is ignored once a queue pair exists on the identifier.<span class="cite">[3]</span></p>
+<p>Record in <code>docs/cm-notes.md</code> that the minimum RNR timer is now fixed at 0, meaning 655 ms,<span class="cite">[2]</span> and that this is roughly a thousandfold increase over the value TRD-02 set. TRD-03's finite-retry experiment will take visibly longer after this rung, and the note is what stops that being mistaken for a defect.</p>
+<span class="hint-ref">Stuck? → Hints H8</span>
+
+<h3>R9 — Disconnection</h3>
+<p>After the ping-pong completes, the client calls <code>rdma_disconnect</code>. Both sides wait for <code>DISCONNECTED</code> and report it.</p>
+<p>Both sides must handle receiving <code>DISCONNECTED</code> unprompted — the peer may go first. Handle <code>TIMEWAIT_EXIT</code> by acknowledging and continuing rather than treating it as unexpected; it reports that the queue pair has left timewait and may be reused,<span class="cite">[1]</span> which this program does not do.</p>
+<span class="hint-ref">Stuck? → Hints H9</span>
+
+<h3>R10 — Delete the Side Channel</h3>
+<p>Remove from <code>limen_pingpong</code>: the listening socket, the connecting socket, the text encoding of the four bringup values, the ready-marker exchange, and all three <code>ibv_modify_qp</code> calls with their attribute structures.</p>
+<p>The program must not name <code>socket</code>, <code>bind</code>, <code>listen</code>, <code>accept</code>, <code>connect</code>, or <code>ibv_modify_qp</code> anywhere. The suite greps for this.</p>
+<p>The ready-marker exchange is subsumed: <code>ESTABLISHED</code> arrives only after both sides have completed the handshake, so receives posted before <code>rdma_connect</code> and <code>rdma_accept</code> are in place before any message can arrive.</p>
+<span class="hint-ref">Stuck? → Hints H10</span>
+
+<h3>R11 — Teardown, Regressions, Leaks</h3>
+<p>Destruction order now includes three more resources. Events are released as they go out of scope; the identifier before the channel; the queue pair before the identifier that owns it. Express what you can through declaration order and document what you cannot.</p>
+<p>The <code>teardown:</code> line gains <code>id=</code> and <code>channel=</code> stages.</p>
+<p>Regressions: the <strong>TRD-02 suite must still pass</strong> against the untouched <code>limen_connect</code>, and the <strong>TRD-03 suite must pass</strong> against the ported <code>limen_pingpong</code> — the latter with no modification to the suite, since observable behaviour is unchanged.</p>
+<p>Leak checks: zero bytes definitely lost on the success path, on a connection refused by an absent peer, and on the finite-retry RNR path.</p>
+<span class="hint-ref">Stuck? → Hints H11</span>
+
+<h2>Acceptance Criteria</h2>
+
+<table>
+  <tr><th style="width:40px;">ID</th><th>Criterion</th><th style="width:225px;">Verified by</th></tr>
+  <tr><td>R1</td><td>Everything builds clean under <code>-Wall -Wextra</code></td><td><code>test_builds</code></td></tr>
+  <tr><td>R1</td><td>The three new wrappers satisfy the ownership contract</td><td><code>test_cm_static_contract</code></td></tr>
+  <tr><td>R2</td><td><code>ConnectionId::adopt</code> exists and is <code>noexcept</code></td><td><code>test_adopt_exists</code></td></tr>
+  <tr><td>R3</td><td><code>Event</code>'s destructor acknowledges; teardown does not hang</td><td><code>test_no_teardown_hang</code></td></tr>
+  <tr><td>R4</td><td><code>Event</code> exposes no raw private-data pointer</td><td><code>test_no_raw_private_data</code></td></tr>
+  <tr><td>R5</td><td>Client reports ADDR_RESOLVED, ROUTE_RESOLVED, ESTABLISHED in order</td><td><code>test_client_event_sequence</code></td></tr>
+  <tr><td>R5</td><td>An unreachable peer times out and reports, rather than hanging</td><td><code>test_unreachable_times_out</code></td></tr>
+  <tr><td>R6</td><td>Server reports CONNECT_REQUEST and adopts the new id</td><td><code>test_server_adopts_new_id</code></td></tr>
+  <tr><td>R7</td><td><code>sizeof(ConnInfo) &lt;= 56</code> is asserted at compile time</td><td><code>test_conninfo_fits</code></td></tr>
+  <tr><td>R7</td><td>The <code>peer:</code> line carries a non-zero address, rkey, and length</td><td><code>test_payload_exchanged</code></td></tr>
+  <tr><td>R8</td><td><code>--rnr-retry</code> still reaches the connection parameters</td><td><code>test_rnr_retry_plumbed</code></td></tr>
+  <tr><td>R9</td><td>Both sides report DISCONNECTED and exit 0</td><td><code>test_clean_disconnect</code></td></tr>
+  <tr><td>R10</td><td>No socket call or <code>ibv_modify_qp</code> survives in the ported program</td><td><code>test_side_channel_removed</code></td></tr>
+  <tr><td>R11</td><td><code>teardown:</code> reports the id and channel stages</td><td><code>test_teardown_reports_cm</code></td></tr>
+  <tr><td>R11</td><td>The TRD-02 suite passes against the untouched <code>limen_connect</code></td><td><code>test_trd02_regression</code></td></tr>
+  <tr><td>R11</td><td>The TRD-03 suite passes against the ported <code>limen_pingpong</code></td><td><code>test_trd03_regression</code></td></tr>
+  <tr><td>R11</td><td><code>valgrind</code> reports zero bytes definitely lost on three paths</td><td><code>test_no_leaks</code></td></tr>
+</table>
+
+<h2>Deliverables</h2>
+
+<ul>
+  <li><code>include/limen/cm.hpp</code> and <code>src/cm.cpp</code> — the three wrappers and <code>ConnInfo</code>.</li>
+  <li><code>tests/cm_static_contract.cpp</code> — the ownership assertions for the new types, plus the <code>ConnInfo</code> size assertion.</li>
+  <li><code>tests/no_raw_private_data.cpp</code> — a program attempting to obtain the raw pointer, which the suite requires to fail compilation.</li>
+  <li><code>limen_pingpong</code>, ported. <code>limen_connect</code>, untouched.</li>
+  <li><code>scripts/trd-05-tests.sh</code>, executable, passing.</li>
+  <li><code>docs/cm-notes.md</code> recording: the R8 note about the imposed RNR timer, a full event trace from both sides, and one paragraph on what the TRD-04 layer needed in order to accommodate these three resources.</li>
+  <li>Written answers to the comprehension questions.</li>
+</ul>
+
+<h2>What Comes Next</h2>
+
+<p>TRD-06 uses the address and remote key this rung delivers. <code>RDMA_WRITE</code> and <code>RDMA_READ</code> name a remote buffer directly, and the values printed on the <code>peer:</code> line are exactly what makes that possible — which is why R7 requires them printed even though nothing consumes them yet.</p>
+
+<p>It is also the rung where the remote CPU stops participating, and where the access flags set at the INIT transition in TRD-02 and now supplied through the CM finally matter.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>rdma_get_cm_event(3).</em> Linux manual page, section 3. The acknowledgement requirement R3 is built on, the blocking-destruction rule that makes it load-bearing, the new-id-on-connect-request behaviour R2 and R6 depend on, the deallocation of private data by acknowledgement that R4 defends against, and the default blocking behaviour R5 requires a timeout above. https://man7.org/linux/man-pages/man3/rdma_get_cm_event.3.html</li>
+
+  <li>[2] <em>rdma_connect(3).</em> Linux manual page, section 3. The <code>rdma_conn_param</code> fields R8 populates, the 56-byte private data limit R7 asserts against, the route-resolution precondition in R5, and the imposed 655 ms minimum RNR timer R8 requires you to record. https://man7.org/linux/man-pages/man3/rdma_connect.3.html</li>
+
+  <li>[3] <em>rdma_accept(3).</em> Linux manual page, section 3. That accept is called on the newly delivered id rather than the listener, as R6 requires; the 196-byte accept-side private data limit; and that <code>qp_num</code> is ignored when a queue pair exists on the id. https://man7.org/linux/man-pages/man3/rdma_accept.3.html</li>
+
+  <li>[4] <em>rdma_create_id(3)</em>, <em>rdma_create_qp(3)</em>, <em>rdma_disconnect(3)</em>, <em>rdma_create_event_channel(3).</em> Linux manual pages, section 3. Creation and teardown interfaces wrapped by R1, R2, and R9.</li>
+
+  <li>[5] linux-rdma. <em>rdma-core.</em> <code>librdmacm/rdma_cma.h</code> — the one-to-one correspondence between gets and acks. Accessed 2026-07. https://github.com/linux-rdma/rdma-core/blob/master/librdmacm/rdma_cma.h</li>
+
+  <li>[6] linux-rdma. <em>rdma-core.</em> <code>librdmacm/examples/rping.c</code> — reference implementation of the sequence in R5 and R6. Accessed 2026-07. https://github.com/linux-rdma/rdma-core</li>
+</ol>
+
+<div class="footer">
+  TRD-05: Connection Management &nbsp;|&nbsp; Requirements &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

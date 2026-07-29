@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-08: Benchmark Harness — Prior Knowledge</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-08: Benchmark Harness</h1>
+  <div class="subtitle">Prior Knowledge &mdash; Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-07 &nbsp;|&nbsp; Difficulty: Medium &nbsp;|&nbsp; Estimated: 3&ndash;4 sessions</div>
+</div>
+
+<h2>1 &nbsp; Where This Fits</h2>
+
+<p>Eight rungs produced a transport with five tunable knobs and no idea what any of them do. TRD-07 was explicit about this: you built selectable mechanisms and were forbidden from recording performance claims, because you had measured nothing.</p>
+
+<p>This rung measures. It is the last rung, and it converts a library into a result.</p>
+
+<p>The engineering here is not RDMA &mdash; it is measurement, and measurement is a discipline with its own failure modes that are as subtle as the arming race and considerably more common. A benchmark that reports a mean latency is lying by omission. A benchmark that reports a number without a distribution is unfalsifiable. A benchmark that was never validated against a known-good implementation is measuring its own harness.</p>
+
+<p>Two honest expectations before you start. First, most of TRD-07&rsquo;s optimisations will show approximately nothing on this fabric, for the reason TRD-00 &sect;9 gave and TRD-07 &sect;1 repeated. Second, that null result is the most valuable thing this rung produces, because it names precisely what a hardware adapter contributes.</p>
+
+<h2>2 &nbsp; What Makes a Measurement Defensible</h2>
+
+<p>A number is defensible when someone who distrusts you can reproduce it or refute it. Five things are required:</p>
+
+<table>
+  <tr><th style="width:190px;">Property</th><th>Without it</th></tr>
+  <tr><td>A stated methodology</td><td>Nobody can tell what was measured, so nobody can disagree</td></tr>
+  <tr><td>A distribution, not a summary</td><td>The tail &mdash; where the interesting behaviour lives &mdash; is invisible</td></tr>
+  <tr><td>Recorded conditions</td><td>Nobody can reproduce it, including you next month</td></tr>
+  <tr><td>Run-to-run variance</td><td>A difference between configurations cannot be distinguished from noise</td></tr>
+  <tr><td>Validation against a reference</td><td>You may be measuring your harness rather than your transport</td></tr>
+</table>
+
+<p>The last is the one people skip. If your latency figure is four times a reference implementation&rsquo;s on the same hardware, the most likely explanation is a defect in how you measure, not a fourfold difference in what you built.</p>
+
+<h2>3 &nbsp; Latency Is a Distribution</h2>
+
+<p>Report a mean latency and you have discarded the information that matters.</p>
+
+<p>Latency distributions have fat tails: most samples cluster tightly and a few are ten to a thousand times larger.<span class="cite">[4]</span> A mean is dragged upward by those outliers while simultaneously concealing them &mdash; it is both unrepresentative of the typical case and uninformative about the bad one.</p>
+
+<p>Report percentiles instead. The reference implementation does exactly this, and its column headers are worth reading carefully:</p>
+
+<pre>#bytes #iterations  t_min  t_max  t_typical  t_avg  t_stdev  99%  99.9%
+     2        1000   1.49   3.93       1.50   1.51     0.07 1.57   3.93</pre>
+
+<div class="callout">
+  <div class="callout-label">t_typical is the median, not the mean</div>
+  <p><code>t_typical</code> is the 50th percentile; <code>t_avg</code> is the arithmetic mean. They are printed side by side deliberately. <strong>Comparing them tells you how skewed the distribution is</strong> &mdash; within about ten percent of each other indicates a fairly flat distribution, and a larger gap indicates a tail worth investigating.<span class="cite">[4]</span></p>
+</div>
+
+<p>Note the row above: median 1.50, mean 1.51, 99th 1.57, but 99.9th at 3.93 &mdash; more than double. That is a fat tail, and a report giving only the mean would have hidden it entirely while claiming the system was well-behaved.</p>
+
+<p>Which percentiles to report: the median tells you the common case, the 99th tells you what a user notices, and the 99.9th tells you what happens under composition. A request touching ten services experiences one service&rsquo;s 99.9th percentile roughly one percent of the time, so tail latency compounds in ways the median does not predict.</p>
+
+<h2>4 &nbsp; Coordinated Omission</h2>
+
+<p>This is the deepest methodological trap in latency measurement, it is nearly universal in hand-rolled benchmarks, and it is invisible in the code.</p>
+
+<p>Consider the obvious loop:</p>
+
+<pre>for (i = 0; i &lt; N; ++i) {
+    t0 = now();
+    send_and_wait_for_reply();
+    record(now() - t0);
+}</pre>
+
+<p>Suppose one operation stalls for 100 milliseconds. You record one sample of 100 ms. But during that stall, at a target rate of one operation every 2 microseconds, <strong>fifty thousand operations should have been issued and were not</strong>. Each of them would have experienced a queueing delay &mdash; the first would have waited nearly the full 100 ms, the next slightly less, and so on down to zero.</p>
+
+<p>Your benchmark did not issue them, so it did not record them. The stall contributes exactly one bad sample out of a million instead of fifty thousand, and your 99.9th percentile reports as healthy while the system was unresponsive for a tenth of a second.</p>
+
+<p>The name comes from the benchmark <em>coordinating</em> with the system under test: it politely stops issuing work precisely when the system is least able to handle it, which is the opposite of what a real client does.</p>
+
+<div class="warning">
+  This is not a small correction. On a system with occasional stalls, coordinated omission routinely understates high percentiles by an order of magnitude or more. A benchmark reporting a healthy 99.9th percentile while the system periodically freezes is the normal outcome of the loop above.
+</div>
+
+<h3>The two defences</h3>
+
+<p><strong>Measure against a schedule, not against issue time.</strong> Decide the intended send time for operation <em>i</em> in advance &mdash; <code>start + i × interval</code> &mdash; and measure latency from that intended time rather than from when you actually managed to send. An operation delayed by a stall then correctly reports the delay plus the service time.</p>
+
+<pre>auto intended = t_start + i * interval;
+/* if we are behind schedule, do NOT sleep — we are already late */
+if (now() &lt; intended) sleep_until(intended);
+send_and_wait();
+record(now() - intended);        /* from INTENDED, not from send */
+</pre>
+
+<p><strong>Or report it as a throughput test and stop calling it latency.</strong> A closed-loop ping-pong with one operation outstanding measures round-trip service time under zero queueing. That is a legitimate and useful measurement &mdash; it is what the reference latency tools do &mdash; but it is not the latency a client would experience under load, and labelling it as such is the error.</p>
+
+<p>This ladder&rsquo;s harness does both, in separate modes, and labels them differently. The distinction between service time and response time is the whole content of this section.</p>
+
+<h2>5 &nbsp; Clocks</h2>
+
+<p><code>clock_gettime(CLOCK_MONOTONIC)</code> is the correct default. It never steps backwards, is unaffected by wall-clock adjustments, and on modern systems is implemented in the vDSO so a call costs tens of nanoseconds without entering the kernel.</p>
+
+<p><code>CLOCK_REALTIME</code> is wrong: it can jump when the system clock is adjusted, producing negative durations. <code>CLOCK_MONOTONIC_RAW</code> is unaffected by adjtime slewing but is slower and rarely worth it.</p>
+
+<p>Reading the timestamp counter directly is tempting and is a trap unless you know the platform. It requires an invariant timestamp counter, needs serialisation to prevent the processor reordering the read across the code being measured, and produces cycles rather than nanoseconds so it needs calibration. On a virtual machine it may be trapped and emulated, which is far slower than the vDSO call it was supposed to replace.</p>
+
+<div class="callout">
+  <div class="callout-label">Measure your clock before measuring with it</div>
+  <p>Time a loop of ten thousand consecutive <code>clock_gettime</code> calls with no work between them. That is your measurement floor. If it is 25 ns and you are measuring 1.5 &micro;s operations, the overhead is under two percent and can be ignored. If you are measuring 100 ns operations, it cannot.</p>
+</div>
+
+<h2>6 &nbsp; Warm-Up and Steady State</h2>
+
+<p>The first iterations of any benchmark are unrepresentative. Pages have not been faulted in, caches are cold, branch predictors are untrained, and on RDMA specifically the adapter&rsquo;s own translation caches have not seen your addresses. The reference tools have a warm-up option for exactly this &mdash; iterations performed before measurement begins, to warm memory caches.<span class="cite">[3]</span></p>
+
+<p>Discard a fixed number of iterations before recording. A few hundred to a few thousand is typical, and the correct number is observable: plot latency against iteration number and find where it flattens.</p>
+
+<p>The opposite failure is running so long that thermal throttling, memory fragmentation, or another process&rsquo;s activity changes the machine underneath you. Reporting a single long run hides that; several shorter runs with reported variance does not.</p>
+
+<h2>7 &nbsp; Bandwidth</h2>
+
+<p>Bandwidth is measured with the opposite methodology to latency: keep many operations in flight and measure aggregate bytes over elapsed time.</p>
+
+<p>Three things to get right:</p>
+
+<p><strong>Sustained, not peak.</strong> A peak figure over a short window is noise. The reference tools report both peak and average and the average is the meaningful one &mdash; TRD-00 R5 already had you record it for that reason.</p>
+
+<p><strong>Sweep the message size.</strong> A single figure at one size tells you almost nothing, because the shape of the curve is the result. Small messages are bounded by per-operation cost and large ones by the link, and where the curve turns is the interesting fact. Powers of two from 64 bytes to 1 MB is a standard sweep; the reference tools offer an all-sizes mode for this.<span class="cite">[3]</span></p>
+
+<p><strong>State the units.</strong> MB/s and Gbit/s differ by a factor of eight and a decimal-versus-binary convention. The reference tools default to MiB/sec and offer a flag to report Gbit/sec instead.<span class="cite">[3]</span> Pick one, label every figure, and convert once.</p>
+
+<p>Message rate &mdash; operations per second &mdash; is worth reporting separately for small sizes, where it is the limiting quantity rather than bytes.</p>
+
+<h2>8 &nbsp; Validation</h2>
+
+<p>Your harness is code you wrote and has bugs. The defence is to measure something whose answer is independently known.</p>
+
+<p>Run <code>ib_send_lat</code> and <code>ib_send_bw</code> in a configuration matching yours as closely as you can, and compare. Agreement within a modest margin means your harness is probably sound. A large discrepancy means one of you is wrong, and the prior strongly favours the reference implementation.</p>
+
+<div class="callout">
+  <div class="callout-label">Establish their convention before comparing</div>
+  <p>A latency test performs a round trip. Whether the tool reports the full round trip or half of it &mdash; the one-way estimate &mdash; is a convention you must establish rather than assume, because assuming wrongly produces a clean factor-of-two discrepancy that looks like a real difference.</p>
+  <p>Determine it empirically: measure a full round trip yourself with the same message size and iteration count, and see whether their figure matches yours or half of it. Record which. This is a five-minute experiment that prevents an entire report being wrong by a factor of two.</p>
+</div>
+
+<p>Match what you can: message size, iteration count, transport type, and whether warm-up is enabled. Differences that remain after matching are differences worth investigating.</p>
+
+<h2>9 &nbsp; What You Will Actually Measure Here</h2>
+
+<p>Honest expectations, so that the results are not mistaken for defects:</p>
+
+<table>
+  <tr><th style="width:190px;">Comparison</th><th>Expected on soft-RoCE</th><th>Expected on hardware</th></tr>
+  <tr><td>Inline vs not</td><td>No measurable difference</td><td>Substantial at small sizes</td></tr>
+  <tr><td>Signal every 1 vs 16</td><td>Little or none</td><td>Meaningful at high rates</td></tr>
+  <tr><td>Pipeline depth 1 vs 8</td><td><em>Some</em> improvement</td><td>Large improvement</td></tr>
+  <tr><td>Poll vs event</td><td>Event measurably worse</td><td>Event measurably worse</td></tr>
+  <tr><td>One-sided vs two-sided</td><td>Little difference</td><td>One-sided clearly cheaper</td></tr>
+  <tr><td>Absolute latency</td><td>Tens of microseconds</td><td>One to three microseconds</td></tr>
+  <tr><td>Versus TCP</td><td>TCP wins</td><td>RDMA wins decisively</td></tr>
+</table>
+
+<p>Two rows are worth dwelling on. <strong>Pipelining shows a real effect even here</strong>, because it addresses idle time rather than per-operation cost, and idle time exists on any fabric. <strong>Event-driven reaping is measurably worse on both</strong>, because wakeup cost is real regardless of what the transport is implemented in &mdash; it is the one row where the software provider gives you a true answer.</p>
+
+<p>Everything else is flat because, as TRD-07 &sect;1 said, these mechanisms reduce costs that are noise beside a transport running in software. Recording that honestly &mdash; with the numbers that show it &mdash; is a stronger conclusion than either &ldquo;the optimisations work&rdquo; or &ldquo;they do not.&rdquo;</p>
+
+<h2>10 &nbsp; Failure Modes</h2>
+
+<table>
+  <tr><th style="width:225px;">Symptom</th><th style="width:215px;">Cause</th><th>Resolution</th></tr>
+  <tr><td>Suspiciously good tail latency</td><td>Coordinated omission &mdash; the benchmark stopped issuing during stalls.</td><td>Measure from intended send time. &sect;4.</td></tr>
+  <tr><td>Negative or absurd durations</td><td><code>CLOCK_REALTIME</code> stepped.</td><td><code>CLOCK_MONOTONIC</code>. &sect;5.</td></tr>
+  <tr><td>First hundred samples much slower</td><td>Cold caches, unfaulted pages, untrained predictors.</td><td>Discard warm-up iterations. &sect;6.</td></tr>
+  <tr><td>Latency roughly doubles or halves versus the reference</td><td>Round-trip versus one-way convention mismatch.</td><td>Establish it empirically. &sect;8.</td></tr>
+  <tr><td>Bandwidth far below the reference</td><td>Insufficient operations in flight.</td><td>Bandwidth needs depth; latency needs none.</td></tr>
+  <tr><td>Results differ between runs by more than the effect measured</td><td>Variance exceeds signal.</td><td>Report variance across runs; conclude nothing smaller than it.</td></tr>
+  <tr><td>Optimisation shows no effect</td><td>Probably correct on this fabric.</td><td>&sect;9. Record it and say why.</td></tr>
+  <tr><td>Percentiles look wrong at high counts</td><td>Samples summarised incrementally rather than retained.</td><td>Keep every sample and sort once. &sect;3.</td></tr>
+  <tr><td>Clock overhead comparable to the measurement</td><td>Measuring operations near the clock&rsquo;s own cost.</td><td>Measure the floor first. &sect;5.</td></tr>
+  <tr><td>Numbers unreproducible next week</td><td>Conditions not recorded.</td><td>Capture the environment with every result. &sect;2.</td></tr>
+</table>
+
+<h2>11 &nbsp; What Is Deliberately Left Out</h2>
+
+<p>No statistical significance testing. Reporting variance across runs and refusing to conclude anything smaller than it is the right discipline at this scale; confidence intervals over a handful of runs of a deterministic system would be theatre.</p>
+
+<p>No CPU-cycle accounting, no cache-miss counters, no flame graphs. Useful for finding <em>why</em> something is slow, and this rung establishes <em>whether</em> it is.</p>
+
+<p>No multi-node or multi-connection scaling. Two nodes, one connection.</p>
+
+<p>No comparison against other RDMA libraries. Validating against the reference micro-benchmarks is the check that matters; comparing against a full library would compare design decisions rather than mechanisms.</p>
+
+<h2>12 &nbsp; Further Reading</h2>
+
+<p><strong>Read before starting:</strong></p>
+<ul>
+  <li><strong>Tene, &ldquo;How NOT to Measure Latency&rdquo;</strong><span class="cite">[1]</span> &mdash; the canonical treatment of coordinated omission. An hour, and it will change how you read every benchmark you encounter afterwards.</li>
+  <li><strong><code>ib_send_lat(1)</code></strong><span class="cite">[3]</span> &mdash; the options, the warm-up flag, and the output columns you are validating against.</li>
+</ul>
+
+<p><strong>Read while implementing:</strong></p>
+<ul>
+  <li><strong><code>clock_gettime(2)</code></strong><span class="cite">[2]</span> &mdash; the clock sources and their guarantees.</li>
+  <li><strong>The perftest README</strong><span class="cite">[5]</span> &mdash; its notes on testing methodology, which are brief and were written by people who had made the mistakes.</li>
+</ul>
+
+<p><strong>Reference as needed:</strong></p>
+<ul>
+  <li><strong>Lawrey, &ldquo;What is Latency, Throughput and Degree of Concurrency?&rdquo;</strong><span class="cite">[4]</span> &mdash; the source of the median-versus-mean heuristic in &sect;3 and a good short treatment of fat tails.</li>
+</ul>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] Tene, Gil. <em>How NOT to Measure Latency.</em> Talk and accompanying material introducing coordinated omission &mdash; the systematic understatement of high percentiles that results when a benchmark stops issuing work during a stall. The basis of &sect;4.</li>
+
+  <li>[2] <em>clock_gettime(2).</em> Linux manual page, section 2. The clock sources compared in &sect;5, their monotonicity guarantees, and vDSO implementation.</li>
+
+  <li>[3] <em>ib_send_lat(1)</em> and <em>ib_send_bw(1).</em> perftest manual pages. The warm-up option described in &sect;6 &mdash; iterations performed before measurement to warm memory caches &mdash; the all-message-sizes sweep and the Gbit/sec reporting flag in &sect;7, and the output columns in &sect;3. https://manpages.debian.org/testing/perftest/ib_send_lat.1.en.html</li>
+
+  <li>[4] Lawrey, Peter. <em>What is Latency, Throughput and Degree of Concurrency?</em> Source for &sect;3&rsquo;s statement that <code>t_typical</code> is the 50th percentile, that comparing it against the average reveals distribution skew, and that latency distributions have fat tails where outliers may be ten to a thousand times larger than typical values. Accessed 2026-07. https://dzone.com/articles/what-latency-throughput-and</li>
+
+  <li>[5] linux-rdma. <em>perftest.</em> The benchmark suite validated against in &sect;8, including its notes on testing methodology. Accessed 2026-07. https://github.com/linux-rdma/perftest</li>
+
+  <li>[6] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual.</em> Background on the operations being measured. https://docs.nvidia.com/rdma-aware-networks-programming-user-manual-1-7.pdf</li>
+</ol>
+
+<div class="footer">
+  TRD-08: Benchmark Harness &nbsp;|&nbsp; Prior Knowledge &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

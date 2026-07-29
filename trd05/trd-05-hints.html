@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-05: Connection Management — Hints</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.level-box { border: 2px solid #000; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
+.level-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .level-box, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-05: Connection Management</h1>
+  <div class="subtitle">Hints — Limen RDMA Transport Project</div>
+  <div class="meta">Level 1 = nudge &nbsp;|&nbsp; Level 2 = stronger push &nbsp;|&nbsp; Try Level 1 for 15+ minutes before escalating</div>
+</div>
+
+<p>Level 1 points at the right place. Level 2 names the mechanism.</p>
+
+<p>The characteristic failure here is a <strong>hang during teardown</strong> — the program does all its work, prints its results, and then stops without exiting. That is an unacknowledged event blocking a destructor, and it is the reason R3 exists. Build the <code>Event</code> type before anything else; every subsequent requirement depends on acknowledgement being automatic, and debugging a teardown hang without it is unpleasant.</p>
+
+<h2>H1 — EventChannel (R1)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The simplest of the three. One creation function taking no arguments, one destruction function returning nothing. The shape is TRD-04's protection domain with different calls.</p>
+  <p>The destruction function returns <code>void</code>, which is a fourth release convention to add to the three you already normalised. Decide what <code>close()</code> should return when there is nothing to report, and keep it consistent with the others.</p>
+  <p>Note that the interface declares a static <code>create()</code> rather than a constructor taking nothing — think about why a default constructor and an acquiring constructor cannot both take zero arguments.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>EventChannel EventChannel::create() {
+    EventChannel c;
+    c.ch_ = rdma_create_event_channel();
+    if (!c.ch_) throw VerbsError("rdma_create_event_channel", errno);
+    return c;                              /* move, guaranteed elided */
+}
+
+int EventChannel::close() noexcept {
+    if (!ch_) return 0;
+    rdma_destroy_event_channel(ch_);       /* returns void */
+    ch_ = nullptr;
+    return 0;
+}</pre>
+  <p>The static factory sidesteps the ambiguity: the default constructor produces the empty state, and <code>create()</code> produces an acquired one. Both would otherwise need to be nullary constructors.</p>
+  <p>Returning 0 unconditionally from <code>close()</code> is honest here — the underlying call reports nothing, so there is nothing to report. Do not invent a status.</p>
+</div>
+
+<h2>H2 — ConnectionId, With Adoption (R2)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The creating constructor is routine. Adoption is the new idea: a way to construct a wrapper around a handle that already exists, without calling any acquisition function.</p>
+  <p>Make it a named static function rather than a constructor taking a raw pointer. A constructor from <code>rdma_cm_id *</code> would be implicitly callable in places you did not intend, and the whole point is that adopting is a deliberate transfer of responsibility. The name is the documentation.</p>
+  <p>The <code>qp()</code> accessor reads a field on the identifier that the library fills in when the queue pair is created. It is null before that, and every accessor on this type needs the same empty-state guard as TRD-04's.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>ConnectionId::ConnectionId(EventChannel &amp;ch, rdma_port_space ps) {
+    if (rdma_create_id(ch.get(), &amp;id_, nullptr, ps))
+        throw VerbsError("rdma_create_id", errno);
+}
+
+ConnectionId ConnectionId::adopt(rdma_cm_id *id) noexcept {
+    ConnectionId c;
+    c.id_ = id;                            /* no acquisition; we take over */
+    return c;
+}
+
+ibv_qp *ConnectionId::qp() const noexcept { return id_ ? id_-&gt;qp : nullptr; }
+
+int ConnectionId::close() noexcept {
+    if (!id_) return 0;
+    if (id_-&gt;qp) rdma_destroy_qp(id_);     /* before the id itself */
+    int rc = rdma_destroy_id(id_) ? errno : 0;
+    id_ = nullptr;
+    return rc;
+}</pre>
+  <p>The queue pair created by <code>rdma_create_qp</code> is owned by the identifier, so destroy it through <code>rdma_destroy_qp(id)</code> before destroying the identifier. This is the one place where the queue pair is not a TRD-04 <code>QueuePair</code> — the CM created it and the CM's own function destroys it.</p>
+  <p><code>rdma_create_id</code> takes a third argument for user context. Passing <code>nullptr</code> is fine here; a server tracking many connections would use it to attach per-connection state to the identifier the event hands back.</p>
+</div>
+
+<h2>H3 — Event, Acknowledged by Destruction (R3)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Write this one first. Everything else assumes it.</p>
+  <p>The constructor blocks until an event arrives, which makes it unusual — a constructor that waits. That is acceptable here and is what makes the calling code read as a sequence of steps rather than as a state machine.</p>
+  <p>The destructor acknowledges. Make <code>ack()</code> idempotent by the same clear-the-handle pattern as every other <code>close()</code>, so an explicit acknowledgement followed by scope exit is safe.</p>
+  <p>Think about what happens to the accessors after an explicit <code>ack()</code>. The event structure is gone, so every one of them must handle that — and the answer that removes the problem entirely is to copy what you need out of the structure at construction.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>Event::Event(EventChannel &amp;ch) {
+    if (rdma_get_cm_event(ch.get(), &amp;ev_))
+        throw VerbsError("rdma_get_cm_event", errno);
+    /* Snapshot what survives acknowledgement. */
+    type_   = ev_-&gt;event;
+    status_ = ev_-&gt;status;
+    id_     = ev_-&gt;id;
+}
+
+int Event::ack() noexcept {
+    if (!ev_) return 0;
+    int rc = rdma_ack_cm_event(ev_) ? errno : 0;
+    ev_ = nullptr;
+    return rc;
+}
+
+Event::~Event() noexcept {
+    if (int e = ack(); e != 0) report_release_failure("rdma_ack_cm_event", e);
+}
+
+rdma_cm_event_type Event::type()   const noexcept { return type_; }
+const char        *Event::name()   const noexcept { return rdma_event_str(type_); }
+int                Event::status() const noexcept { return status_; }
+rdma_cm_id        *Event::id()     const noexcept { return id_; }</pre>
+  <p>Snapshotting the three scalar fields at construction means the accessors work whether or not the event has been acknowledged, which removes an entire category of question. The identifier pointer remains valid after acknowledgement because the identifier is a separate object with its own lifetime — only the event structure and its private data are released.</p>
+  <p>To confirm the type is doing its job, temporarily comment out the destructor's <code>ack()</code> and run the program. It will complete its work and then hang. Restore it. That thirty-second experiment is worth more than reading the rule.</p>
+</div>
+
+<h2>H4 — Private Data Copied Out (R4)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>One function, a few lines, and the design constraint is what is <em>absent</em> from the interface rather than what is present.</p>
+  <p>The amount actually sent is a field on the connection parameters inside the event, not the size of the buffer. Use it. A payload shorter than the buffer is normal and the remainder is zeroed, so reading the whole buffer produces trailing zeros that look like a valid but wrong value.</p>
+  <p>Copy at construction rather than on demand, for the same reason as H3's snapshot — then the function works regardless of when it is called, and the ordering question disappears.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <p>In the constructor, alongside the other snapshots:</p>
+  <pre>pd_len_ = 0;
+if (ev_-&gt;param.conn.private_data &amp;&amp; ev_-&gt;param.conn.private_data_len &gt; 0) {
+    pd_len_ = std::min&lt;std::size_t&gt;(ev_-&gt;param.conn.private_data_len, sizeof pd_);
+    std::memcpy(pd_, ev_-&gt;param.conn.private_data, pd_len_);
+}</pre>
+  <pre>std::size_t Event::copy_private_data(void *dst, std::size_t len) const noexcept {
+    std::size_t n = std::min(len, pd_len_);
+    if (n) std::memcpy(dst, pd_, n);
+    return pd_len_;                    /* how much was available, not copied */
+}</pre>
+  <p>A fixed 256-byte member covers both direction limits with room to spare. Returning the available length rather than the copied length lets a caller detect truncation.</p>
+  <p>The interface deliberately offers no way to obtain <code>ev_-&gt;param.conn.private_data</code>. That is the requirement: with no accessor, a read after acknowledgement cannot be written.</p>
+</div>
+
+<h2>H5 — Client Connection Path (R5)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Four steps, three of which are "call this, then wait for that event." Write a small helper that constructs an <code>Event</code>, checks it is the type you expected, and reports and exits if not — you will call it three times and the error handling is identical each time.</p>
+  <p>The address needs to be a <code>sockaddr</code>. Build it with the ordinary networking calls; there is nothing RDMA-specific about it.</p>
+  <p>For the timeout: <code>rdma_resolve_addr</code> takes one in milliseconds for the resolution itself, but the event retrieval is separate and blocks independently. Both need bounding, and the one people forget is the second.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>static Event expect(EventChannel &amp;ch, rdma_cm_event_type want) {
+    Event e(ch);
+    std::printf("cm: event %s\n", e.name());
+    if (e.type() != want) {
+        std::fprintf(stderr, "cm: expected %s, got %s (status %d)\n",
+                     rdma_event_str(want), e.name(), e.status());
+        throw VerbsError("unexpected cm event", EPROTO);
+    }
+    return e;                              /* moved out; acked by the caller's scope */
+}</pre>
+  <pre>sockaddr_in dst{};
+dst.sin_family = AF_INET;
+dst.sin_port   = htons(port);
+inet_pton(AF_INET, peer, &amp;dst.sin_addr);
+
+if (rdma_resolve_addr(id.get(), nullptr, (sockaddr *)&amp;dst, 2000))
+    throw VerbsError("rdma_resolve_addr", errno);
+expect(ch, RDMA_CM_EVENT_ADDR_RESOLVED);
+
+if (rdma_resolve_route(id.get(), 2000))
+    throw VerbsError("rdma_resolve_route", errno);
+expect(ch, RDMA_CM_EVENT_ROUTE_RESOLVED);
+
+if (rdma_create_qp(id.get(), pd.get(), &amp;init))
+    throw VerbsError("rdma_create_qp", errno);
+
+rdma_conn_param cp{};
+/* ... R8 ... */
+if (rdma_connect(id.get(), &amp;cp)) throw VerbsError("rdma_connect", errno);
+Event est = expect(ch, RDMA_CM_EVENT_ESTABLISHED);</pre>
+  <p>To bound the blocking retrieval, set the channel's descriptor non-blocking and poll it:</p>
+  <pre>int fd = ch.get()-&gt;fd;
+fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+pollfd p{fd, POLLIN, 0};
+if (poll(&amp;p, 1, timeout_ms) &lt;= 0) { /* report and exit 7 */ }
+Event e(ch);                               /* now returns immediately */</pre>
+  <p>Note the assignment in <code>expect</code>: the returned <code>Event</code> is moved into the caller's scope and acknowledged when that scope ends. Constructing it as a temporary that is immediately discarded also works and acknowledges sooner — but bind it to a name when you need to read its private data.</p>
+</div>
+
+<h2>H6 — Server Listen and Accept Path (R6)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Bind and listen are unremarkable. The whole content of this requirement is what you do with the connect request event.</p>
+  <p>Three things must happen before that event goes out of scope, and the order matters: read its private data, take ownership of its identifier, and only then let it be acknowledged. Getting the first one after the acknowledgement is the failure R4 exists to prevent — and it is much easier to hit here than in the client path, because the event is doing two jobs at once.</p>
+  <p>Be explicit about which identifier each call takes. The listener and the connection are both in scope and both are valid arguments to every function, so a mix-up compiles.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>ConnectionId listener(ch, RDMA_PS_TCP);
+if (rdma_bind_addr(listener.get(), (sockaddr *)&amp;src))
+    throw VerbsError("rdma_bind_addr", errno);
+if (rdma_listen(listener.get(), 1))
+    throw VerbsError("rdma_listen", errno);
+std::printf("cm: listening on port %d\n", port);
+
+ConnInfo peer_info{};
+ConnectionId conn;
+{
+    Event req = expect(ch, RDMA_CM_EVENT_CONNECT_REQUEST);
+    req.copy_private_data(&amp;peer_info, sizeof peer_info);   /* FIRST */
+    conn = ConnectionId::adopt(req.id());                  /* then adopt   */
+    std::printf("cm: event CONNECT_REQUEST (new id adopted)\n");
+}                                                          /* acked here   */
+
+if (rdma_create_qp(conn.get(), pd.get(), &amp;init))
+    throw VerbsError("rdma_create_qp", errno);
+
+rdma_conn_param cp{};
+/* ... R8, with our own ConnInfo as private data ... */
+if (rdma_accept(conn.get(), &amp;cp)) throw VerbsError("rdma_accept", errno);
+expect(ch, RDMA_CM_EVENT_ESTABLISHED);</pre>
+  <p>The braces around the connect-request block are deliberate: they make the acknowledgement point visible, and everything that needs the event happens inside them. That is the shape to reach for whenever a resource's validity has a scope.</p>
+  <p><code>rdma_accept</code> takes <code>conn</code>, never <code>listener</code>.<span class="cite">[3]</span> The listener remains bound and could accept again.</p>
+</div>
+
+<h2>H7 — Handshake Payload (R7)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Sixteen bytes of fixed-width fields. The only real work is byte order, and the only real trap is forgetting that a 64-bit address needs a 64-bit conversion — the standard header provides 16- and 32-bit helpers and not a 64-bit one on all platforms.</p>
+  <p>Put the size assertion next to the struct definition rather than in a test file. It documents the constraint at the point where someone would violate it by adding a field.</p>
+  <p>Fill it from the receive region's accessors — the address, the remote key, and the length are all things the TRD-04 <code>MemoryRegion</code> already exposes.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>struct ConnInfo {
+    std::uint64_t addr;
+    std::uint32_t rkey;
+    std::uint32_t length;
+};
+static_assert(sizeof(ConnInfo) == 16, "unexpected layout");
+static_assert(sizeof(ConnInfo) &lt;= 56,  "exceeds the rdma_connect private data limit");</pre>
+  <pre>static ConnInfo to_wire(const MemoryRegion &amp;mr) {
+    return { htobe64((std::uint64_t)(uintptr_t)mr.data()),
+             htobe32(mr.rkey()),
+             htobe32((std::uint32_t)mr.size()) };
+}
+static ConnInfo from_wire(const ConnInfo &amp;w) {
+    return { be64toh(w.addr), be32toh(w.rkey), be32toh(w.length) };
+}</pre>
+  <p><code>htobe64</code> and <code>be64toh</code> are in <code>&lt;endian.h&gt;</code>. The 16-byte layout has no padding on any mainstream platform, and the first assertion is what tells you if that stops being true.</p>
+  <p>Verify the round trip locally before involving a peer: convert, convert back, compare. A byte-order bug here surfaces in TRD-06 as a remote access to an address that is not yours, which fails with a protection error naming nothing useful.</p>
+</div>
+
+<h2>H8 — Connection Parameters (R8)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Zero the structure, then set five fields. Two of them are bounded by device attributes you captured in TRD-01, and the pairing is not symmetric — one is bounded by what you can accept, the other by what you can issue.</p>
+  <p>One field you must <em>not</em> set: the queue pair number is ignored once a queue pair exists on the identifier, and setting it invites the belief that it is doing something.</p>
+  <p>Both sides populate a structure — the client's goes to <code>rdma_connect</code> and the server's to <code>rdma_accept</code>. The private data differs; the rest is the same.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>ConnInfo mine = to_wire(rx_mr);
+rdma_conn_param cp{};
+cp.private_data        = &amp;mine;
+cp.private_data_len    = sizeof mine;
+cp.responder_resources = (uint8_t)std::min&lt;uint32_t&gt;(1, da.max_qp_rd_atom);
+cp.initiator_depth     = (uint8_t)std::min&lt;uint32_t&gt;(1, da.max_qp_init_rd_atom);
+cp.retry_count         = 7;
+cp.rnr_retry_count     = (uint8_t)opt_rnr_retry;    /* 3-bit; 7 = infinite */</pre>
+  <p><code>mine</code> must outlive the call, but only the call — the library copies the contents.<span class="cite">[2]</span> A local is fine.</p>
+  <p>For <code>docs/cm-notes.md</code>, the sentence R8 asks for:</p>
+  <pre>The CM configures InfiniBand QPs with a minimum RNR NAK timer of 0, which is
+a 655 ms delay. TRD-02 set this field to 12 (0.64 ms) by hand. It is no longer
+under our control, so the RNR retry interval is roughly 1000x longer than it
+was in TRD-03. The finite-retry experiment still reports the same error; it
+just takes seconds instead of milliseconds. This is not a defect.</pre>
+</div>
+
+<h2>H9 — Disconnection (R9)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>One call on the initiating side, and both sides then receive an event. The asymmetry is only in who calls; the handling is identical.</p>
+  <p>Write the waiting loop to tolerate an event you were not expecting rather than treating the first surprise as fatal. There is one event type in particular that can appear here legitimately and means nothing to this program.</p>
+  <p>Note that the non-initiating side is sitting in its event wait when the disconnect arrives, so nothing special is needed there — which is the useful property of driving everything through one channel.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>if (is_client) {
+    std::printf("cm: disconnect requested\n");
+    if (rdma_disconnect(id.get())) throw VerbsError("rdma_disconnect", errno);
+}
+
+for (;;) {
+    Event e(ch);
+    std::printf("cm: event %s\n", e.name());
+    if (e.type() == RDMA_CM_EVENT_DISCONNECTED)   break;
+    if (e.type() == RDMA_CM_EVENT_TIMEWAIT_EXIT)  continue;   /* nothing to do */
+    std::fprintf(stderr, "cm: unexpected %s during shutdown\n", e.name());
+    break;
+}</pre>
+  <p><code>TIMEWAIT_EXIT</code> reports that the queue pair has left timewait and may be reused.<span class="cite">[1]</span> This program does not reuse queue pairs, so acknowledging and continuing is the whole handling. Treating it as unexpected produces a spurious error on a clean shutdown.</p>
+</div>
+
+<h2>H10 — Delete the Side Channel (R10)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Delete first, then fix what breaks — the same method as TRD-04's refactor, and for the same reason. Leaving the socket code in place while adding the CM path gives you two mechanisms doing one job and no compiler pressure to finish.</p>
+  <p>Count what goes: two sockets, the text encoding, the parsing, the ready marker, three attribute structures, three <code>ibv_modify_qp</code> calls, the GID query, the sequence number generation. It is a lot, and watching it go is the point of the rung.</p>
+  <p>Convince yourself the ready marker is genuinely unnecessary before removing it. R10 states why; make sure you agree, because if the reasoning is wrong you have reintroduced TRD-03's receiver-not-ready race.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <p>The ordering that makes the ready marker redundant: post receives, <em>then</em> call <code>rdma_connect</code> or <code>rdma_accept</code>. The handshake completes only after both sides have made their call, so <code>ESTABLISHED</code> on either side implies the peer had already posted. No message can arrive earlier because no connection existed.</p>
+  <pre>/* both roles, before connecting or accepting */
+for (unsigned i = 0; i &lt; rx_depth; ++i) post_recv(id.qp(), rx_mr, i);
+/* ... then rdma_connect / rdma_accept ... */</pre>
+  <p>Verify the removal:</p>
+  <pre>grep -nE '\b(socket|bind|listen|accept|connect)\s*\(' src/limen_pingpong.cpp \
+  | grep -v rdma_
+grep -n 'ibv_modify_qp' src/limen_pingpong.cpp</pre>
+  <p>Both must be empty. The <code>grep -v rdma_</code> is necessary because <code>rdma_bind_addr</code>, <code>rdma_listen</code>, <code>rdma_accept</code>, and <code>rdma_connect</code> all contain those words.</p>
+  <p>Note that <code>post_recv</code> now takes <code>id.qp()</code> — a raw <code>ibv_qp *</code> the CM owns — rather than a TRD-04 <code>QueuePair</code>. That is expected, and the comprehension questions ask about it.</p>
+</div>
+
+<h2>H11 — Teardown, Regressions, Leaks (R11)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Three new resources with an ordering that is only partly expressible through declaration order — the identifier must outlive its queue pair, the channel must outlive the identifier, and every event must be released before the identifier it concerns. The first two are containment; the third is not, because events are scoped locals rather than members.</p>
+  <p>Write down what declaration order does express and what it does not, then satisfy the remainder by scope. The braces from H6 are an example.</p>
+  <p>Run both regression suites before considering the rung done. They test different programs and both must pass — one untouched, one rewritten.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>class CmEndpoint {
+    Context          ctx_;        /* destroyed 6th */
+    EventChannel     ch_;         /* destroyed 5th */
+    ProtectionDomain pd_;         /* destroyed 4th */
+    MemoryRegion     rx_;         /* destroyed 3rd */
+    MemoryRegion     tx_;         /* destroyed 2nd */
+    ConnectionId     id_;         /* destroyed 1st — takes its qp with it */
+};</pre>
+  <p>The identifier goes first and destroys the queue pair the CM created for it, per H2's <code>close()</code>. The channel outlives the identifier because it is declared earlier. Events are not members and cannot be ordered this way — they are released by scope, which is why R3's RAII type is what makes the arrangement safe rather than merely tidy.</p>
+  <pre>./scripts/trd-02-tests.sh --dev rxe0 --gid 3 --peer 10.0.0.1 --ssh you@10.0.0.1
+./scripts/trd-03-tests.sh --dev rxe0 --gid 3 --peer 10.0.0.1 --ssh you@10.0.0.1</pre>
+  <p>Leak-check three paths, the second of which is the one most likely to be wrong:</p>
+  <pre>valgrind --leak-check=full ./build/limen_pingpong -d rxe0 -n 20 10.0.0.1
+valgrind --leak-check=full ./build/limen_pingpong -d rxe0 -n 20 203.0.113.1  # no peer
+valgrind --leak-check=full ./build/limen_pingpong -d rxe0 --rnr-retry 1 10.0.0.1</pre>
+</div>
+
+<h2>Debugging This TRD</h2>
+
+<table>
+  <tr><th style="width:235px;">Question</th><th>Instrument</th></tr>
+  <tr><td>The program hangs after printing its results</td><td>An unacknowledged event. <code>gdb -p &lt;pid&gt;</code> and look for <code>rdma_destroy_id</code> in the backtrace.</td></tr>
+  <tr><td>Which event did I actually get?</td><td><code>rdma_event_str</code> on every event, printed unconditionally. Never branch on an event type without printing its name first.</td></tr>
+  <tr><td>Why was the connection rejected?</td><td><code>event-&gt;status</code>, and the peer's own output. A rejection is usually the other side failing at accept.</td></tr>
+  <tr><td>Is the payload arriving correctly?</td><td>Print the <code>ConnInfo</code> on both sides, before and after byte-order conversion. Four numbers, and a mismatch is obvious.</td></tr>
+  <tr><td>Does the reference implementation work here?</td><td><code>rping -s -a 10.0.0.1 -v -C 10</code>. It uses exactly this API. If it fails, the fault is the fabric, not your code — same discipline as TRD-02.</td></tr>
+  <tr><td>Is the CM reaching the peer at all?</td><td><code>sudo tcpdump -i any -n udp port 4791</code> during the handshake. The CM's own traffic is visible.</td></tr>
+  <tr><td>Address resolution fails</td><td>Confirm the address is on the interface the <code>rxe</code> link was bound to in TRD-00. The CM resolves address to device, and an address on the wrong interface has no device.</td></tr>
+  <tr><td>Is my id ownership right?</td><td><code>LIMEN_TRACE_RELEASE=1</code> and count the identifier releases. The server must release exactly two — the listener and the connection.</td></tr>
+</table>
+
+<div class="callout">
+  <div class="callout-label">The single most useful check</div>
+  <p>Print every event by name as it arrives, on both sides, always. The event sequence <em>is</em> the state of the connection, and a program that reports it tells you where it stopped. One that branches silently tells you nothing, and this rung's failures are almost all "it stopped somewhere."</p>
+</div>
+
+<h2>The Tool Boundary</h2>
+
+<p>Two habits carry this rung: the <code>Event</code> RAII type, which makes the worst failure unreachable, and printing every event name, which makes the rest diagnosable. Both are cheap and both are built before you need them.</p>
+
+<p>An AI assistant is appropriate for reviewing code once it works, clarifying a concept a document left unclear, and grading comprehension answers. It is not appropriate for writing or debugging the implementation.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>rdma_get_cm_event(3).</em> Linux manual page, section 3. The acknowledgement requirement and blocking-destruction rule behind H3, the private-data deallocation behind H4, and the <code>TIMEWAIT_EXIT</code> semantics in H9. https://man7.org/linux/man-pages/man3/rdma_get_cm_event.3.html</li>
+
+  <li>[2] <em>rdma_connect(3).</em> Linux manual page, section 3. The <code>rdma_conn_param</code> fields populated in H8, the private data copy semantics, and the imposed minimum RNR timer recorded there. https://man7.org/linux/man-pages/man3/rdma_connect.3.html</li>
+
+  <li>[3] <em>rdma_accept(3).</em> Linux manual page, section 3. That accept is called on the adopted id rather than the listener, as in H6. https://man7.org/linux/man-pages/man3/rdma_accept.3.html</li>
+
+  <li>[4] <em>rdma_create_id(3)</em>, <em>rdma_create_qp(3)</em>, <em>rdma_destroy_qp(3)</em>, <em>rdma_resolve_addr(3)</em>, <em>rdma_resolve_route(3).</em> Linux manual pages, section 3. Interfaces used in H2 and H5.</li>
+
+  <li>[5] linux-rdma. <em>rdma-core.</em> <code>librdmacm/examples/rping.c</code> — the structural reference for H5 and H6. Accessed 2026-07. https://github.com/linux-rdma/rdma-core</li>
+</ol>
+
+<div class="footer">
+  TRD-05: Connection Management &nbsp;|&nbsp; Hints &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

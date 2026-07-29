@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-01: Context, Protection Domain, Memory Registration — Requirements</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; }
+em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; }
+li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.hint-ref { border: 1px solid #000; padding: 3px 8px; margin: 6px 0 2px 0; font-size: 9pt; font-style: italic; display: inline-block; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-01: Context, Protection Domain, Memory Registration</h1>
+  <div class="subtitle">Requirements — Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-00 &nbsp;|&nbsp; Difficulty: Medium &nbsp;|&nbsp; Estimated: 3–4 sessions</div>
+</div>
+
+<h2>Objective</h2>
+
+<p>Build <code>limen_devinfo</code>: a diagnostic program that enumerates RDMA devices, opens one, reports its device and port attributes, allocates a protection domain, registers a memory region, prints the resulting keys, and tears everything down in the correct order with every return value checked.</p>
+
+<h2>What This Is Not</h2>
+
+<p>There is no connection, no queue pair, no peer, and nothing transmitted. The program runs on one node and never touches the network. The keys it prints go nowhere — TRD-05 builds the exchange that carries them and TRD-06 is the first rung that uses one.</p>
+
+<p>There is also no C++ resource management yet. Write this in plain C or in C++ with manual cleanup. TRD-04 exists to replace that cleanup, and doing it early removes the experience that makes TRD-04 land.</p>
+
+<h2>Interface</h2>
+
+<pre>./build/limen_devinfo [-d &lt;device&gt;] [-p &lt;port&gt;] [-s &lt;bytes&gt;] [--check-access] [-h]</pre>
+
+<table>
+  <tr><th style="width:130px;">Argument</th><th>Effect</th></tr>
+  <tr><td>none</td><td>List every device with its name and GUID, then exit.</td></tr>
+  <tr><td><code>-d &lt;device&gt;</code></td><td>Full report on the named device: device attributes, port attributes, protection domain.</td></tr>
+  <tr><td><code>-p &lt;port&gt;</code></td><td>Port to query. Default 1.</td></tr>
+  <tr><td><code>-s &lt;bytes&gt;</code></td><td>Additionally allocate and register a buffer of this size, and report its keys.</td></tr>
+  <tr><td><code>--check-access</code></td><td>Additionally perform the access-flag check required by R8.</td></tr>
+  <tr><td><code>-h</code></td><td>Print usage to stdout and exit 0.</td></tr>
+</table>
+
+<p>Exit codes are part of the contract:</p>
+
+<table>
+  <tr><th style="width:60px;">Code</th><th>Meaning</th></tr>
+  <tr><td>0</td><td>Everything requested succeeded.</td></tr>
+  <tr><td>1</td><td>Usage error — unknown argument, missing value, unparseable number.</td></tr>
+  <tr><td>2</td><td>No devices present, or the named device was not found.</td></tr>
+  <tr><td>3</td><td>A verbs operation failed.</td></tr>
+</table>
+
+<h2>Output Contract</h2>
+
+<p>The test suite matches these lines. Field order within a block is not checked; the labels and their presence are. All output goes to stdout except diagnostics accompanying a non-zero exit, which go to stderr.</p>
+
+<h3>Enumeration mode</h3>
+<pre>device: rxe0 guid: 0x0000000000000000
+devices: 1</pre>
+
+<h3>Report mode</h3>
+<pre>device: rxe0
+  guid: 0x0000000000000000
+  fw_ver: 0.0.0
+  phys_port_cnt: 1
+  max_qp: 262144
+  max_qp_wr: 1048576
+  max_cq: 16384
+  max_cqe: 32767
+  max_mr: 262144
+  max_mr_size: 18446744073709551615
+  max_sge: 32
+  max_qp_rd_atom: 128
+port 1:
+  state: PORT_ACTIVE
+  link_layer: Ethernet
+  active_mtu: 1024
+  max_msg_sz: 2147483648
+  gid_tbl_len: 8
+pd: allocated
+teardown: mr=n/a pd=ok context=ok</pre>
+
+<h3>With <code>-s</code></h3>
+<pre>mr: addr=0x7f3c1a2b4000 length=1048576 lkey=0x00000105 rkey=0x00000105 access=LOCAL_WRITE|REMOTE_READ|REMOTE_WRITE
+teardown: mr=ok pd=ok context=ok</pre>
+
+<h3>With <code>--check-access</code></h3>
+<pre>access-check: REMOTE_WRITE without LOCAL_WRITE rejected: EINVAL (Invalid argument)</pre>
+
+<h3>Registration failure</h3>
+<pre>mr: registration failed: ENOMEM (Cannot allocate memory)
+  requested: 68719476736 bytes
+  RLIMIT_MEMLOCK soft: 8388608 bytes
+  hint: raise the locked-memory limit with 'ulimit -l' or register a smaller region</pre>
+
+<h2>Technical Requirements</h2>
+
+<h3>R1 — Build Target and Argument Handling</h3>
+<p>Add a <code>limen_devinfo</code> executable target to the build, linking <code>libibverbs</code>. It must build with no warnings under <code>-Wall -Wextra</code>.</p>
+<p>Parse the arguments in the Interface table. An unknown argument, a flag missing its value, or a <code>-s</code> or <code>-p</code> value that does not parse as a positive integer must print a usage line to stderr and exit 1. <code>-h</code> prints usage to stdout and exits 0.</p>
+<span class="hint-ref">Stuck? → Hints H1</span>
+
+<h3>R2 — Device Enumeration</h3>
+<p>With no device named, retrieve the device list and print one <code>device:</code> line per entry giving the name and the GUID as a 16-digit hexadecimal value, followed by a <code>devices:</code> count line. Exit 0.</p>
+<p>Distinguish two cases that are not the same: the call failing, which is a verbs error and exits 3, and the call succeeding with a count of zero, which means no RDMA devices are registered with the kernel and exits 2 with a message to stderr naming the likely cause.</p>
+<p>Release the device list. It must not leak on any path, including the ones that exit early.</p>
+<span class="hint-ref">Stuck? → Hints H2</span>
+
+<h3>R3 — Open a Named Device</h3>
+<p>With <code>-d</code>, find the entry whose name matches exactly and open it. A name that matches nothing exits 2 with a stderr message listing the names that <em>are</em> available — a user who mistyped a device name should not have to run the program a second time to discover the right one.</p>
+<p>Free the device list once the context is open. The context remains valid after the list is released.</p>
+<span class="hint-ref">Stuck? → Hints H3</span>
+
+<h3>R4 — Report Device Attributes</h3>
+<p>Query the device and print every field shown in the Report mode block: <code>guid</code>, <code>fw_ver</code>, <code>phys_port_cnt</code>, <code>max_qp</code>, <code>max_qp_wr</code>, <code>max_cq</code>, <code>max_cqe</code>, <code>max_mr</code>, <code>max_mr_size</code>, <code>max_sge</code>, and <code>max_qp_rd_atom</code>.</p>
+<p>These are the values TRD-02 and TRD-03 must size against. Print them as retrieved; do not substitute defaults for fields the provider reports as zero.</p>
+<span class="hint-ref">Stuck? → Hints H4</span>
+
+<h3>R5 — Report Port Attributes</h3>
+<p>Query the requested port — default 1 — and print <code>state</code>, <code>link_layer</code>, <code>active_mtu</code>, <code>max_msg_sz</code>, and <code>gid_tbl_len</code>.</p>
+<p><code>state</code>, <code>link_layer</code>, and <code>active_mtu</code> are enumerations and must be printed as their symbolic names, not their integers: <code>PORT_ACTIVE</code> rather than <code>4</code>, <code>Ethernet</code> rather than <code>2</code>, and the MTU in bytes rather than its enum ordinal. A port number outside the range reported by <code>phys_port_cnt</code> is a usage error and exits 1.</p>
+<span class="hint-ref">Stuck? → Hints H5</span>
+
+<h3>R6 — Allocate a Protection Domain</h3>
+<p>Allocate a protection domain on the open context and print <code>pd: allocated</code>. Failure exits 3 with the reason.</p>
+<span class="hint-ref">Stuck? → Hints H6</span>
+
+<h3>R7 — Register a Memory Region</h3>
+<p>With <code>-s</code>, allocate a buffer of that many bytes, register it against the protection domain with <code>LOCAL_WRITE</code>, <code>REMOTE_READ</code>, and <code>REMOTE_WRITE</code>, and print the <code>mr:</code> line with the region's address, length, local key, remote key, and the access flags rendered as a pipe-separated list of their symbolic names.</p>
+<p>Print the address and length as reported in the returned structure rather than the values you passed in. They should agree; printing what the API returned is what makes it possible to notice when they do not.</p>
+<span class="hint-ref">Stuck? → Hints H7</span>
+
+<h3>R8 — Access Flag Constraint</h3>
+<p>With <code>--check-access</code>, attempt a second registration of a small buffer requesting <code>REMOTE_WRITE</code> without <code>LOCAL_WRITE</code>. This combination is invalid and the call is required to reject it.<span class="cite">[3]</span></p>
+<p>Print the <code>access-check:</code> line naming the symbolic errno and its description. If the registration unexpectedly <em>succeeds</em>, deregister it, report the anomaly to stderr, and exit 3 — a provider that accepts an invalid combination is a finding, not a pass.</p>
+<p>This requirement exists so that you meet the constraint deliberately, with the manual page open, rather than accidentally in TRD-06 when a buffer will not register and the reason is three flags away.</p>
+<span class="hint-ref">Stuck? → Hints H8</span>
+
+<h3>R9 — Graceful Registration Failure</h3>
+<p>A registration that fails must produce the diagnostic block shown in the Output Contract: the symbolic errno and its description, the requested size, the current soft <code>RLIMIT_MEMLOCK</code> value, and a remediation hint. Exit 3.</p>
+<p>Retrieve the limit programmatically.<span class="cite">[4]</span> Render an unlimited value as <code>unlimited</code> rather than as its numeric representation. The program must not crash, must not dereference the null return, and must still perform teardown of everything it did successfully create.</p>
+<div class="warning">On a host whose locked-memory limit is unlimited, a large registration may succeed rather than fail. That is not a defect in your program. The test suite selects a size relative to the limit it observes, and skips this check when no limit applies.</div>
+<span class="hint-ref">Stuck? → Hints H9</span>
+
+<h3>R10 — Teardown and Error Discipline</h3>
+<p>Every verbs call must be checked using the convention its own manual page documents — see section 10 of the Prior Knowledge document, which tabulates three different conventions in use across the functions this TRD calls. A checked call whose failure is reported to stderr and reflected in the exit code satisfies this; an unchecked call does not, even where failure is implausible.</p>
+<p>Teardown runs in reverse creation order: memory region, then protection domain, then context. Print the <code>teardown:</code> line reporting the outcome of each, using <code>n/a</code> for objects that were never created and <code>ok</code> or the symbolic errno otherwise.</p>
+<p>Every exit path unwinds what it created. A failure at R7 must still deallocate the protection domain and close the context. Running under <code>valgrind --leak-check=full</code> must report zero bytes definitely lost, on both the success path and a failure path.</p>
+<span class="hint-ref">Stuck? → Hints H10</span>
+
+<h2>Acceptance Criteria</h2>
+
+<table>
+  <tr><th style="width:40px;">ID</th><th>Criterion</th><th style="width:215px;">Verified by</th></tr>
+  <tr><td>R1</td><td>Target builds clean under <code>-Wall -Wextra</code></td><td><code>test_builds</code></td></tr>
+  <tr><td>R1</td><td><code>-h</code> prints usage and exits 0</td><td><code>test_usage_exits_zero</code></td></tr>
+  <tr><td>R1</td><td>An unknown argument exits 1</td><td><code>test_bad_flag_exits_one</code></td></tr>
+  <tr><td>R2</td><td>No arguments prints <code>device:</code> and <code>devices:</code> lines, exits 0</td><td><code>test_lists_devices</code></td></tr>
+  <tr><td>R3</td><td>An unknown device name exits 2 and names the available devices</td><td><code>test_unknown_device_exits_two</code></td></tr>
+  <tr><td>R4</td><td>All eleven device attribute labels are present</td><td><code>test_reports_device_attrs</code></td></tr>
+  <tr><td>R5</td><td>Port block reports symbolic state, link layer, and MTU in bytes</td><td><code>test_reports_port_attrs</code></td></tr>
+  <tr><td>R5</td><td>A port number above <code>phys_port_cnt</code> exits 1</td><td><code>test_bad_port_exits_one</code></td></tr>
+  <tr><td>R6</td><td><code>pd: allocated</code> is printed</td><td><code>test_allocates_pd</code></td></tr>
+  <tr><td>R7</td><td><code>-s</code> prints an <code>mr:</code> line with address, length, and access flags</td><td><code>test_registers_mr</code></td></tr>
+  <tr><td>R7</td><td>The <code>mr:</code> line carries both <code>lkey</code> and <code>rkey</code> as hexadecimal</td><td><code>test_reports_both_keys</code></td></tr>
+  <tr><td>R8</td><td><code>--check-access</code> reports the invalid combination rejected with EINVAL</td><td><code>test_access_check_rejected</code></td></tr>
+  <tr><td>R9</td><td>An oversized registration exits 3 and reports errno, size, and the limit</td><td><code>test_oversized_registration_graceful</code></td></tr>
+  <tr><td>R10</td><td>The <code>teardown:</code> line reports every stage</td><td><code>test_teardown_reports_ok</code></td></tr>
+  <tr><td>R10</td><td><code>valgrind</code> reports zero bytes definitely lost</td><td><code>test_no_leaks</code></td></tr>
+</table>
+
+<h2>Deliverables</h2>
+
+<ul>
+  <li><code>src/limen_devinfo.c</code> (or <code>.cpp</code>) and any headers it needs under <code>include/limen/</code>.</li>
+  <li>A <code>CMakeLists.txt</code> building <code>limen_devinfo</code> with <code>-Wall -Wextra</code> and linking <code>libibverbs</code>.</li>
+  <li><code>scripts/trd-01-tests.sh</code>, executable, passing.</li>
+  <li><code>docs/device-attrs.md</code> recording the full report-mode output from your fabric. TRD-02 sizes its queues against these numbers and must not guess them.</li>
+  <li>An updated <code>README.md</code> documenting the program's usage and exit codes.</li>
+  <li>Written answers to the comprehension questions.</li>
+</ul>
+
+<h2>What Comes Next</h2>
+
+<p>TRD-02 creates a completion queue and a reliable-connected queue pair from the protection domain allocated here, sizes both against the attributes captured in R4, and drives the queue pair by hand through its state machine to Ready-To-Send. It is the hardest rung in the ladder.</p>
+
+<p>The registered region built here becomes the buffer that TRD-03 sends from and receives into, addressed by the local key printed in R7. The remote key printed alongside it stays unused until TRD-06, where it is what a peer must hold to write into this memory without asking.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_get_device_list(3)</em>, <em>ibv_open_device(3)</em>, <em>ibv_close_device(3).</em> Linux manual pages, section 3. Normative for the enumeration and context lifecycle required by R2 and R3, including the return conventions R10 requires you to honour.</li>
+
+  <li>[2] <em>ibv_query_device(3)</em> and <em>ibv_query_port(3).</em> Linux manual pages, section 3. Define the attribute structures enumerated in R4 and R5, the port numbering convention, and the enumerations R5 requires you to render symbolically.</li>
+
+  <li>[3] <em>ibv_reg_mr(3).</em> Linux manual page, section 3. Defines the access flags used in R7 and the constraint that R8 verifies: remote write and remote atomic access require local write access to be granted alongside.</li>
+
+  <li>[4] <em>getrlimit(2).</em> Linux manual page, section 2. The <code>RLIMIT_MEMLOCK</code> resource R9 requires you to retrieve and report, including the representation of an unlimited value.</li>
+
+  <li>[5] linux-rdma. <em>rdma-core.</em> <code>libibverbs/examples/rc_pingpong.c</code> — reference ordering of enumeration, open, protection domain allocation, and registration. Accessed 2026-07. https://github.com/linux-rdma/rdma-core</li>
+</ol>
+
+<div class="footer">
+  TRD-01: Context, Protection Domain, Memory Registration &nbsp;|&nbsp; Requirements &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

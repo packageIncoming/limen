@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-07: Completion Efficiency — Requirements</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+.hint-ref { border: 1px solid #000; padding: 3px 8px; margin: 6px 0 2px 0; font-size: 9pt; font-style: italic; display: inline-block; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-07: Completion Efficiency</h1>
+  <div class="subtitle">Requirements &mdash; Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-06 &nbsp;|&nbsp; Difficulty: High &nbsp;|&nbsp; Estimated: 4&ndash;6 sessions</div>
+</div>
+
+<h2>Objective</h2>
+
+<p>Make every completion-side optimisation a selectable runtime option: inline data, unsignaled sends with periodic signalling, completion-queue moderation, event-driven reaping, and pipelining depth. Each must be independently switchable, correct in isolation and in combination, and reportable &mdash; so that TRD-08 can measure them against one another rather than against belief.</p>
+
+<h2>What This Is Not</h2>
+
+<p>Not a performance rung. None of these will measurably help on the software provider, for the reason TRD-00 &sect;9 gives. You are building mechanisms and the switches that select them; TRD-08 produces the numbers.</p>
+
+<p>No conclusions. Do not record that inline data is worth some percentage &mdash; you have not measured it and the figure would be from someone else&rsquo;s hardware. Record what each technique trades.</p>
+
+<p>No adaptive tuning, no buffer allocator, no multi-queue or per-core completion vectors. A fixed ring of buffers indexed by sequence number is sufficient and is not a general allocator.</p>
+
+<h2>Interface</h2>
+
+<pre>./build/limen_pingpong  [ ...TRD-03 and TRD-05 options... ]
+        [--inline] [--signal-every &lt;n&gt;] [--pipeline &lt;depth&gt;]
+        [--reap &lt;poll|event&gt;] [--moderate &lt;count&gt;:&lt;usec&gt;] [--report-config]</pre>
+
+<table>
+  <tr><th style="width:180px;">Option</th><th>Effect</th><th style="width:70px;">Default</th></tr>
+  <tr><td><code>--inline</code></td><td>Use <code>IBV_SEND_INLINE</code> when the payload fits the granted limit</td><td>off</td></tr>
+  <tr><td><code>--signal-every &lt;n&gt;</code></td><td>Signal one send in <em>n</em>. 1 signals every send.</td><td>1</td></tr>
+  <tr><td><code>--pipeline &lt;depth&gt;</code></td><td>Outstanding sends permitted before reaping</td><td>1</td></tr>
+  <tr><td><code>--reap poll|event</code></td><td>Tight-spin polling, or a completion channel</td><td>poll</td></tr>
+  <tr><td><code>--moderate &lt;c&gt;:&lt;u&gt;</code></td><td>Completion-queue moderation: count and microseconds</td><td>off</td></tr>
+  <tr><td><code>--report-config</code></td><td>Print the effective configuration and exit 0</td><td>&mdash;</td></tr>
+</table>
+
+<p>Exit codes are TRD-06&rsquo;s, plus 8 for a completion-channel timeout &mdash; distinct from 5, because a hang in the event path has a specific cause and deserves a specific code.</p>
+
+<h2>Output Contract</h2>
+
+<pre>config: inline=on(max=236) signal_every=16 pipeline=8 reap=event moderation=unavailable
+result: iterations=1000 sent=1000 received=1000 send_completions=63 mismatches=0
+events: received=63 acked=63 empty_events=2 race_polls_hit=4
+teardown: qp=ok cq=ok comp_channel=ok rx_mr=ok tx_mr=ok pd=ok id=ok channel=ok context=ok</pre>
+
+<h2>Technical Requirements</h2>
+
+<h3>R1 &mdash; Report the Effective Configuration</h3>
+<p>Print the <code>config:</code> line before any transfer, showing what is actually in force rather than what was requested. Where a request was clamped or refused, show the effective value.</p>
+<p>Inline reports the <em>granted</em> <code>max_inline_data</code>, not the requested one. Moderation reports <code>unavailable</code> when the provider refuses it. Pipeline depth reports the value after clamping against the granted <code>max_send_wr</code>.</p>
+<p><code>--report-config</code> prints this line and exits 0 without connecting, so the suite can inspect a configuration without a peer.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H1</span>
+
+<h3>R2 &mdash; Inline Data</h3>
+<p>Request <code>max_inline_data</code> in <code>ibv_qp_init_attr.cap</code> before creating the queue pair, read back what was granted, and report it.</p>
+<p>With <code>--inline</code>, set <code>IBV_SEND_INLINE</code> on sends whose payload fits the granted limit. A payload exceeding it must fall back to a normal send rather than failing &mdash; and the fallback must be reported once, not silently.</p>
+<p>Because inline copies the payload into the work request, the send buffer is reusable the moment <code>ibv_post_send</code> returns.<span class="cite">[1]</span> Your buffer-reuse tracking from R4 must account for that, since it is the only case in this ladder where TRD-03 &sect;10&rsquo;s ownership rule does not apply.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H2</span>
+
+<h3>R3 &mdash; Periodic Signalling</h3>
+<p>With <code>--signal-every n</code>, set <code>IBV_SEND_SIGNALED</code> on every <em>n</em>th send and omit it otherwise. Report the count of send completions actually reaped; at <em>n</em>=16 over 1000 iterations it should be about 63, not 1000.</p>
+<p>Signal the <strong>final</strong> send of a run regardless of the period, so that the run terminates with a known-complete send queue rather than with unreported work outstanding.</p>
+<div class="warning">The period must leave the send queue drainable. Completions are what free send-queue entries, so a period approaching the queue depth fills it and <code>ibv_post_send</code> returns <code>ENOMEM</code> with every request having succeeded. Validate that <code>signal_every</code> is comfortably less than the granted <code>max_send_wr</code> and reject a value that is not, at argument-parse time.</div>
+<span class="hint-ref">Stuck? &rarr; Hints H3</span>
+
+<h3>R4 &mdash; Buffer Reuse Under Periodic Signalling</h3>
+<p>With signalling suppressed, you no longer learn when each individual buffer is free. Maintain a ring of at least <code>signal_every</code> send buffers and reuse a slot only once a completion has been reaped that covers it.</p>
+<p>Work requests on a send queue complete in order, so a completion for request <em>k</em> establishes that every request up to <em>k</em> has completed. Track the highest covered sequence number and refuse to reuse beyond it.</p>
+<p>Payload verification from TRD-03 R7 must continue to pass with zero mismatches at every signalling period the suite exercises. A reuse bug here produces corruption that appears only at higher rates, which is exactly the profile that survives testing.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H4</span>
+
+<h3>R5 &mdash; Pipelining</h3>
+<p>With <code>--pipeline depth</code>, keep up to <em>depth</em> sends outstanding before reaping. Clamp against the granted <code>max_send_wr</code> and report the clamped value.</p>
+<p>For <code>RDMA_READ</code>, the bound is different and much lower: the negotiated <code>max_rd_atomic</code> from TRD-06 &sect;5. If the program supports a read mode, clamp reads separately and report both limits &mdash; conflating them produces a transport error that names neither.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H5</span>
+
+<h3>R6 &mdash; Event-Driven Reaping</h3>
+<p>With <code>--reap event</code>, create a completion channel, associate it with the completion queue at creation, and block on events rather than spinning.</p>
+<p>Implement the full sequence from &sect;6 of the Prior Knowledge document: arm before any completion can arrive; re-arm after every event, because a notification disarms the queue;<span class="cite">[2]</span> drain completely on every event, because only completions added after the arm will notify;<span class="cite">[3]</span> and treat an event carrying no completion as normal rather than as an error.<span class="cite">[3]</span></p>
+<p>Impose a timeout on the blocking wait. Exit 8 if it expires &mdash; a distinct code, because a hang here has a specific cause and R8 exists to make you find it.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H6</span>
+
+<h3>R7 &mdash; Batched Acknowledgement</h3>
+<p>Count events and acknowledge them in batches rather than one at a time. <code>ibv_ack_cq_events</code> takes a mutex and is relatively expensive on the data path.<span class="cite">[2][3]</span></p>
+<p>Every event must be acknowledged before the completion queue is destroyed, so flush the outstanding count during teardown. An unacknowledged event blocks destruction &mdash; the same class of hang as TRD-05&rsquo;s unacknowledged connection-manager event, and worth recognising as the same shape.</p>
+<p>Report <code>received</code> and <code>acked</code> counts on the <code>events:</code> line. They must be equal at exit.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H7</span>
+
+<h3>R8 &mdash; Close the Arming Race, and Prove You Did</h3>
+<p>A completion arriving between your final poll and your call to <code>ibv_req_notify_cq</code> generates no notification, and the thread then blocks forever with work in the queue. The specification&rsquo;s remedy is to poll once more after arming.<span class="cite">[4]</span></p>
+<p>Implement it, and <strong>count how many times that extra poll returns something</strong>. Report it as <code>race_polls_hit</code> on the <code>events:</code> line.</p>
+<p>That counter is the requirement. A non-zero value is direct evidence that the race occurred and that your guard caught it; a zero value across a long run at high pipeline depth tells you the window was never hit here, which is not the same as it being impossible. Record both what you observed and what it establishes in <code>docs/efficiency-notes.md</code>.</p>
+<p>Also provide <code>--broken-arming</code>, a hidden flag that omits the extra poll. The suite runs it at high concurrency and expects a timeout rather than completion; if it completes, say so honestly &mdash; the window is narrow and the software provider makes it narrower.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H8</span>
+
+<h3>R9 &mdash; Moderation, Optional and Graceful</h3>
+<p>With <code>--moderate count:usec</code>, configure completion-queue moderation via <code>ibv_modify_cq</code>.</p>
+<p>This is an optional provider capability and the software provider does not implement it. A failure is <strong>not</strong> an error: report <code>moderation=unavailable</code> on the config line, continue, and exit normally. A rung that refuses to run because an optimisation is unsupported is worse than one that reports the fact.</p>
+<p>Where it is supported, note in <code>docs/efficiency-notes.md</code> that the period is added latency in the worst case &mdash; a 16-microsecond period delays a completion by up to 16 microseconds.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H9</span>
+
+<h3>R10 &mdash; Correctness Across the Matrix, Regressions, Leaks</h3>
+<p>Every combination must be correct. The suite exercises a matrix of inline on and off, signalling periods of 1 and 16, pipeline depths of 1 and 8, and both reaping modes, and every cell must complete with zero mismatches.</p>
+<p>Regressions: the <strong>TRD-03 suite</strong> and the <strong>TRD-05 suite</strong> must pass with the defaults, which are exactly TRD-06&rsquo;s behaviour. Defaults that change observable behaviour mean the options are not options.</p>
+<p>Teardown gains the completion channel, destroyed after the completion queue that references it. Leak checks on the poll path, the event path, and a run that exits through R6&rsquo;s timeout.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H10</span>
+
+<h2>Acceptance Criteria</h2>
+
+<table>
+  <tr><th style="width:40px;">ID</th><th>Criterion</th><th style="width:225px;">Verified by</th></tr>
+  <tr><td>R1</td><td>Everything builds clean under <code>-Wall -Wextra</code></td><td><code>test_builds</code></td></tr>
+  <tr><td>R1</td><td><code>--report-config</code> prints all five settings and exits 0</td><td><code>test_reports_config</code></td></tr>
+  <tr><td>R2</td><td>The granted <code>max_inline_data</code> is reported</td><td><code>test_inline_limit_reported</code></td></tr>
+  <tr><td>R2</td><td>A run with <code>--inline</code> completes with zero mismatches</td><td><code>test_inline_correct</code></td></tr>
+  <tr><td>R3</td><td><code>--signal-every 16</code> reaps roughly a sixteenth of the sends</td><td><code>test_signal_every_reduces</code></td></tr>
+  <tr><td>R3</td><td>A period exceeding the send-queue depth is rejected at parse time</td><td><code>test_signal_period_validated</code></td></tr>
+  <tr><td>R4</td><td>Payloads verify at every signalling period exercised</td><td><code>test_buffer_reuse_correct</code></td></tr>
+  <tr><td>R5</td><td>Pipeline depth is clamped to the granted send-queue depth</td><td><code>test_pipeline_clamped</code></td></tr>
+  <tr><td>R5</td><td>A pipelined run completes with zero mismatches</td><td><code>test_pipeline_correct</code></td></tr>
+  <tr><td>R6</td><td>Event-driven reaping completes a run without hanging</td><td><code>test_event_mode_completes</code></td></tr>
+  <tr><td>R6</td><td>An event carrying no completion is not treated as an error</td><td><code>test_empty_events_tolerated</code></td></tr>
+  <tr><td>R7</td><td>Events received and acknowledged are equal at exit</td><td><code>test_events_all_acked</code></td></tr>
+  <tr><td>R8</td><td><code>race_polls_hit</code> is reported and the notes record what it establishes</td><td><code>test_race_guard_reported</code></td></tr>
+  <tr><td>R8</td><td><code>--broken-arming</code> is implemented and its outcome recorded</td><td><code>test_broken_arming_recorded</code></td></tr>
+  <tr><td>R9</td><td>Unsupported moderation reports <code>unavailable</code> and exits 0</td><td><code>test_moderation_graceful</code></td></tr>
+  <tr><td>R10</td><td>Every cell of the option matrix completes with zero mismatches</td><td><code>test_option_matrix</code></td></tr>
+  <tr><td>R10</td><td>The TRD-03 suite passes with the defaults</td><td><code>test_trd03_regression</code></td></tr>
+  <tr><td>R10</td><td>The TRD-05 suite passes with the defaults</td><td><code>test_trd05_regression</code></td></tr>
+  <tr><td>R10</td><td><code>valgrind</code> reports zero bytes definitely lost on three paths</td><td><code>test_no_leaks</code></td></tr>
+</table>
+
+<h2>Deliverables</h2>
+
+<ul>
+  <li><code>limen_pingpong</code>, extended with every option above, defaults unchanged.</li>
+  <li>A <code>limen::CompletionChannel</code> wrapper satisfying TRD-04&rsquo;s static contract, declared so that it outlives the completion queue that references it.</li>
+  <li><code>scripts/trd-07-tests.sh</code>, executable, passing.</li>
+  <li><code>docs/efficiency-notes.md</code> recording: the granted inline limit on this fabric; the R8 race-counter observation and what it does and does not establish; whether moderation was available; and a table of the five techniques naming what each trades away &mdash; <em>without</em> performance claims, since none have been measured.</li>
+  <li>Written answers to the comprehension questions.</li>
+</ul>
+
+<h2>What Comes Next</h2>
+
+<p>TRD-08 measures all of it. Every switch built here becomes a variable in a sweep, and the trades named in your notes become numbers &mdash; latency percentiles across payload sizes with inline on and off, throughput against signalling period, and CPU cost against reaping mode.</p>
+
+<p>It is also the rung where the hardware question resolves. These mechanisms reduce costs that are noise beside the software provider&rsquo;s own overhead, so a sweep on <code>rxe</code> will show them doing approximately nothing. That result is honest and worth recording, and it is the cleanest argument for what a real adapter contributes.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_post_send(3).</em> Linux manual page, section 3. The <code>IBV_SEND_INLINE</code> and <code>IBV_SEND_SIGNALED</code> semantics R2 and R3 depend on, including that inline affects only how the local adapter obtains the data. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+
+  <li>[2] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual</em>, &ldquo;Active Queue Pair Operations.&rdquo; That a notification disarms the completion queue until re-armed, as R6 requires, and that acknowledging takes a mutex and batching performs better, as R7 requires. https://docs.nvidia.com/networking/display/rdmaawareprogrammingv17/active+queue+pair+operations</li>
+
+  <li>[3] <em>ibv_get_cq_event(3)</em> and <em>ibv_ack_cq_events(3).</em> Linux manual pages, section 3. The event-loop example R6 implements, the note that an event may arrive with no completion in the queue, and the cost of acknowledgement on the data path. https://man7.org/linux/man-pages/man3/ibv_ack_cq_events.3.html</li>
+
+  <li>[4] Dreier, Roland. <em>IB: Return &ldquo;maybe missed event&rdquo; hint from ib_req_notify_cq().</em> Linux kernel patch. States the race R8 guards against and that the InfiniBand specification recommends an additional poll after requesting notification. Accessed 2026-07. https://lkml.rescloud.iu.edu/0704.3/1689.html</li>
+
+  <li>[5] Barak, Dotan. <em>RDMAmojo &mdash; ibv_req_notify_cq().</em> That notification applies only to completions added after the request, which is why R6 requires a complete drain. Accessed 2026-07. https://www.rdmamojo.com/2013/02/22/ibv_req_notify_cq/</li>
+
+  <li>[6] <em>ibv_create_cq(3)</em>, <em>ibv_create_comp_channel(3)</em>, <em>ibv_modify_cq(3).</em> Linux manual pages, section 3. Channel creation and association used in R6, and the optional moderation interface R9 must degrade gracefully around.</li>
+</ol>
+
+<div class="footer">
+  TRD-07: Completion Efficiency &nbsp;|&nbsp; Requirements &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

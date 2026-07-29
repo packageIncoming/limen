@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-01: Context, Protection Domain, Memory Registration — Prior Knowledge</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; }
+em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; }
+li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-01: Context, Protection Domain, Memory Registration</h1>
+  <div class="subtitle">Prior Knowledge — Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-00 &nbsp;|&nbsp; Difficulty: Medium &nbsp;|&nbsp; Estimated: 3–4 sessions</div>
+</div>
+
+<h2>1 &nbsp; Where This Fits</h2>
+
+<p>TRD-00 left you with a verified fabric and a build system that finds the RDMA libraries but compiles nothing. Reference tools moved bytes across it; you did not.</p>
+
+<p>This rung writes the project's first verbs code. By the end you will have a diagnostic program that enumerates adapters, opens one, reports its real capabilities, allocates a protection domain, registers a buffer, and prints the keys that registration produced — then tears all of it down in the correct order without leaking.</p>
+
+<p>Nothing here transmits anything. There is no connection, no queue pair, and no peer. That is not a limitation of the rung; it is the shape of the API. Every object built here must exist before a queue pair can be created, and the memory you register here is the memory every later transfer will name. TRD-02 creates the queue pair from this protection domain. TRD-03 posts work requests that reference this memory region by its key.</p>
+
+<h2>2 &nbsp; The Object Graph</h2>
+
+<p>Verbs objects form a strict ownership hierarchy. Each is created from a parent, and each must be destroyed before its parent. Learning the graph now prevents an entire class of confusing failure later, because the API does not always tell you clearly when you have violated it.</p>
+
+<div class="diagram">
+  <svg viewBox="0 0 660 300" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif" font-size="9">
+    <defs>
+      <marker id="ar" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000"/></marker>
+    </defs>
+
+    <rect x="240" y="14" width="180" height="34" fill="none" stroke="#000" stroke-width="1"/>
+    <text x="330" y="35" text-anchor="middle">device list (ibv_device *[])</text>
+    <line x1="330" y1="48" x2="330" y2="66" stroke="#000" stroke-width="1.2" marker-end="url(#ar)"/>
+
+    <rect x="240" y="68" width="180" height="38" fill="none" stroke="#000" stroke-width="2.5"/>
+    <text x="330" y="85" text-anchor="middle" font-weight="bold">device context</text>
+    <text x="330" y="98" text-anchor="middle" font-size="8">ibv_context — TRD-01</text>
+
+    <line x1="290" y1="106" x2="200" y2="140" stroke="#000" stroke-width="1.2" marker-end="url(#ar)"/>
+    <line x1="370" y1="106" x2="470" y2="140" stroke="#000" stroke-width="1.2" marker-end="url(#ar)"/>
+
+    <rect x="110" y="142" width="180" height="38" fill="none" stroke="#000" stroke-width="2.5"/>
+    <text x="200" y="159" text-anchor="middle" font-weight="bold">protection domain</text>
+    <text x="200" y="172" text-anchor="middle" font-size="8">ibv_pd — TRD-01</text>
+
+    <rect x="390" y="142" width="180" height="38" fill="none" stroke="#000" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <text x="480" y="159" text-anchor="middle">completion queue</text>
+    <text x="480" y="172" text-anchor="middle" font-size="8">ibv_cq — TRD-02</text>
+
+    <line x1="160" y1="180" x2="110" y2="214" stroke="#000" stroke-width="1.2" marker-end="url(#ar)"/>
+    <line x1="240" y1="180" x2="290" y2="214" stroke="#000" stroke-width="1.2" marker-end="url(#ar)"/>
+    <line x1="470" y1="180" x2="360" y2="214" stroke="#000" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#ar)"/>
+
+    <rect x="20" y="216" width="180" height="38" fill="none" stroke="#000" stroke-width="2.5"/>
+    <text x="110" y="233" text-anchor="middle" font-weight="bold">memory region</text>
+    <text x="110" y="246" text-anchor="middle" font-size="8">ibv_mr — TRD-01</text>
+
+    <rect x="250" y="216" width="180" height="38" fill="none" stroke="#000" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <text x="340" y="233" text-anchor="middle">queue pair</text>
+    <text x="340" y="246" text-anchor="middle" font-size="8">ibv_qp — TRD-02</text>
+
+    <text x="330" y="285" text-anchor="middle" font-size="8.5" font-style="italic">Solid = built in this TRD. Dashed = later. Arrows point from parent to child.</text>
+  </svg>
+  <div class="diagram-caption">Figure 1 — The verbs object graph. Destruction runs against every arrow: children first, always.</div>
+</div>
+
+<p>Three of the four boxes you will build are singletons in a simple program — one context, one protection domain, one memory region. Real transports hold many memory regions and several queue pairs against a single protection domain, which is why the graph branches.</p>
+
+<h2>3 &nbsp; Enumerating Devices</h2>
+
+<p>The entry point to the entire API is <code>ibv_get_device_list()</code>. It returns a null-terminated array of pointers to device descriptors and, through an out parameter, how many there are.<span class="cite">[4]</span></p>
+
+<pre>int num = 0;
+struct ibv_device **list = ibv_get_device_list(&amp;num);
+if (!list) { /* errno is set */ }</pre>
+
+<p>The descriptors are opaque. Two accessors are useful: <code>ibv_get_device_name()</code> gives the kernel's name for the device — the same string TRD-00 used with <code>-d</code> — and <code>ibv_get_device_guid()</code> gives its globally unique identifier as a 64-bit value in network byte order.</p>
+
+<p>The list must be released with <code>ibv_free_device_list()</code>. It is safe, and conventional, to free it immediately after opening the device you want: the context returned by <code>ibv_open_device()</code> holds its own reference and remains valid after the list is gone. The reference implementation does exactly this.<span class="cite">[2]</span></p>
+
+<div class="warning">
+  An empty list is not an error. It means the kernel has no RDMA devices registered — most often that <code>rdma_rxe</code> is not loaded or the link was never created. Distinguish this case from a failed call, because the two need different fixes and reporting them identically will waste someone's evening.
+</div>
+
+<h2>4 &nbsp; The Device Context</h2>
+
+<p><code>ibv_open_device()</code> takes a descriptor and returns a <code>struct ibv_context *</code>. This is the handle everything else is created from, and it is the point at which the userspace library loads the provider driver for that specific device — the software provider for <code>rxe</code>, a vendor driver for hardware.</p>
+
+<p>Opening a device is a real operation, not a lookup. Underneath, the library opens a character device under <code>/dev/infiniband/</code>, and the file descriptor for it lives in the context's <code>cmd_fd</code> field. Every subsequent verbs call that must reach the kernel travels through it. This is worth knowing for two reasons: it explains why permissions on <code>/dev/infiniband/</code> matter, and it is why <code>strace</code> is useful for diagnosing verbs programs even though the data path later bypasses the kernel entirely.</p>
+
+<p>The matching teardown is <code>ibv_close_device()</code>. It must be the last verbs call your program makes.</p>
+
+<h2>5 &nbsp; Device and Port Attributes</h2>
+
+<p><code>ibv_query_device()</code> fills a <code>struct ibv_device_attr</code> describing what the adapter can do.<span class="cite">[5]</span> The fields that matter across this ladder:</p>
+
+<table>
+  <tr><th style="width:170px;">Field</th><th>Meaning and where it bites</th></tr>
+  <tr><td><code>max_qp</code></td><td>Queue pairs the device supports. Ample everywhere; listed for completeness.</td></tr>
+  <tr><td><code>max_qp_wr</code></td><td>Outstanding work requests per queue. This is a hard ceiling on how many sends you may post before reaping completions, and exceeding it is a design error you will meet in TRD-03.</td></tr>
+  <tr><td><code>max_sge</code></td><td>Scatter-gather entries per work request. Caps how many discontiguous buffers one transfer can name.</td></tr>
+  <tr><td><code>max_cq</code>, <code>max_cqe</code></td><td>Completion queues, and entries per queue. The second constrains TRD-02's sizing.</td></tr>
+  <tr><td><code>max_mr</code>, <code>max_mr_size</code></td><td>Number of registrations and the largest single one.</td></tr>
+  <tr><td><code>max_qp_rd_atom</code></td><td>Outstanding RDMA reads and atomics per queue pair. Becomes relevant in TRD-06.</td></tr>
+  <tr><td><code>device_cap_flags</code></td><td>A bitmask of optional capabilities. Not every provider implements every feature.</td></tr>
+  <tr><td><code>fw_ver</code>, <code>vendor_id</code>, <code>hw_ver</code></td><td>Identification. Meaningful on hardware, mostly empty on the software provider.</td></tr>
+</table>
+
+<p><code>ibv_query_port()</code> fills a <code>struct ibv_port_attr</code> for one port.</p>
+
+<div class="callout">
+  <div class="callout-label">Ports are numbered from 1</div>
+  <p>There is no port 0. Passing 0 to <code>ibv_query_port()</code> fails, and the failure does not say why. <code>phys_port_cnt</code> in the device attributes tells you how many exist; on <code>rxe</code> it is 1.</p>
+</div>
+
+<table>
+  <tr><th style="width:170px;">Field</th><th>Meaning</th></tr>
+  <tr><td><code>state</code></td><td><code>IBV_PORT_ACTIVE</code> is the only value that permits communication. TRD-00 checked this with a tool; now you check it in code.</td></tr>
+  <tr><td><code>link_layer</code></td><td><code>IBV_LINK_LAYER_ETHERNET</code> for RoCE, <code>IBV_LINK_LAYER_INFINIBAND</code> for native.</td></tr>
+  <tr><td><code>active_mtu</code></td><td>An enum, not a number. Convert with <code>ibv_mtu_to_enum()</code>'s inverse or a switch. Must match on both ends of a connection.</td></tr>
+  <tr><td><code>max_msg_sz</code></td><td>Largest single message the port accepts.</td></tr>
+  <tr><td><code>gid_tbl_len</code></td><td>Entries in the GID table — the table TRD-00 made you index into by hand.</td></tr>
+</table>
+
+<p>Query these rather than assuming them. The values differ between the software provider and hardware, and code that hardcodes a queue depth learned from <code>rxe</code> is code that fails on a real adapter for reasons that look unrelated.</p>
+
+<h2>6 &nbsp; Protection Domains</h2>
+
+<p>A protection domain is an isolation boundary, and it is the simplest object in the API to create and the easiest to misunderstand. <code>ibv_alloc_pd()</code> takes a context and returns a handle. It has no attributes and nothing to configure.<span class="cite">[6]</span></p>
+
+<p>Its purpose is enforcement. Every memory region and every queue pair belongs to exactly one protection domain, and <strong>the adapter refuses any operation in which a queue pair addresses a memory region from a different domain</strong>. A work request naming a key from the wrong domain fails with a protection error rather than reading the memory.</p>
+
+<p>This matters because RDMA hands the adapter direct access to process memory. Without a scoping mechanism, one connection's key could name any registered buffer in the process. The protection domain is the mechanism that makes multi-tenancy possible: a server handling many clients gives each connection its own domain, and a bug or a hostile peer on one connection cannot reach another's buffers.</p>
+
+<p>Limen will use a single domain for a long while, which makes the enforcement invisible. Understanding it now is what makes the eventual protection error in TRD-03 or TRD-06 diagnosable rather than mystifying.</p>
+
+<h2>7 &nbsp; Memory Registration</h2>
+
+<p>This is the concept the rung exists for, and the one with no analogue in sockets programming.</p>
+
+<h3>The problem</h3>
+
+<p>Your program addresses memory by virtual address. The adapter cannot use virtual addresses — it is a peripheral performing direct memory access, and it needs physical addresses. Two things stand in the way.</p>
+
+<p>First, the mapping from virtual to physical is per-process and known only to the kernel's page tables. Second, and worse, that mapping is not stable. The kernel may swap a page out, migrate it during compaction, or relocate it for any number of reasons. A physical address handed to a peripheral could be pointing at unrelated data microseconds later.</p>
+
+<h3>What registration does</h3>
+
+<p><code>ibv_reg_mr()</code> is where that problem is solved.<span class="cite">[3]</span> Passing a protection domain, an address, a length, and a set of access flags, the call does the following:</p>
+
+<ol>
+  <li><strong>Pins the pages.</strong> The kernel takes a reference on every page in the range through the common <code>ib_umem</code> path, marking them unswappable and unmovable for as long as the registration lives.</li>
+  <li><strong>Builds a translation table.</strong> The virtual-to-physical mapping for the range is recorded where the provider can consult it. On hardware this table is programmed into the adapter and the pages are mapped for DMA; on the software provider it is kept in kernel memory, since there is no device to program.</li>
+  <li><strong>Accounts against the locked-memory limit.</strong> Pinned pages count against <code>RLIMIT_MEMLOCK</code>.<span class="cite">[11]</span></li>
+  <li><strong>Generates two keys.</strong> A local key and a remote key, discussed in section 8.</li>
+</ol>
+
+<div class="diagram">
+  <svg viewBox="0 0 660 250" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif" font-size="9">
+    <defs><marker id="ar2" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000"/></marker></defs>
+
+    <text x="95" y="16" text-anchor="middle" font-weight="bold" font-size="10">process virtual</text>
+    <text x="330" y="16" text-anchor="middle" font-weight="bold" font-size="10">physical memory</text>
+    <text x="565" y="16" text-anchor="middle" font-weight="bold" font-size="10">provider</text>
+
+    <rect x="30" y="34" width="130" height="150" fill="none" stroke="#000" stroke-width="1.5"/>
+    <line x1="30" y1="72" x2="160" y2="72" stroke="#000" stroke-width="0.8"/>
+    <line x1="30" y1="110" x2="160" y2="110" stroke="#000" stroke-width="0.8"/>
+    <line x1="30" y1="148" x2="160" y2="148" stroke="#000" stroke-width="0.8"/>
+    <text x="95" y="57" text-anchor="middle" font-size="8">page 0</text>
+    <text x="95" y="95" text-anchor="middle" font-size="8">page 1</text>
+    <text x="95" y="133" text-anchor="middle" font-size="8">page 2</text>
+    <text x="95" y="171" text-anchor="middle" font-size="8">page 3</text>
+    <text x="95" y="200" text-anchor="middle" font-size="8" font-style="italic">buffer, contiguous</text>
+
+    <rect x="265" y="34" width="130" height="150" fill="none" stroke="#000" stroke-width="1.5"/>
+    <line x1="265" y1="72" x2="395" y2="72" stroke="#000" stroke-width="0.8"/>
+    <line x1="265" y1="110" x2="395" y2="110" stroke="#000" stroke-width="0.8"/>
+    <line x1="265" y1="148" x2="395" y2="148" stroke="#000" stroke-width="0.8"/>
+    <text x="330" y="57" text-anchor="middle" font-size="8">frame 0x2f1</text>
+    <text x="330" y="95" text-anchor="middle" font-size="8">frame 0x0a7</text>
+    <text x="330" y="133" text-anchor="middle" font-size="8">frame 0x913</text>
+    <text x="330" y="171" text-anchor="middle" font-size="8">frame 0x44c</text>
+    <text x="330" y="200" text-anchor="middle" font-size="8" font-style="italic">scattered, and now PINNED</text>
+
+    <line x1="160" y1="53" x2="263" y2="53" stroke="#000" stroke-width="1" marker-end="url(#ar2)"/>
+    <line x1="160" y1="91" x2="263" y2="91" stroke="#000" stroke-width="1" marker-end="url(#ar2)"/>
+    <line x1="160" y1="129" x2="263" y2="129" stroke="#000" stroke-width="1" marker-end="url(#ar2)"/>
+    <line x1="160" y1="167" x2="263" y2="167" stroke="#000" stroke-width="1" marker-end="url(#ar2)"/>
+
+    <rect x="470" y="60" width="190" height="98" fill="none" stroke="#000" stroke-width="2.5"/>
+    <text x="565" y="79" text-anchor="middle" font-weight="bold" font-size="9">translation table</text>
+    <text x="565" y="95" text-anchor="middle" font-size="8">va base + length</text>
+    <text x="565" y="109" text-anchor="middle" font-size="8">page frame list</text>
+    <text x="565" y="123" text-anchor="middle" font-size="8">access rights</text>
+    <text x="565" y="139" text-anchor="middle" font-size="8">lkey / rkey</text>
+    <line x1="395" y1="109" x2="468" y2="109" stroke="#000" stroke-width="1.2" marker-end="url(#ar2)"/>
+  </svg>
+  <div class="diagram-caption">Figure 2 — What <code>ibv_reg_mr()</code> produces. The buffer is contiguous only in virtual space; registration records where its pages actually live and freezes them there.</div>
+</div>
+
+<h3>What it costs</h3>
+
+<p>Registration is expensive — hundreds of microseconds to milliseconds for a large region, dominated by walking and pinning every page. It is emphatically not something to do per transfer. Real transports register buffers once at startup and reuse them for the lifetime of the process, and Limen will do the same. This single fact shapes the architecture of every RDMA application ever written: the buffer pool exists because registration is expensive.</p>
+
+<p>Pinned memory is also memory the kernel cannot reclaim. A process that registers gigabytes has removed those gigabytes from the system's reach, which is why the locked-memory limit exists.</p>
+
+<h3>The locked-memory limit</h3>
+
+<p><code>RLIMIT_MEMLOCK</code> caps how much memory a process may pin.<span class="cite">[11]</span> Historically the default was tiny — 64 kilobytes on many distributions — which made an unexplained registration failure the single most common first encounter with RDMA. Current systems often set it to unlimited for ordinary users, so you may not hit it; on a hardware adapter, in a container, or on a hardened host, you very likely will.</p>
+
+<p>Check yours with <code>ulimit -l</code>. Page pinning happens on the software provider exactly as it does on hardware, through the same kernel code path, so the failure R8 asks you to handle is real on this fabric rather than simulated. The point of R8 is not to guarantee you hit the ceiling — it is that a registration failure must produce a message naming the probable cause, because the raw failure gives you a bare <code>ENOMEM</code> with nothing to act on.</p>
+
+
+
+<h3>Access flags</h3>
+
+<p>The fourth argument is a bitmask declaring what the region permits.<span class="cite">[3]</span> It is not a hint; the adapter enforces it.</p>
+
+<table>
+  <tr><th style="width:230px;">Flag</th><th>Permits</th></tr>
+  <tr><td><code>0</code> (no flags)</td><td>Local read only. Legal, and correct for a send-only buffer.</td></tr>
+  <tr><td><code>IBV_ACCESS_LOCAL_WRITE</code></td><td>The local adapter may write here. Required for any receive buffer and for the destination of a local RDMA read.</td></tr>
+  <tr><td><code>IBV_ACCESS_REMOTE_READ</code></td><td>A peer may read this region with <code>RDMA_READ</code>.</td></tr>
+  <tr><td><code>IBV_ACCESS_REMOTE_WRITE</code></td><td>A peer may write this region with <code>RDMA_WRITE</code>.</td></tr>
+  <tr><td><code>IBV_ACCESS_REMOTE_ATOMIC</code></td><td>A peer may perform atomic operations here.</td></tr>
+  <tr><td><code>IBV_ACCESS_MW_BIND</code></td><td>Memory windows may be bound against this region. Not used in this ladder.</td></tr>
+</table>
+
+<div class="warning">
+  Granting <code>IBV_ACCESS_REMOTE_WRITE</code> or <code>IBV_ACCESS_REMOTE_ATOMIC</code> without also granting <code>IBV_ACCESS_LOCAL_WRITE</code> is invalid, and <code>ibv_reg_mr()</code> rejects it.<span class="cite">[3]</span> The reason is not arbitrary: a remote write is ultimately performed by the <em>local</em> adapter writing into local memory, so local write permission is a prerequisite for remote write permission. R7 makes you demonstrate this deliberately, because meeting it by accident later is confusing.
+</div>
+
+<p>Grant the minimum. A region registered with remote write permission is a region any peer holding its key may overwrite, for as long as the registration lives.</p>
+
+<h2>8 &nbsp; Keys: lkey and rkey</h2>
+
+<p>Registration returns a <code>struct ibv_mr</code> whose two most important fields are <code>lkey</code> and <code>rkey</code>. Both are 32-bit handles naming the region, and confusing them is a standard early mistake.</p>
+
+<table>
+  <tr><th style="width:100px;"></th><th>lkey (local)</th><th>rkey (remote)</th></tr>
+  <tr><td>Used by</td><td>Your own work requests</td><td>The peer's work requests</td></tr>
+  <tr><td>Appears in</td><td>The <code>lkey</code> field of every scatter-gather entry you post</td><td>The <code>rkey</code> field of a one-sided work request, on the far side</td></tr>
+  <tr><td>Travels</td><td>Never leaves the machine</td><td>Sent to the peer during connection setup</td></tr>
+  <tr><td>Meaningful when</td><td>Always</td><td>Only if remote access flags were granted</td></tr>
+  <tr><td>First used in</td><td>TRD-03</td><td>TRD-06</td></tr>
+</table>
+
+<p>The remote key is a capability. Handing it to a peer grants that peer direct access to the region for as long as the registration lives, with no per-operation check by your software — your program is not consulted and is not notified. This is the trust boundary at the centre of RDMA's security model, and it is the reason protection domains exist and the reason access flags should be minimal.</p>
+
+<p>A one-sided operation therefore needs three things from the peer: the remote virtual address, the length, and the remote key. TRD-06 exchanges exactly that triple during connection setup. Printing the keys in this TRD is what makes that exchange concrete when you reach it.</p>
+
+<h2>9 &nbsp; Destruction Order</h2>
+
+<p>Every object must be destroyed before its parent. Reversed against Figure 1, the order for this TRD is:</p>
+
+<pre>ibv_dereg_mr(mr);        /* children of the PD, first */
+ibv_dealloc_pd(pd);      /* then the PD */
+ibv_close_device(ctx);   /* then the context, last */</pre>
+
+<p>Violating this is not always loud. <code>ibv_dealloc_pd()</code> with a live memory region returns <code>EBUSY</code>, which a program that ignores return values will never see — and the process then exits with pinned pages and kernel objects still referenced. The kernel cleans up on process exit, so a short program appears to work. A long-running one leaks until registration starts failing.</p>
+
+<p>This is the case that motivates TRD-04. Three objects can be ordered by hand. A transport with a dozen regions, several queue pairs, completion queues, and an event channel cannot, especially on error paths where half the objects exist and half do not.</p>
+
+<h2>10 &nbsp; Error Handling in Verbs</h2>
+
+<p>The verbs API uses three different error conventions, and the inconsistency is real rather than a misreading. Check the manual page for each function; do not generalize from the last one you used.</p>
+
+<table>
+  <tr><th style="width:210px;">Convention</th><th style="width:170px;">Functions</th><th>How to read it</th></tr>
+  <tr>
+    <td>Returns a pointer, <code>NULL</code> on failure, sets <code>errno</code></td>
+    <td><code>ibv_open_device</code>, <code>ibv_alloc_pd</code>, <code>ibv_reg_mr</code>, <code>ibv_get_device_list</code></td>
+    <td>Check for <code>NULL</code>, then read <code>errno</code>. Familiar C convention.</td>
+  </tr>
+  <tr>
+    <td>Returns 0, or an <code>errno</code> <em>value</em> on failure</td>
+    <td><code>ibv_query_device</code>, <code>ibv_query_port</code>, <code>ibv_dealloc_pd</code>, <code>ibv_dereg_mr</code></td>
+    <td>The return value <em>is</em> the error code. Do not read <code>errno</code> — it may hold something stale. Pass the return value to <code>strerror()</code>.</td>
+  </tr>
+  <tr>
+    <td>Returns 0, or <code>-1</code> on failure</td>
+    <td><code>ibv_close_device</code></td>
+    <td>Classic form.</td>
+  </tr>
+</table>
+
+<p>The middle convention causes the most damage, because <code>if (ibv_query_port(...) &lt; 0)</code> compiles, looks correct, and never fires — the failure return is positive. R10 requires every verbs call to be checked with the convention its own manual page documents.</p>
+
+<h2>11 &nbsp; Failure Modes</h2>
+
+<table>
+  <tr><th style="width:225px;">Symptom</th><th style="width:215px;">Cause</th><th>Resolution</th></tr>
+  <tr><td>Device list is empty, call succeeded</td><td><code>rdma_rxe</code> not loaded, or no link created</td><td>Repeat TRD-00 R3 and R4. Not a code fault.</td></tr>
+  <tr><td><code>ibv_open_device</code> returns <code>NULL</code>, <code>errno</code> is <code>EACCES</code></td><td>No permission on <code>/dev/infiniband/uverbs0</code></td><td>Add your user to the appropriate group, or check the device node's mode.</td></tr>
+  <tr><td><code>ibv_query_port</code> fails with no obvious cause</td><td>Port number 0 was passed</td><td>Ports are numbered from 1.</td></tr>
+  <tr><td>Error check never fires despite failures</td><td>Testing <code>&lt; 0</code> on a function that returns a positive <code>errno</code></td><td>Test <code>!= 0</code> and treat the return value as the code.</td></tr>
+  <tr><td><code>ibv_reg_mr</code> returns <code>NULL</code>, <code>errno</code> is <code>ENOMEM</code></td><td>Locked-memory limit exceeded</td><td>Report the limit alongside the failure. Raise with <code>ulimit -l</code> if appropriate.</td></tr>
+  <tr><td><code>ibv_reg_mr</code> returns <code>NULL</code>, <code>errno</code> is <code>EINVAL</code></td><td>Remote write or atomic requested without local write</td><td>Add <code>IBV_ACCESS_LOCAL_WRITE</code>.</td></tr>
+  <tr><td><code>ibv_dealloc_pd</code> returns <code>EBUSY</code></td><td>A memory region or queue pair still belongs to the domain</td><td>Destroy children first. This is a destruction-order fault.</td></tr>
+  <tr><td>Program works, <code>valgrind</code> reports leaks</td><td>Device list never freed, or a teardown skipped on an error path</td><td>Free the list after opening; make every early return unwind what it created.</td></tr>
+  <tr><td>Registration succeeds for a huge size that should fail</td><td>Locked-memory limit is unlimited on this host</td><td>Not a fault. Check <code>ulimit -l</code>; test against a size above the actual limit.</td></tr>
+  <tr><td>Segfault inside a verbs call</td><td>A handle from a failed call was used anyway</td><td>Every creation is checked before its result is used.</td></tr>
+</table>
+
+<h2>12 &nbsp; What Is Deliberately Left Out</h2>
+
+<p>This TRD registers one region of one buffer with one protection domain. Real transports maintain pools of pre-registered buffers, because registration cost forbids doing it per message. Limen builds no pool — TRD-03 reuses a single buffer, and pooling is deferred until there is a reason for it.</p>
+
+<p>Also absent: memory windows, which provide finer-grained and cheaper-to-rebind remote access than a full registration; on-demand paging, which lifts the pinning requirement on adapters that support it; and registration caches, which every production RDMA library has and every one of them has had bugs in. None is needed to move bytes, and each is a substantial topic.</p>
+
+<p>The keys printed here go nowhere. There is no peer to send them to and no connection to send them over. TRD-05 builds the exchange and TRD-06 uses the remote key for the first time. Printing them now is deliberate: it makes the value concrete before it acquires a job.</p>
+
+<h2>13 &nbsp; Further Reading</h2>
+
+<p><strong>Read before starting the requirements:</strong></p>
+<ul>
+  <li><strong><code>ibv_reg_mr(3)</code></strong><span class="cite">[3]</span> — the full flag table and the constraint between remote and local write. Two pages, and the densest useful text for this rung.</li>
+  <li><strong><code>ibv_get_device_list(3)</code></strong> and <strong><code>ibv_open_device(3)</code></strong><span class="cite">[4]</span> — short, and they settle the list-lifetime question in section 3.</li>
+</ul>
+
+<p><strong>Read while implementing:</strong></p>
+<ul>
+  <li><strong><code>ibv_query_device(3)</code></strong> and <strong><code>ibv_query_port(3)</code></strong><span class="cite">[5]</span> — the complete attribute structures, which are longer than the subset tabulated in section 5.</li>
+  <li><strong><code>rc_pingpong.c</code></strong>, lines from <code>ibv_get_device_list</code> through <code>ibv_reg_mr</code><span class="cite">[2]</span> — you annotated this in TRD-00. Reread the first eighty lines now that you know what they are doing.</li>
+</ul>
+
+<p><strong>Reference as needed:</strong></p>
+<ul>
+  <li><strong>RDMAmojo</strong><span class="cite">[7]</span> — its per-function pages on <code>ibv_reg_mr</code> and <code>ibv_alloc_pd</code> go beyond the manual pages, particularly on flag interactions.</li>
+  <li><strong>RDMA Aware Networks Programming User Manual</strong><span class="cite">[8]</span> — the memory registration chapter is the best narrative treatment of pinning and key semantics in print.</li>
+  <li><strong><em>Computer Systems: A Programmer's Perspective</em>, ch. 9</strong><span class="cite">[10]</span> — if section 7's discussion of virtual-to-physical translation was unfamiliar, read this before continuing. Everything in this rung rests on it.</li>
+</ul>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] InfiniBand Trade Association. <em>InfiniBand Architecture Specification, Volume 1, Release 1.7.</em> Chapter 10, "Software Transport Interface" — normative definition of protection domains, memory regions, and access rights. https://www.infinibandta.org/ibta-specification/</li>
+
+  <li>[2] linux-rdma. <em>rdma-core.</em> <code>libibverbs/examples/rc_pingpong.c</code> — reference usage of device enumeration, context, protection domain, and registration. Accessed 2026-07. https://github.com/linux-rdma/rdma-core</li>
+
+  <li>[3] <em>ibv_reg_mr(3).</em> Linux manual page, section 3. Access flag semantics, the local-write prerequisite for remote write and atomic, and the fields of <code>struct ibv_mr</code>.</li>
+
+  <li>[4] <em>ibv_get_device_list(3)</em> and <em>ibv_open_device(3).</em> Linux manual pages, section 3. Device enumeration, list lifetime, and context creation.</li>
+
+  <li>[5] <em>ibv_query_device(3)</em> and <em>ibv_query_port(3).</em> Linux manual pages, section 3. Complete attribute structures and the port numbering convention.</li>
+
+  <li>[6] <em>ibv_alloc_pd(3).</em> Linux manual page, section 3.</li>
+
+  <li>[7] Barak, Dotan. <em>RDMAmojo.</em> Per-function reference for the verbs API. Accessed 2026-07. https://www.rdmamojo.com/</li>
+
+  <li>[8] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual.</em> Memory registration chapter, covering pinning, registration cost, and key semantics.</li>
+
+  <li>[9] Linux kernel documentation. <em>InfiniBand and RDMA subsystem.</em> Background on the <code>ib_umem</code> path used by all providers for user memory registration. Accessed 2026-07. https://docs.kernel.org/infiniband/</li>
+
+  <li>[10] Bryant, Randal E., and David R. O'Hallaron. <em>Computer Systems: A Programmer's Perspective.</em> 3rd ed., Pearson, 2015. Ch. 9, "Virtual Memory" — address translation and page management underlying section 7.</li>
+
+  <li>[11] <em>getrlimit(2).</em> Linux manual page, section 2. See the <code>RLIMIT_MEMLOCK</code> entry for the locked-memory limit that constrains registration.</li>
+</ol>
+
+<div class="footer">
+  TRD-01: Context, Protection Domain, Memory Registration &nbsp;|&nbsp; Prior Knowledge &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

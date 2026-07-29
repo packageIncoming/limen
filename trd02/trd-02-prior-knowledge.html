@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-02: Queue Pairs and the State Machine — Prior Knowledge</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; }
+em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; }
+li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-02: Queue Pairs and the State Machine</h1>
+  <div class="subtitle">Prior Knowledge — Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-01 &nbsp;|&nbsp; Difficulty: High &nbsp;|&nbsp; Estimated: 4–6 sessions</div>
+</div>
+
+<h2>1 &nbsp; Where This Fits</h2>
+
+<p>TRD-01 left you with an open device, a protection domain, and a registered buffer whose keys you printed. Nothing was connected to anything, because nothing in the API so far can be.</p>
+
+<p>This rung builds the connection. You will create a completion queue, create a reliable-connected queue pair against the protection domain from TRD-01, exchange four values with a peer over an ordinary TCP socket, and drive the queue pair through four states until both ends are ready to send. At the end, both sides query their queue pair and report <code>RTS</code>.</p>
+
+<p>Nothing is transmitted over RDMA. The queue pair is connected and idle. TRD-03 posts the first work request into it.</p>
+
+<p>This is the hardest rung in the ladder, and the difficulty is concentrated in one place: the transition from <code>INIT</code> to <code>RTR</code> requires eleven fields to be correct simultaneously, and getting any of them wrong produces an error code that does not identify which. Sections 6 through 9 exist to make that transition survivable.</p>
+
+<h2>2 &nbsp; What a Queue Pair Is</h2>
+
+<p>A queue pair is a connection endpoint consisting of two queues: a <strong>send queue</strong> and a <strong>receive queue</strong>. You place work requests into them; the adapter removes work requests from them and acts on them. The name is literal — it is a pair of queues, and the pairing is what makes it one endpoint rather than two.</p>
+
+<p>The closest analogy is a socket, and it is worth being precise about where the analogy fails, because relying on it past that point is how people get lost.</p>
+
+<table>
+  <tr><th style="width:150px;"></th><th>TCP socket</th><th>Queue pair</th></tr>
+  <tr><td>Created by</td><td><code>socket()</code></td><td><code>ibv_create_qp()</code></td>
+  <tr><td>Connection state</td><td>Managed by the kernel; you observe it</td><td>Managed by you, explicitly, through four transitions</td></tr>
+  <tr><td>Addressing the peer</td><td>An IP address and a port</td><td>The peer's queue pair number, packet sequence number, and GID</td></tr>
+  <tr><td>How the peer is discovered</td><td>The kernel resolves and handshakes</td><td>You transfer the values yourself, by any means you like</td></tr>
+  <tr><td>Sending</td><td><code>write()</code> — returns when the data is buffered</td><td>Post a work request — returns immediately, completion arrives later</td></tr>
+  <tr><td>Buffering</td><td>The kernel holds a send and receive buffer</td><td>None. Your buffers are the buffers.</td></tr>
+  <tr><td>Flow control</td><td>The receive window, managed for you</td><td>None you did not build</td></tr>
+</table>
+
+<p>The last three rows are the substance. A queue pair has no buffers of its own and does no bookkeeping on your behalf. Every guarantee beyond ordered reliable delivery of individual messages is yours to construct.</p>
+
+<h3>Transport service types</h3>
+
+<p>The InfiniBand transport defines several service types.<span class="cite">[1]</span> Three matter in practice:</p>
+
+<table>
+  <tr><th style="width:130px;">Type</th><th style="width:110px;">Constant</th><th>Properties</th></tr>
+  <tr><td>Reliable Connected</td><td><code>IBV_QPT_RC</code></td><td>One peer for the queue pair's lifetime. Delivery is acknowledged, ordered, and retransmitted on loss. Supports one-sided operations and atomics. <strong>This is what Limen uses.</strong></td></tr>
+  <tr><td>Unreliable Connected</td><td><code>IBV_QPT_UC</code></td><td>One peer, no acknowledgement or retransmission. Supports <code>RDMA_WRITE</code> but not <code>RDMA_READ</code> or atomics, because both require a response.</td></tr>
+  <tr><td>Unreliable Datagram</td><td><code>IBV_QPT_UD</code></td><td>Any peer per message, like UDP. No one-sided operations at all. Limited to one path MTU per message.</td></tr>
+</table>
+
+<p>Reliable Connected is chosen because Limen's later rungs need one-sided reads and atomics, and because the reliability is implemented in the transport rather than by you. The cost is that a queue pair is bound to exactly one peer, so a server handling <em>N</em> clients holds <em>N</em> queue pairs.</p>
+
+<h2>3 &nbsp; Completion Queues</h2>
+
+<p>A queue pair must be given a completion queue before it can be created, because a queue pair with nowhere to report finished work is not a usable object.</p>
+
+<p>The adapter deposits a completion queue entry for each finished work request: an identifier you chose when posting, a status, an opcode, and a byte count. You retrieve them by polling. That is TRD-03's business — here the completion queue only needs to exist and be correctly sized.</p>
+
+<pre>struct ibv_cq *ibv_create_cq(struct ibv_context *context,
+                             int                 cqe,
+                             void               *cq_context,
+                             struct ibv_comp_channel *channel,
+                             int                 comp_vector);</pre>
+
+<p><code>cqe</code> is the minimum number of entries. <code>cq_context</code> is an opaque pointer handed back to you on events; pass <code>NULL</code>. <code>channel</code> is for event-driven completion, which arrives in TRD-07; pass <code>NULL</code> to poll. <code>comp_vector</code> selects a completion vector for interrupt affinity; pass 0.<span class="cite">[3]</span></p>
+
+<div class="callout">
+  <div class="callout-label">The provider may give you more than you asked for</div>
+  <p>The created queue's <code>cqe</code> field may exceed the number you requested — providers round up to a convenient size. Read <code>cq-&gt;cqe</code> after creation and use that, not your request. The same is true of queue pair capabilities, discussed in section 4.</p>
+</div>
+
+<h3>Sizing</h3>
+
+<p>A completion queue must be deep enough to hold every completion that can be outstanding at once, which is the send queue depth plus the receive queue depth. If it overflows, the behaviour is not a graceful error — the queue pair goes to an error state and outstanding work is lost.</p>
+
+<p>Both queues share one completion queue in this design, which is the common arrangement and the one the reference implementation uses.<span class="cite">[2]</span> Separate queues are also legal and become interesting in TRD-07.</p>
+
+<p>Size against the device limits recorded in TRD-01, not against a constant. <code>max_cqe</code> is the ceiling.</p>
+
+<h2>4 &nbsp; Creating the Queue Pair</h2>
+
+<pre>struct ibv_qp_init_attr init = {
+    .send_cq = cq,
+    .recv_cq = cq,
+    .cap     = {
+        .max_send_wr  = 16,   /* outstanding sends   */
+        .max_recv_wr  = 16,   /* outstanding receives */
+        .max_send_sge = 1,    /* buffers per send    */
+        .max_recv_sge = 1,    /* buffers per receive */
+    },
+    .qp_type = IBV_QPT_RC,
+};
+struct ibv_qp *qp = ibv_create_qp(pd, &amp;init);</pre>
+
+<p>The queue pair is created from the <em>protection domain</em>, not the context — which is what binds it to the same domain as the memory regions it will address. Section 6 of TRD-01's Prior Knowledge explains why that binding is enforced.</p>
+
+<p>Four capacity numbers, each with a ceiling from the device attributes captured in TRD-01:</p>
+
+<table>
+  <tr><th style="width:150px;">Field</th><th style="width:130px;">Bounded by</th><th>Meaning</th></tr>
+  <tr><td><code>max_send_wr</code></td><td><code>max_qp_wr</code></td><td>Work requests that may be outstanding on the send queue. Posting beyond this returns <code>ENOMEM</code>.</td></tr>
+  <tr><td><code>max_recv_wr</code></td><td><code>max_qp_wr</code></td><td>The same for receives. Too small is how you meet the receiver-not-ready condition in TRD-03.</td></tr>
+  <tr><td><code>max_send_sge</code></td><td><code>max_sge</code></td><td>Scatter-gather entries per send — how many discontiguous buffers one request may name.</td></tr>
+  <tr><td><code>max_recv_sge</code></td><td><code>max_sge</code></td><td>The same for receives.</td></tr>
+</table>
+
+<div class="warning">
+  <code>ibv_create_qp()</code> writes back into the <code>cap</code> structure you passed. The granted values may be larger than requested, and on some providers <code>max_send_sge</code> comes back <em>smaller</em> in specific configurations. Read the structure after the call and use what you were granted. Code that assumes it received what it asked for is code that overflows a queue on a different adapter.
+</div>
+
+<p>After creation, <code>qp-&gt;qp_num</code> holds the queue pair number the provider assigned. That value is one of the four things the peer must be told.</p>
+
+<h2>5 &nbsp; The State Machine</h2>
+
+<p>A newly created queue pair is in <code>RESET</code>. It cannot send, cannot receive, and cannot be posted to. Reaching a usable state means three explicit transitions, each supplying information the adapter does not yet have.</p>
+
+<div class="diagram">
+  <svg viewBox="0 0 700 250" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif" font-size="9">
+    <defs><marker id="a3" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000"/></marker></defs>
+
+    <rect x="12" y="60" width="112" height="44" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="68" y="80" text-anchor="middle" font-weight="bold">RESET</text>
+    <text x="68" y="94" text-anchor="middle" font-size="8">created, inert</text>
+
+    <line x1="124" y1="82" x2="176" y2="82" stroke="#000" stroke-width="1.4" marker-end="url(#a3)"/>
+    <text x="150" y="74" text-anchor="middle" font-size="7.5">①</text>
+
+    <rect x="178" y="60" width="112" height="44" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="234" y="80" text-anchor="middle" font-weight="bold">INIT</text>
+    <text x="234" y="94" text-anchor="middle" font-size="8">may post receives</text>
+
+    <line x1="290" y1="82" x2="342" y2="82" stroke="#000" stroke-width="1.4" marker-end="url(#a3)"/>
+    <text x="316" y="74" text-anchor="middle" font-size="7.5">②</text>
+
+    <rect x="344" y="60" width="112" height="44" fill="none" stroke="#000" stroke-width="2.5"/>
+    <text x="400" y="80" text-anchor="middle" font-weight="bold">RTR</text>
+    <text x="400" y="94" text-anchor="middle" font-size="8">may receive</text>
+
+    <line x1="456" y1="82" x2="508" y2="82" stroke="#000" stroke-width="1.4" marker-end="url(#a3)"/>
+    <text x="482" y="74" text-anchor="middle" font-size="7.5">③</text>
+
+    <rect x="510" y="60" width="112" height="44" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="566" y="80" text-anchor="middle" font-weight="bold">RTS</text>
+    <text x="566" y="94" text-anchor="middle" font-size="8">may send</text>
+
+    <rect x="344" y="168" width="112" height="40" fill="none" stroke="#000" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <text x="400" y="192" text-anchor="middle">ERROR</text>
+    <path d="M 566,104 Q 566,188 458,188" fill="none" stroke="#000" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#a3)"/>
+    <text x="530" y="160" text-anchor="middle" font-size="7.5" font-style="italic">on fatal completion</text>
+
+    <text x="350" y="132" text-anchor="middle" font-size="8">① local identity &nbsp;&nbsp; ② the peer's identity — the hard one &nbsp;&nbsp; ③ retry policy</text>
+    <text x="350" y="232" text-anchor="middle" font-size="8" font-style="italic">Recovery from ERROR requires a transition back through RESET. There is no shortcut.</text>
+  </svg>
+  <div class="diagram-caption">Figure 1 — The reliable-connected queue pair state machine as this rung uses it.</div>
+</div>
+
+<p>All transitions go through one function:</p>
+
+<pre>int ibv_modify_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr, int attr_mask);</pre>
+
+<p>The mask names which fields of <code>attr</code> you have filled in. The adapter ignores everything not named in the mask — so a field you set but forget to name in the mask is silently discarded, and a field you name but forget to set is read as whatever was on the stack. Both failure modes are common and neither announces itself.</p>
+
+<div class="callout">
+  <div class="callout-label">Return convention, and a widely published error</div>
+  <p><code>ibv_modify_qp()</code> returns 0 on success or <strong>the value of <code>errno</code></strong> on failure.<span class="cite">[4]</span> Vendor documentation that is otherwise excellent states it returns <code>-1</code> and sets <code>errno</code>.<span class="cite">[6]</span> For the library you are linking against, the manual page is correct. Test for a non-zero return and pass that return value to <code>strerror()</code>; do not read the global <code>errno</code>, and do not test for <code>-1</code>.</p>
+</div>
+
+<h3>Required attributes per transition</h3>
+
+<p>For a reliable-connected queue pair, the manual page specifies the minimum mask for each transition.<span class="cite">[4]</span> These are minimums; you may name additional attributes.</p>
+
+<table>
+  <tr><th style="width:110px;">Transition</th><th>Required mask</th></tr>
+  <tr><td>RESET → INIT</td><td><code>IBV_QP_STATE</code>, <code>IBV_QP_PKEY_INDEX</code>, <code>IBV_QP_PORT</code>, <code>IBV_QP_ACCESS_FLAGS</code></td></tr>
+  <tr><td>INIT → RTR</td><td><code>IBV_QP_STATE</code>, <code>IBV_QP_AV</code>, <code>IBV_QP_PATH_MTU</code>, <code>IBV_QP_DEST_QPN</code>, <code>IBV_QP_RQ_PSN</code>, <code>IBV_QP_MAX_DEST_RD_ATOMIC</code>, <code>IBV_QP_MIN_RNR_TIMER</code></td></tr>
+  <tr><td>RTR → RTS</td><td><code>IBV_QP_STATE</code>, <code>IBV_QP_SQ_PSN</code>, <code>IBV_QP_MAX_QP_RD_ATOMIC</code>, <code>IBV_QP_RETRY_CNT</code>, <code>IBV_QP_RNR_RETRY</code>, <code>IBV_QP_TIMEOUT</code></td></tr>
+</table>
+
+<p>The masks differ per service type. Unreliable Datagram, for instance, needs a queue key at INIT and almost nothing at RTR. Copying a mask from a UD example into an RC program is a recognisable way to lose an afternoon.</p>
+
+<h2>6 &nbsp; RESET → INIT</h2>
+
+<p>This transition supplies the queue pair's <em>local</em> identity. Nothing about the peer is known yet.</p>
+
+<table>
+  <tr><th style="width:170px;">Field</th><th>Value and reasoning</th></tr>
+  <tr><td><code>qp_state</code></td><td><code>IBV_QPS_INIT</code></td></tr>
+  <tr><td><code>pkey_index</code></td><td>0. Partition keys are an InfiniBand fabric-partitioning mechanism with no role in a two-node RoCE setup, but the field is required.</td></tr>
+  <tr><td><code>port_num</code></td><td>The physical port, numbered from 1.</td></tr>
+  <tr><td><code>qp_access_flags</code></td><td>What <em>incoming</em> remote operations this queue pair permits.</td></tr>
+</table>
+
+<div class="callout">
+  <div class="callout-label">Two independent access checks</div>
+  <p><code>qp_access_flags</code> is not the same as the access flags you passed to <code>ibv_reg_mr()</code> in TRD-01. An incoming one-sided operation is permitted only if <strong>both</strong> allow it — the queue pair must accept that class of operation, and the targeted memory region must permit that access. The reference implementation sets this to 0 because it only does two-sided transfer.<span class="cite">[2]</span> Limen needs <code>IBV_ACCESS_REMOTE_READ</code> and <code>IBV_ACCESS_REMOTE_WRITE</code> here, because TRD-06 depends on them and the value cannot be changed once the queue pair is connected without a transition back through RESET.</p>
+</div>
+
+<p>After this transition the queue pair may accept posted receive requests, though it cannot yet receive anything from the wire. It still cannot send.</p>
+
+<h2>7 &nbsp; INIT → RTR</h2>
+
+<p>This is the transition that fails. It supplies the peer's identity, and every field must be right at once.</p>
+
+<table>
+  <tr><th style="width:190px;">Field</th><th>Value and reasoning</th></tr>
+  <tr><td><code>qp_state</code></td><td><code>IBV_QPS_RTR</code></td></tr>
+  <tr><td><code>path_mtu</code></td><td>An enum, not a byte count. Must be identical on both ends — use the port's <code>active_mtu</code> from TRD-01, and if the two nodes disagree, the smaller.</td></tr>
+  <tr><td><code>dest_qp_num</code></td><td>The <em>peer's</em> queue pair number, received over the side channel.</td></tr>
+  <tr><td><code>rq_psn</code></td><td>The peer's starting packet sequence number. Your receive queue must expect the number the peer's send queue will begin with.</td></tr>
+  <tr><td><code>max_dest_rd_atomic</code></td><td>How many incoming reads and atomics may be outstanding. 1 is correct here.</td></tr>
+  <tr><td><code>min_rnr_timer</code></td><td>How long the peer waits before retrying after a receiver-not-ready response. An encoded value, not milliseconds; 12 is the conventional choice and corresponds to 0.64 ms.<span class="cite">[2]</span></td></tr>
+  <tr><td><code>ah_attr</code></td><td>The address vector. Section 8.</td></tr>
+</table>
+
+<h3>Packet sequence numbers</h3>
+
+<p>Every reliable-connected packet carries a 24-bit sequence number, and the receiver checks it. The two ends must therefore agree on where the sequence starts, in each direction independently: your <code>rq_psn</code> must equal the peer's <code>sq_psn</code>, and vice versa.</p>
+
+<p>Each side picks its own starting number, conventionally at random, and sends it to the peer. The reference implementation uses a random 24-bit value.<span class="cite">[2]</span> Zero would work on a fresh fabric; randomising guards against a stale packet from a previous connection being accepted by a new one.</p>
+
+<p>Getting these crossed — assigning your own starting number to <code>rq_psn</code> instead of the peer's — is a mistake the transition accepts without complaint. It fails later, in TRD-03, as a transfer that never completes.</p>
+
+<h2>8 &nbsp; The Address Vector, and the RoCE Trap</h2>
+
+<p>The <code>ah_attr</code> field describes how to reach the peer. Its layout:<span class="cite">[7]</span></p>
+
+<pre>struct ibv_ah_attr {
+    struct ibv_global_route grh;            /* global route header */
+    uint16_t                dlid;           /* destination LID — InfiniBand only */
+    uint8_t                 sl;             /* service level */
+    uint8_t                 src_path_bits;
+    uint8_t                 static_rate;
+    uint8_t                 is_global;      /* use the GRH? */
+    uint8_t                 port_num;
+};
+
+struct ibv_global_route {
+    union ibv_gid dgid;         /* destination GID */
+    uint32_t      flow_label;
+    uint8_t       sgid_index;   /* index into the LOCAL GID table */
+    uint8_t       hop_limit;
+    uint8_t       traffic_class;
+};</pre>
+
+<p>Native InfiniBand addresses a peer within a subnet by Local Identifier — the <code>dlid</code> field — and only needs the global route header to cross subnets. Ethernet has no Local Identifier at all.</p>
+
+<div class="warning">
+  <strong>On RoCE, <code>is_global</code> must be 1 and the global route header must be populated.</strong> Leaving <code>is_global</code> at 0 because the peer is on the same subnet — which is correct reasoning on InfiniBand — produces <code>EINVAL</code> on this transition, with nothing in the error identifying the cause. This is the single most common failure in RoCE queue pair setup and it has been tripping people since RoCE was introduced.<span class="cite">[5]</span>
+</div>
+
+<p>The reference implementation handles both fabrics by setting <code>is_global = 0</code> with a destination LID, then overriding when the peer supplied a non-zero GID:<span class="cite">[2]</span></p>
+
+<pre>if (dest-&gt;gid.global.interface_id) {
+    attr.ah_attr.is_global      = 1;
+    attr.ah_attr.grh.hop_limit  = 1;
+    attr.ah_attr.grh.dgid       = dest-&gt;gid;
+    attr.ah_attr.grh.sgid_index = sgid_idx;
+}</pre>
+
+<p>On RoCE the peer's GID is always non-zero, so the branch always fires. Writing that conditional yourself is worthwhile even in a RoCE-only program, because it documents why the fields are set.</p>
+
+<h3>The two GIDs are not symmetric</h3>
+
+<p>This asymmetry causes real confusion, so state it explicitly:</p>
+
+<ul>
+  <li><code>grh.dgid</code> is the <strong>peer's GID value</strong>, received over the side channel. A 128-bit quantity.</li>
+  <li><code>grh.sgid_index</code> is an <strong>index into your own GID table</strong>, not a value and not the peer's. It selects which of your local GIDs is used as the source.</li>
+</ul>
+
+<p>Retrieve your own GID with <code>ibv_query_gid(ctx, port_num, index, &amp;gid)</code>. That index is the same one TRD-00 made you pass to the reference tool with <code>-g</code>, and it is your responsibility for the same reason: section 8 of TRD-00's Prior Knowledge explains why a RoCE port has several table entries and how the wrong one fails.</p>
+
+<p><code>hop_limit</code> is the IP time-to-live for the encapsulating packet. A value of 1 works on a single subnet; anything crossing a router needs more. <code>sl</code> and <code>traffic_class</code> map to quality-of-service on a configured fabric and are 0 here. <code>dlid</code> is ignored entirely when the link layer is Ethernet.</p>
+
+<h2>9 &nbsp; RTR → RTS</h2>
+
+<p>The final transition supplies retry and timeout policy, and enables sending. It requires nothing from the peer, so it needs no further exchange.</p>
+
+<table>
+  <tr><th style="width:190px;">Field</th><th>Value and reasoning</th></tr>
+  <tr><td><code>qp_state</code></td><td><code>IBV_QPS_RTS</code></td></tr>
+  <tr><td><code>sq_psn</code></td><td><em>Your</em> starting packet sequence number — the one you sent the peer, which it assigned to its <code>rq_psn</code>.</td></tr>
+  <tr><td><code>timeout</code></td><td>Encoded acknowledgement timeout, approximately <code>4.096 µs × 2^timeout</code>. 14 is conventional, roughly 67 ms.<span class="cite">[2]</span> Zero means infinite, which hangs rather than errors.</td></tr>
+  <tr><td><code>retry_cnt</code></td><td>Retries after a transport timeout. 7 is the maximum and the conventional choice.</td></tr>
+  <tr><td><code>rnr_retry</code></td><td>Retries after a receiver-not-ready response. 7 means retry indefinitely.</td></tr>
+  <tr><td><code>max_rd_atomic</code></td><td>Outstanding <em>outgoing</em> reads and atomics. The counterpart to <code>max_dest_rd_atomic</code> at RTR. Bounded by <code>max_qp_rd_atom</code> from TRD-01.</td></tr>
+</table>
+
+<p>A queue pair in <code>RTS</code> is connected. If the peer is also in <code>RTS</code>, the connection is live in both directions.</p>
+
+<div class="callout">
+  <div class="callout-label">Ordering between the two sides</div>
+  <p>A peer cannot receive until it reaches <code>RTR</code>. If one side reaches <code>RTS</code> and sends while the other is still in <code>INIT</code>, the packet is dropped and the sender retries — recoverable, given the retry policy, but only if the retry budget outlasts the delay. The reliable ordering is: both sides reach <code>RTR</code>, then both proceed to <code>RTS</code>. In practice the side-channel exchange provides enough synchronisation, because neither side has the peer's parameters until the other has sent them.</p>
+</div>
+
+<h2>10 &nbsp; The Side Channel</h2>
+
+<p>Four values must reach the peer before the RTR transition can be performed:</p>
+
+<table>
+  <tr><th style="width:130px;">Value</th><th style="width:170px;">Source</th><th>Consumed as</th></tr>
+  <tr><td>Queue pair number</td><td><code>qp-&gt;qp_num</code></td><td><code>dest_qp_num</code> at RTR</td></tr>
+  <tr><td>Packet sequence number</td><td>Chosen at random by you</td><td><code>rq_psn</code> at RTR</td></tr>
+  <tr><td>GID</td><td><code>ibv_query_gid()</code></td><td><code>grh.dgid</code> at RTR</td></tr>
+  <tr><td>LID</td><td><code>port_attr.lid</code></td><td><code>dlid</code> — unused on RoCE, carried for symmetry</td></tr>
+</table>
+
+<p>Nothing specifies how they travel. RDMA has no equivalent of a TCP handshake at this layer; the specification defines what a connected queue pair needs and is silent on how the two ends come to agree. A plain TCP socket is the conventional answer and is what the reference implementation uses.<span class="cite">[2]</span></p>
+
+<p>Two practical points. Format the values as text rather than sending a struct — endianness and padding differ across machines, and a text line is trivially inspectable when the exchange is what broke. Second, both sides must send and receive before either transitions, so the exchange is a genuine round trip rather than one-way.</p>
+
+<div class="diagram">
+  <svg viewBox="0 0 660 235" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif" font-size="8.5">
+    <defs><marker id="a4" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0, 7 2.5, 0 5" fill="#000"/></marker></defs>
+    <text x="120" y="14" text-anchor="middle" font-weight="bold" font-size="10">SERVER</text>
+    <text x="540" y="14" text-anchor="middle" font-weight="bold" font-size="10">CLIENT</text>
+    <line x1="120" y1="22" x2="120" y2="212" stroke="#000" stroke-width="1"/>
+    <line x1="540" y1="22" x2="540" y2="212" stroke="#000" stroke-width="1"/>
+
+    <text x="120" y="42" text-anchor="middle">create CQ, QP</text>
+    <text x="540" y="42" text-anchor="middle">create CQ, QP</text>
+    <text x="120" y="60" text-anchor="middle">RESET → INIT</text>
+    <text x="540" y="60" text-anchor="middle">RESET → INIT</text>
+    <text x="120" y="78" text-anchor="middle">query GID, pick PSN</text>
+    <text x="540" y="78" text-anchor="middle">query GID, pick PSN</text>
+
+    <line x1="128" y1="104" x2="532" y2="104" stroke="#000" stroke-width="1.3" marker-end="url(#a4)"/>
+    <text x="330" y="98" text-anchor="middle" font-style="italic">qpn · psn · gid · lid  (TCP)</text>
+    <line x1="532" y1="130" x2="128" y2="130" stroke="#000" stroke-width="1.3" marker-end="url(#a4)"/>
+    <text x="330" y="124" text-anchor="middle" font-style="italic">qpn · psn · gid · lid  (TCP)</text>
+
+    <text x="120" y="158" text-anchor="middle">INIT → RTR</text>
+    <text x="540" y="158" text-anchor="middle">INIT → RTR</text>
+    <text x="120" y="176" text-anchor="middle">RTR → RTS</text>
+    <text x="540" y="176" text-anchor="middle">RTR → RTS</text>
+    <text x="120" y="200" text-anchor="middle" font-weight="bold">query QP → RTS</text>
+    <text x="540" y="200" text-anchor="middle" font-weight="bold">query QP → RTS</text>
+  </svg>
+  <div class="diagram-caption">Figure 2 — Sequence for this rung. The RDMA fabric carries nothing; every arrow is TCP.</div>
+</div>
+
+<p>TRD-05 deletes all of this. The connection manager performs the same exchange for you, driven by an IP address. Building it by hand first is what makes the connection manager legible rather than magical.</p>
+
+<h2>11 &nbsp; Verifying State</h2>
+
+<p><code>ibv_query_qp()</code> reads back a queue pair's attributes, including its current state.<span class="cite">[8]</span> Like the other query functions it takes a mask naming what you want.</p>
+
+<pre>struct ibv_qp_attr      attr;
+struct ibv_qp_init_attr init;
+int rc = ibv_query_qp(qp, &amp;attr, IBV_QP_STATE | IBV_QP_AV, &amp;init);
+/* attr.qp_state is now IBV_QPS_RTS if the bringup succeeded */</pre>
+
+<p>Two reasons this matters here. It is the gate for the rung — a queue pair reporting <code>RTS</code> on both ends is what "connected" means with nothing yet transmitted. And it is a diagnostic: a queue pair that silently fell to <code>IBV_QPS_ERR</code> looks identical from the outside to one that is idle, and querying is the only way to tell.</p>
+
+<p>The states are <code>IBV_QPS_RESET</code>, <code>IBV_QPS_INIT</code>, <code>IBV_QPS_RTR</code>, <code>IBV_QPS_RTS</code>, <code>IBV_QPS_SQD</code>, <code>IBV_QPS_SQE</code>, and <code>IBV_QPS_ERR</code>. Recovery from the error state requires transitioning back through <code>RESET</code> and repeating the entire bringup.</p>
+
+<h2>12 &nbsp; Failure Modes</h2>
+
+<table>
+  <tr><th style="width:225px;">Symptom</th><th style="width:215px;">Cause</th><th>Resolution</th></tr>
+  <tr><td><code>EINVAL</code> on INIT → RTR</td><td><code>is_global</code> left at 0. RoCE requires the global route header.<span class="cite">[5]</span></td><td>Set <code>is_global = 1</code> and populate <code>grh</code>. Check this first — it is the most likely cause by a wide margin.</td></tr>
+  <tr><td><code>EINVAL</code> on INIT → RTR, <code>is_global</code> already 1</td><td>An attribute set but not named in the mask, or named but not set.</td><td>Compare your mask against the table in section 5, field by field.</td></tr>
+  <tr><td>Error check never fires</td><td>Testing for <code>-1</code>, following vendor documentation rather than the manual page.<span class="cite">[4][6]</span></td><td>Test for non-zero; the return value is the errno code.</td></tr>
+  <tr><td><code>ibv_query_gid</code> succeeds, GID is all zeroes</td><td>Index selects an unpopulated table entry.</td><td>Enumerate the table as in TRD-00 R7 and choose the RoCEv2 IPv4 entry.</td></tr>
+  <tr><td>Transition to RTR succeeds, transfers never complete in TRD-03</td><td>Sequence numbers crossed — own value assigned to <code>rq_psn</code> instead of the peer's.</td><td><code>rq_psn</code> takes the peer's number, <code>sq_psn</code> takes yours.</td></tr>
+  <tr><td>Works between two identical nodes, fails against a third</td><td><code>path_mtu</code> differs between the ends.</td><td>Exchange the MTU or use the smaller of the two.</td></tr>
+  <tr><td><code>ibv_create_qp</code> returns <code>ENOMEM</code></td><td>A requested capacity exceeds a device limit.</td><td>Clamp each of the four against the attributes captured in TRD-01.</td></tr>
+  <tr><td>Peer accepts the connection, first send is dropped</td><td>The peer had not reached RTR when the packet arrived.</td><td>Both sides reach RTR before either proceeds to RTS.</td></tr>
+  <tr><td>Queue pair reports <code>IBV_QPS_ERR</code></td><td>A fatal completion, or a completion queue overflow.</td><td>Not recoverable in place. Transition to RESET and rebuild.</td></tr>
+  <tr><td><code>ibv_destroy_cq</code> returns <code>EBUSY</code></td><td>A queue pair still references the completion queue.</td><td>Destroy the queue pair first. Destruction order fault.</td></tr>
+  <tr><td>Everything succeeds, peer never appears</td><td>The TCP side channel deadlocked — both sides reading before either wrote.</td><td>Write, flush, then read. This is a socket bug, not an RDMA one.</td></tr>
+</table>
+
+<h2>13 &nbsp; What Is Deliberately Left Out</h2>
+
+<p>One queue pair, one peer, one connection. A server holding many clients holds many queue pairs, and the multiplexing that implies is not addressed here.</p>
+
+<p>The side channel is throwaway. It has no framing, no version negotiation, and no error handling worth the name, because TRD-05 deletes it. Do not invest in it.</p>
+
+<p>Nothing is posted to either queue and nothing is polled. The queue pair sits connected and idle, which is a state that would never occur in a real transport but is exactly the right place to stop while the state machine is the thing being learned. TRD-03 posts the first work request.</p>
+
+<p>Also absent: shared receive queues, which let many queue pairs draw from one pool of receive buffers; queue pair reuse via a return transition to RESET; and alternate paths for failover. None is needed and each is a topic.</p>
+
+<h2>14 &nbsp; Further Reading</h2>
+
+<p><strong>Read before starting:</strong></p>
+<ul>
+  <li><strong><code>ibv_modify_qp(3)</code></strong><span class="cite">[4]</span> — the required-attribute tables for every service type, and the return convention. The densest and most necessary page for this rung.</li>
+  <li><strong><code>rc_pingpong.c</code></strong>, the functions performing bringup and the parameter exchange<span class="cite">[2]</span> — you annotated this in TRD-00 and reread it in TRD-01. Read it a third time now; it is a complete, correct implementation of exactly this rung, and reading it is not cheating because your task is to write your own with different structure and error handling.</li>
+</ul>
+
+<p><strong>Read while implementing:</strong></p>
+<ul>
+  <li><strong><code>ibv_create_qp(3)</code></strong> and <strong><code>ibv_create_cq(3)</code></strong><span class="cite">[3]</span> — the capability write-back behaviour described in sections 3 and 4.</li>
+  <li><strong><code>ibv_query_qp(3)</code></strong><span class="cite">[8]</span> — for the state verification in section 11.</li>
+</ul>
+
+<p><strong>Reference as needed:</strong></p>
+<ul>
+  <li><strong>RDMAmojo</strong><span class="cite">[9]</span> — its page on <code>ibv_modify_qp</code> covers attribute interactions the manual page states without explaining.</li>
+  <li><strong>RDMA Aware Networks Programming User Manual</strong><span class="cite">[6]</span> — the queue pair bringup chapter is a good narrative walkthrough. Note the return-value error identified in section 5 before relying on its code.</li>
+  <li><strong>InfiniBand Architecture Specification, Volume 1, ch. 9–10</strong><span class="cite">[1]</span> — normative definition of the service types and the state machine. Consult to settle a question, not to learn from.</li>
+</ul>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] InfiniBand Trade Association. <em>InfiniBand Architecture Specification, Volume 1, Release 1.7.</em> Ch. 9, "Transport Layer," and Ch. 10, "Software Transport Interface" — normative definition of the transport service types and the queue pair state machine. https://www.infinibandta.org/ibta-specification/</li>
+
+  <li>[2] linux-rdma. <em>rdma-core.</em> <code>libibverbs/examples/rc_pingpong.c</code> — reference implementation of RC bringup, including the conditional GRH population for RoCE quoted in section 8, the random 24-bit sequence number, and the conventional timeout and retry values used in section 9. Accessed 2026-07. https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/examples/rc_pingpong.c</li>
+
+  <li>[3] <em>ibv_create_cq(3)</em> and <em>ibv_create_qp(3).</em> Linux manual pages, section 3. Parameters, the capability write-back behaviour, and the relationship between a queue pair and its completion queues.</li>
+
+  <li>[4] <em>ibv_modify_qp(3).</em> Linux manual page, section 3. The per-service-type tables of minimum required attributes reproduced in section 5, the full attribute mask list, and the return convention — 0 on success, or the value of <code>errno</code> on failure. https://man7.org/linux/man-pages/man3/ibv_modify_qp.3.html</li>
+
+  <li>[5] linux-rdma mailing list. <em>"EINVAL when INIT -&gt; RTR on RoCE."</em> Thread establishing that RoCE requires a global route header, and therefore a GID, where native InfiniBand on a local subnet does not — the cause of the failure described in section 8. Accessed 2026-07. https://linux-rdma.vger.kernel.narkive.com/sBIMjfva/einval-when-init-rtr-on-roce</li>
+
+  <li>[6] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual.</em> "Queue Pair Bringup (ibv_modify_qp)." Useful narrative treatment; note that it documents the return value as <code>-1</code> with <code>errno</code> set, which disagrees with the manual page for the library in use. https://docs.nvidia.com/networking/display/rdmaawareprogrammingv17/queue+pair+bringup+(ibv_modify_qp)</li>
+
+  <li>[7] <em>ibv_create_ah(3).</em> Linux manual page, section 3. Defines <code>struct ibv_ah_attr</code> and <code>struct ibv_global_route</code> as reproduced in section 8, including the distinction between a destination GID value and a source GID table index.</li>
+
+  <li>[8] <em>ibv_query_qp(3).</em> Linux manual page, section 3. Reading back queue pair attributes and the full state enumeration listed in section 11.</li>
+
+  <li>[9] Barak, Dotan. <em>RDMAmojo.</em> Per-function reference; see the <code>ibv_modify_qp</code> entry. Accessed 2026-07. https://www.rdmamojo.com/2013/01/12/ibv_modify_qp/</li>
+</ol>
+
+<div class="footer">
+  TRD-02: Queue Pairs and the State Machine &nbsp;|&nbsp; Prior Knowledge &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

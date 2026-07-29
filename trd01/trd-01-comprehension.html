@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-01: Context, Protection Domain, Memory Registration — Comprehension</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; }
+em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; }
+li { margin-bottom: 3px; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.answer-key { page-break-before: always; }
+.qa-block { border: 1.5px solid #000; padding: 12px 14px; margin: 14px 0; page-break-inside: avoid; }
+.qa-block .qa-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px; }
+.qa-miss { border-left: 4px solid #000; padding: 6px 12px; margin: 8px 0 0 0; font-size: 9.5pt; font-style: italic; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .qa-block, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-01: Context, Protection Domain, Memory Registration</h1>
+  <div class="subtitle">Comprehension — Limen RDMA Transport Project</div>
+  <div class="meta">8 questions &nbsp;|&nbsp; Answer in writing before the key &nbsp;|&nbsp; Est.: 50–75 minutes</div>
+</div>
+
+<h2>Questions</h2>
+
+<p><strong>Q1.</strong> Describe what <code>ibv_reg_mr()</code> causes to happen, in enough detail to explain why it is slow. Then explain why that cost dictates the architecture of every RDMA application, and name the specific design pattern it forces.</p>
+
+<p><strong>Q2.</strong> Registration pins pages. What does pinning actually prevent, and why would a peripheral holding a physical address be broken without it? Name two distinct kernel behaviours that pinning must block.</p>
+
+<p><strong>Q3.</strong> Explain the difference between <code>lkey</code> and <code>rkey</code>: who uses each, where each appears, and which one leaves the machine. Then state what handing a peer an <code>rkey</code> actually grants, and for how long.</p>
+
+<p><strong>Q4.</strong> Registering with <code>IBV_ACCESS_REMOTE_WRITE</code> but not <code>IBV_ACCESS_LOCAL_WRITE</code> is rejected. Explain why this is a coherent rule rather than an arbitrary one — that is, what makes local write a genuine prerequisite for remote write?</p>
+
+<p><strong>Q5.</strong> A protection domain has no attributes and nothing to configure, yet every memory region and queue pair must belong to one. What does it prevent, and what would go wrong in a server holding connections to several mutually distrusting clients if there were only one domain for the whole process?</p>
+
+<p><strong>Q6.</strong> The verbs API uses three different error-return conventions across the functions this TRD calls. Name all three with an example function for each, and say which one silently defeats the check most C programmers would write by reflex.</p>
+
+<p><strong>Q7.</strong> R10 required teardown in reverse creation order. Give the order and the reason. Then explain why a program that gets this wrong can still appear to work correctly, and what would eventually expose the fault.</p>
+
+<p><strong>Q8.</strong> You made two implementation decisions this TRD did not dictate: how you structured cleanup across the program's many exit paths, and whether you wrote it in C or C++. Defend both. For the cleanup decision specifically, name what will break about your approach when TRD-02 adds a completion queue and a queue pair to the same function.</p>
+
+<hr>
+
+<p><em>Answer all eight in writing before turning the page. Writing is the point — an answer that feels clear in your head and falls apart on paper was never clear. Then compare against the key. Where your answer is thinner than the key's, reread the Prior Knowledge section named at the end of that answer before starting TRD-02. Where you disagree with the key and can defend the disagreement, that is a good sign rather than a wrong answer.</em></p>
+
+<div class="answer-key">
+
+<h2>Answer Key</h2>
+
+<div class="qa-block">
+  <div class="qa-label">Q1 — Answer</div>
+  <p>The call does four things. It pins every page in the range, taking a kernel reference on each so the page cannot be swapped or moved. It builds a translation table recording where each of those pages physically lives, and on hardware programs that table into the adapter and maps the pages for device DMA. It accounts the pinned bytes against the process's locked-memory limit. And it generates a local and a remote key naming the region.</p>
+  <p>The cost is dominated by the first two: the kernel walks the range page by page, faulting in anything not yet resident, taking a reference on each, and assembling the page list. For a large region that is a per-page cost over thousands or millions of pages, which puts registration in the hundreds of microseconds to milliseconds range — three to six orders of magnitude more than the transfer it enables.</p>
+  <p>The consequence is that registration cannot appear on the data path. A design that registers a buffer, sends it, and deregisters would spend essentially all of its time in registration and none in transfer, and would be slower than sockets. The pattern this forces is the <strong>pre-registered buffer pool</strong>: allocate and register a fixed set of buffers once at startup, copy application data into a free one, transfer, and return it to the pool. Every production RDMA library is built this way, and the copy into the pooled buffer — which appears to contradict RDMA's zero-copy premise — is accepted precisely because it is cheaper than registering.</p>
+  <div class="qa-miss">Common miss: "it is slow because it is a system call." System call overhead is well under a microsecond and is not the term that matters. A related miss is stopping at "it is slow" without naming the buffer pool — the architectural consequence is the point of the question, not the latency figure.</div>
+  <p><em>Covered in Prior Knowledge §7, and in reference [8].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q2 — Answer</div>
+  <p>Pinning prevents the kernel from changing the virtual-to-physical mapping of the pages, or from removing their contents from physical memory, while the registration exists.</p>
+  <p>The adapter is a peripheral performing direct memory access. It was handed physical addresses at registration time and it uses them without consulting anyone — it does not walk the process's page tables, cannot take a page fault, and has no way to be informed that a mapping changed. If the kernel moved a page after registration, the adapter would keep writing to the old physical frame, which by then holds unrelated data belonging to some other process or to the kernel itself. The failure is silent memory corruption at an arbitrary address, not an error.</p>
+  <p>Two distinct behaviours it must block:</p>
+  <ul>
+    <li><strong>Swapping.</strong> Under memory pressure the kernel evicts a page to backing store and frees the frame. The adapter's address then names a frame that has been reallocated.</li>
+    <li><strong>Migration and compaction.</strong> The kernel relocates pages to assemble contiguous physical regions, to balance across NUMA nodes, or during memory hot-remove. The page's contents survive but its physical address changes, and the adapter is not told.</li>
+  </ul>
+  <p>Either one produces the same outcome from the adapter's perspective: a stale physical address used as though it were valid.</p>
+  <div class="qa-miss">Common miss: naming swapping alone. Migration is the subtler and more instructive case, because the data is not lost and nothing is under memory pressure — the mapping simply changed for the kernel's own convenience, and a system that only defended against swapping would still be broken.</div>
+  <p><em>Covered in Prior Knowledge §7, and in reference [10] ch. 9.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q3 — Answer</div>
+  <p>The local key is used by <em>your</em> work requests. Every scatter-gather entry you post carries an <code>lkey</code> field naming the region the buffer lives in, and the local adapter validates it before touching the memory. It never leaves the machine and is meaningless anywhere else.</p>
+  <p>The remote key is used by the <em>peer's</em> work requests. When a peer issues a one-sided read or write against your memory, its work request carries your region's <code>rkey</code> along with a virtual address in your address space. Your adapter validates that key against its registered regions and performs the access. The remote key is therefore the one that travels: it must be sent to the peer, conventionally during connection setup, alongside the address and length.</p>
+  <p>Handing over an <code>rkey</code> grants the holder direct access to that region — read, write, or both, according to the flags granted at registration — for as long as the registration lives. The grant is unsupervised: your process is not consulted per operation, is not notified when one occurs, and cannot revoke the grant short of deregistering the region. It is a capability in the strict sense, and it is why access flags should be the minimum the protocol needs rather than a permissive default.</p>
+  <div class="qa-miss">Common miss: assuming the two keys must be different values because they have different names. They frequently hold the same numeric value, and observing that in your own R7 output leads some people to conclude the distinction is cosmetic. It is not — the values are incidental, the difference is which side of the connection presents the key and what the adapter validates it against.</div>
+  <p><em>Covered in Prior Knowledge §8. Used in TRD-03 (lkey) and TRD-06 (rkey).</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q4 — Answer</div>
+  <p>Because a remote write is not performed by the remote machine. It is performed by <em>your</em> adapter, writing into <em>your</em> memory.</p>
+  <p>Trace it: the peer posts a work request carrying data, your region's remote key, and a destination address. That request travels the wire. Your adapter receives it, validates the key, and then executes an ordinary local write into the named memory — the same physical operation it would perform for a locally posted receive. There is no separate "remote write" capability at the hardware level; there is only the local adapter writing to local memory, initiated from somewhere else.</p>
+  <p>So local write permission is the more fundamental of the two. Remote write permission adds the question of <em>who may ask</em>, but it cannot grant an ability the region does not already have. Requesting remote write without local write asks for a region that a peer may write but that the local adapter may not write into, which is not a coherent state — the operation is the same operation. The API rejects it at registration rather than producing a region that would fail confusingly on first use.</p>
+  <p>The same reasoning explains why <code>IBV_ACCESS_REMOTE_ATOMIC</code> carries the identical prerequisite, and why <code>IBV_ACCESS_REMOTE_READ</code> does not — a remote read only causes the local adapter to read, which the region permits by default.</p>
+  <div class="qa-miss">Common miss: "the specification says so." True and not an explanation. A subtler miss is treating it as a defensive check against user error, as though the rule exists to catch mistakes. It is a consistency requirement: the combination names a capability the hardware has no way to represent.</div>
+  <p><em>Covered in Prior Knowledge §7, normatively in reference [3], and demonstrated by R8.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q5 — Answer</div>
+  <p>A protection domain scopes which memory regions a given queue pair may address. The adapter refuses any operation where the queue pair and the memory region named by a key belong to different domains, returning a protection error rather than performing the access.</p>
+  <p>What it prevents is key confusion across independent connections. Keys are 32-bit values in a flat space; nothing about a key's numeric value identifies which connection it was meant for. Without domains, any key presented on any queue pair would be validated against every registered region in the process.</p>
+  <p>In a server holding connections to mutually distrusting clients with a single domain, the consequence is direct: client A is given the remote key for the buffer the server allocated for A. Client B, on its own connection, presents that same key in a one-sided write. The adapter validates it — the region exists, the key matches, the domain matches, because there is only one — and performs the write. Client B has written into client A's buffer without ever holding a legitimate reference to it. B does not even need to have obtained A's key deliberately; a 32-bit space is small enough to search.</p>
+  <p>Giving each connection its own protection domain closes this. B's queue pair lives in B's domain, A's region lives in A's domain, and the key fails validation regardless of its value. This is the reason the object exists despite having nothing to configure, and it is why a multi-tenant RDMA service is architecturally different from a single-tenant one.</p>
+  <div class="qa-miss">Common miss: describing the protection domain as "a container" or "for organization." It is an enforcement boundary checked by the adapter on every operation, not a grouping convenience. If your answer would remain true were the domain purely a bookkeeping label, it has missed the mechanism.</div>
+  <p><em>Covered in Prior Knowledge §6, and normatively in reference [1] ch. 10.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q6 — Answer</div>
+  <table>
+    <tr><th style="width:250px;">Convention</th><th style="width:180px;">Example</th><th>Reading it</th></tr>
+    <tr><td>Pointer return, <code>NULL</code> on failure, sets <code>errno</code></td><td><code>ibv_open_device</code>, <code>ibv_alloc_pd</code>, <code>ibv_reg_mr</code></td><td>Test for <code>NULL</code>, then read <code>errno</code></td></tr>
+    <tr><td>Returns 0, or a positive <code>errno</code> <em>value</em> on failure</td><td><code>ibv_query_device</code>, <code>ibv_query_port</code>, <code>ibv_dereg_mr</code>, <code>ibv_dealloc_pd</code></td><td>Test <code>!= 0</code>; the return value is the code — pass it to <code>strerror()</code></td></tr>
+    <tr><td>Returns 0, or <code>-1</code> on failure</td><td><code>ibv_close_device</code></td><td>Test <code>&lt; 0</code> or <code>!= 0</code></td></tr>
+  </table>
+  <p>The second convention is the one that defeats the reflexive check. A C programmer writes <code>if (ibv_query_port(...) &lt; 0)</code> without thinking, because that is correct for essentially every other Unix interface. It compiles without warning, and it never fires — the failure return is positive. The program then proceeds using a <code>struct ibv_port_attr</code> that was never filled in, which on most stacks contains whatever was on the stack a moment earlier. The eventual symptom is a nonsensical attribute value or a connection that fails much later, with nothing pointing back at the unchecked query.</p>
+  <p>Reading <code>errno</code> after one of these functions is the companion mistake: the global was not set by this call and may hold a value from anything that failed earlier, so the reported cause is plausible and wrong.</p>
+  <div class="qa-miss">Common miss: naming two conventions and merging the second and third, on the grounds that both "return an int." The distinction is the entire point — one returns a meaningful error code and the other returns a sentinel, and treating them alike either discards the diagnosis or invents one.</div>
+  <p><em>Covered in Prior Knowledge §10. Required by R10.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q7 — Answer</div>
+  <p>The order is memory region, then protection domain, then context — the reverse of creation, and it runs against every arrow in the object graph. The reason is ownership: each object was created from a parent and holds a reference into it. Destroying a parent while a child is live would leave the child naming something that no longer exists, so the API refuses. <code>ibv_dealloc_pd()</code> with a live region returns <code>EBUSY</code> rather than deallocating.</p>
+  <p>A program that gets this wrong can appear entirely correct, for two compounding reasons. First, the failing call reports through a return value, and a program that ignores return values — which is the same program that got the order wrong — never learns. Second, the process exits shortly afterward, and the kernel reclaims every RDMA object and unpins every page held by a dying process regardless of what userspace did or failed to do. A short-lived diagnostic tool therefore produces correct output, exits zero, and leaves no evidence.</p>
+  <p>What exposes it is longevity plus repetition. A long-running transport that opens and closes connections accumulates protection domains that were never deallocated and regions that were never deregistered. Pinned pages accumulate with them, and the process eventually crosses its locked-memory limit — at which point a registration fails with <code>ENOMEM</code> during what looks like ordinary operation, hours after the actual defect ran. Under valgrind it shows up immediately as leaked allocations, which is why R10 requires the check rather than trusting the program's own report.</p>
+  <div class="qa-miss">Common miss: "the kernel cleans up, so it does not really matter." That is true for a program that runs once and exits, and it is exactly the reasoning that produces a transport which degrades over hours. The question is not whether the resources are eventually released; it is whether they are released while the process still needs the capacity.</div>
+  <p><em>Covered in Prior Knowledge §9 and §11. The motivating case for TRD-04.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q8 — Answer</div>
+  <p>Both are open decisions and a strong answer commits, gives the reason, and names the failure condition.</p>
+  <p><strong>Cleanup structure.</strong> The three defensible approaches are a single labelled cleanup block reached by <code>goto</code> with all handles initialized to a sentinel; a cleanup function taking a struct of handles, called from each exit; or, in C++, destructors. The <code>goto cleanup</code> pattern is defensible as the idiomatic C answer, keeping one copy of the release sequence and one place to get the order right, at the cost of requiring every handle to be declared and initialized before the first jump. A cleanup function is defensible for testability and for keeping the main path shorter, at the cost of a struct that must be kept in step with the handles. What is not defensible is inline cleanup at each exit — with five handles and nine exits that is nine chances to omit one, and the omissions are invisible without valgrind.</p>
+  <p><strong>What TRD-02 breaks.</strong> Adding a completion queue and a queue pair takes the handle count from five to seven and the exit count higher, and it introduces an ordering constraint that is not obvious from the creation order: the queue pair must be destroyed before the completion queue it posts completions to, and both before the protection domain. A <code>goto cleanup</code> block scales linearly in lines but its correctness now depends on a partial order that is only documented in your head. That is the specific pressure TRD-04 relieves — with destructors, the order falls out of declaration order and cannot be got wrong by editing one branch.</p>
+  <p><strong>Language.</strong> C is defensible: the API is a C API, the reference implementations are C, and there is no abstraction here worth the extra surface. C++ is defensible for continuity, since TRD-04 requires it and starting there avoids a translation step. Either becomes the wrong call under a specific condition — C if you find yourself hand-writing what amounts to destructors before reaching TRD-04, and C++ if the language work starts consuming time that was meant for the RDMA concepts.</p>
+  <div class="qa-miss">Common miss: describing what you did without naming what would break it. The requirement did not dictate an approach, so the reasoning is the whole answer; a description of the code is not a defence of it. The second miss is claiming a chosen approach has no failure mode. Every one of these does, and naming yours is the part that transfers to a decision you have not yet faced.</div>
+  <p><em>Covered in Prior Knowledge §9, Requirements R10, and Hints H10. Resolved in TRD-04.</em></p>
+</div>
+
+<h2>References Cited in This Key</h2>
+
+<ol class="refs">
+  <li>[1] InfiniBand Trade Association. <em>InfiniBand Architecture Specification, Volume 1, Release 1.7.</em> Ch. 10, "Software Transport Interface."</li>
+  <li>[3] <em>ibv_reg_mr(3).</em> Linux manual page, section 3.</li>
+  <li>[8] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual.</em> Memory registration chapter.</li>
+  <li>[10] Bryant, Randal E., and David R. O'Hallaron. <em>Computer Systems: A Programmer's Perspective.</em> 3rd ed., Pearson, 2015. Ch. 9.</li>
+</ol>
+
+<p style="font-size:9pt; font-style:italic;">Numbering matches the reference list in the TRD-01 Prior Knowledge document.</p>
+
+</div>
+
+<div class="footer">
+  TRD-01: Context, Protection Domain, Memory Registration &nbsp;|&nbsp; Comprehension &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

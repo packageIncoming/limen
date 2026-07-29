@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-00: Fabric Up — Requirements</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.hint-ref { border: 1px solid #000; padding: 3px 8px; margin: 6px 0 2px 0; font-size: 9pt; font-style: italic; display: inline-block; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+.step { border-left: 3px solid #000; padding: 2px 0 2px 12px; margin: 14px 0 8px 0; }
+.step h4 { margin-top: 0; }
+@media print { body { padding: 0; } table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-00: Fabric Up</h1>
+  <div class="subtitle">Requirements — Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: None &nbsp;|&nbsp; Difficulty: Low &nbsp;|&nbsp; Setup: ~1 session &nbsp;|&nbsp; Requirements: 1&ndash;2 sessions</div>
+</div>
+
+<h2>Objective</h2>
+
+<p>Watch RDMA work, and record what you see. You will make a software RDMA fabric carry real traffic, determine which of its addressing entries is correct and why, capture the packets on the wire to see what the encapsulation actually is, measure the fabric, and compare it against ordinary TCP over the same link.</p>
+
+<p>The measurements and device attributes recorded here are consumed by later rungs. The packet capture is consumed by your understanding.</p>
+
+<h2>What This Is Not</h2>
+
+<p>You will not write RDMA code. No verbs calls, no queue pairs, no C++. The only file you author is a build configuration that locates two libraries and compiles nothing.</p>
+
+<p>The programs you run are reference tools written by the people who wrote the libraries. Running someone else&rsquo;s tool is not an achievement &mdash; <em>reading what it tells you</em> is the work, and every requirement below is about what you extract rather than what you execute.</p>
+
+<h2>Setup</h2>
+
+<p>Environment configuration. These are steps, not requirements: they have one correct outcome and no judgment in them. Work through them in order on <strong>both nodes</strong>, confirm at the gate in S4, then start the requirements.</p>
+
+<p>If a step fails, consult the Setup Troubleshooting table at the end of this section before searching elsewhere.</p>
+
+<div class="step">
+<h4>S1 &mdash; Two virtual machines with a private network between them</h4>
+<p>Two Ubuntu 24.04 VMs, 2 vCPU and 2&nbsp;GB each. Each needs <strong>two</strong> network adapters: NAT for internet access so package installation works, and a second adapter for RDMA traffic.</p>
+<p><strong>VirtualBox</strong> &mdash; power both VMs off, then from your host&rsquo;s command line:</p>
+<pre>VBoxManage list vms
+VBoxManage modifyvm "node-a" --nic2 intnet --intnet2 rdmalab
+VBoxManage modifyvm "node-b" --nic2 intnet --intnet2 rdmalab</pre>
+<p>The name <code>rdmalab</code> is arbitrary and must match on both. On Windows, <code>VBoxManage.exe</code> lives in <code>C:\Program Files\Oracle\VirtualBox\</code>.</p>
+<p>Equivalently through the interface: VM &rarr; Settings &rarr; Network &rarr; Adapter&nbsp;2 tab &rarr; tick <em>Enable Network Adapter</em> &rarr; Attached to: <strong>Internal Network</strong> &rarr; Name: <code>rdmalab</code>. Leave Adapter&nbsp;1 on NAT.</p>
+<p><strong>VMware:</strong> VM Settings &rarr; Add &rarr; Network Adapter &rarr; Host-only, on both VMs.</p>
+<p><strong>libvirt / virt-manager:</strong> attach both VMs to the same virtual network. The default NAT network already permits guest-to-guest traffic, so a second adapter is unnecessary &mdash; use the addresses libvirt assigned and skip to S5.</p>
+<div class="warning">Internal Network is chosen over Host-only because it needs no configuration on the host at all. The host cannot reach the VMs on that adapter, which does not matter &mdash; only the VMs need to reach each other, and the NAT adapter still provides a console and internet.</div>
+</div>
+
+<div class="step">
+<h4>S2 &mdash; Identify which interface is which</h4>
+<p>Boot both VMs. On each:</p>
+<pre>ip -br addr</pre>
+<p>Expect something like:</p>
+<pre>lo       UNKNOWN  127.0.0.1/8
+enp0s3   UP       10.0.2.15/24
+enp0s8   DOWN</pre>
+<p>VirtualBox NAT always assigns <strong>10.0.2.15</strong>. The interface holding that address is Adapter&nbsp;1 and is the <em>wrong</em> one. <strong>The other interface &mdash; the one with no address &mdash; is your RDMA interface.</strong></p>
+<p>Write its name down. Every remaining step uses it. These instructions say <code>enp0s8</code>; substitute yours.</p>
+</div>
+
+<div class="step">
+<h4>S3 &mdash; Give each node an address</h4>
+<p>Node A:</p>
+<pre>sudo ip link set enp0s8 up
+sudo ip addr add 10.0.0.1/24 dev enp0s8</pre>
+<p>Node B:</p>
+<pre>sudo ip link set enp0s8 up
+sudo ip addr add 10.0.0.2/24 dev enp0s8</pre>
+<p>This does not survive a reboot, which is acceptable for now. To make it persistent on Ubuntu Server:</p>
+<pre>sudo tee /etc/netplan/99-rdma.yaml &gt; /dev/null &lt;&lt;'EOF'
+network:
+  version: 2
+  ethernets:
+    enp0s8:
+      dhcp4: no
+      addresses: [10.0.0.1/24]
+EOF
+sudo chmod 600 /etc/netplan/99-rdma.yaml
+sudo netplan apply</pre>
+<p>The <code>chmod 600</code> is required &mdash; netplan on 24.04 refuses world-readable configuration files. Change the interface name and address per node.</p>
+<p>If the address vanishes after a reboot anyway, cloud-init is rewriting the configuration:</p>
+<pre>echo 'network: {config: disabled}' | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg</pre>
+<p>On Ubuntu Desktop, which uses NetworkManager instead:</p>
+<pre>sudo nmcli con add type ethernet ifname enp0s8 con-name rdma \
+     ipv4.method manual ipv4.addresses 10.0.0.1/24
+sudo nmcli con up rdma</pre>
+</div>
+
+<div class="step">
+<h4>S4 &mdash; Confirm connectivity, both directions</h4>
+<pre>ip -br addr show enp0s8      # UP, with your 10.0.0.x address</pre>
+<pre># on node A
+ping -c2 10.0.0.2
+# on node B
+ping -c2 10.0.0.1</pre>
+<div class="callout">
+  <div class="callout-label">Gate</div>
+  <p>Do not continue until <strong>both</strong> directions answer. If one works and the other does not, the silent node&rsquo;s firewall is dropping traffic &mdash; do S7 on that node now, then retest. Everything after this point assumes S4 passes, and a failure here presents later as an RDMA problem that is not one.</p>
+</div>
+</div>
+
+<div class="step">
+<h4>S5 &mdash; Packages</h4>
+<pre>sudo apt update
+sudo apt install -y rdma-core ibverbs-utils rdmacm-utils perftest \
+                    libibverbs-dev librdmacm-dev \
+                    build-essential cmake git tcpdump iperf3</pre>
+<p>Confirm the tools resolve:</p>
+<pre>command -v ibv_devinfo ibv_rc_pingpong rping ib_send_bw rdma tcpdump iperf3</pre>
+<p>Seven paths should print. If one is missing, find its package with <code>apt-file search bin/&lt;name&gt;</code>.</p>
+</div>
+
+<div class="step">
+<h4>S6 &mdash; Kernel modules</h4>
+<pre>sudo modprobe rdma_rxe
+sudo modprobe rdma_ucm
+lsmod | grep -E 'rdma_rxe|rdma_ucm'</pre>
+<p>If <code>modprobe</code> reports the module is not found, your kernel image omits it:</p>
+<pre>sudo apt install -y linux-modules-extra-$(uname -r)
+sudo modprobe rdma_rxe</pre>
+<p>The <code>$(uname -r)</code> matters &mdash; the unversioned package pulls modules for a kernel you are not running. If it installs a newer kernel as a dependency, <strong>reboot into it</strong> before continuing.</p>
+<p>Persist across reboots:</p>
+<pre>printf 'rdma_rxe\nrdma_ucm\n' | sudo tee /etc/modules-load.d/rdma.conf</pre>
+</div>
+
+<div class="step">
+<h4>S7 &mdash; Firewall</h4>
+<p>RoCEv2 rides UDP port 4791.<span class="cite">[3]</span> On a disposable lab VM:</p>
+<pre>sudo ufw disable</pre>
+<p>Or permit the port specifically:</p>
+<pre>sudo ufw allow 4791/udp</pre>
+<p>Note which you did; R7 asks you to record it.</p>
+</div>
+
+<div class="step">
+<h4>S8 &mdash; Create the software RDMA device</h4>
+<p>On the interface identified in S2 &mdash; <strong>not the NAT one</strong>:</p>
+<pre>sudo rdma link add rxe0 type rxe netdev enp0s8
+rdma link show</pre>
+<p>Use the same device name <code>rxe0</code> on both nodes so commands transfer between them.</p>
+<p>Wrong interface? <code>sudo rdma link delete rxe0</code> and repeat. This is the most common single mistake in this setup, and it produces a device that looks healthy and carries nothing.</p>
+<div class="warning">Ignore any guide instructing you to build or run <code>rxe_cfg</code>, or to patch a kernel. That method predates the driver going in-tree in kernel 4.8 and is obsolete.<span class="cite">[2]</span> If a tutorial mentions it, the rest of that tutorial is stale too.</div>
+<p>The link does not survive a reboot. Re-run the command, or write a one-line systemd unit &mdash; do not spend an hour on the unit.</p>
+</div>
+
+<div class="step">
+<h4>S9 &mdash; Confirm the device is live</h4>
+<pre>ibv_devices
+ibv_devinfo -d rxe0 | grep -E 'state:|link_layer:|transport:'</pre>
+<p>Required:</p>
+<ul>
+  <li><code>state: PORT_ACTIVE (4)</code></li>
+  <li><code>link_layer: Ethernet</code></li>
+</ul>
+<p><code>transport: InfiniBand (0)</code> also appears and is correct &mdash; RoCE is the InfiniBand transport carried over Ethernet, and section 8 of the Prior Knowledge document explains why.</p>
+<p><code>PORT_DOWN</code> means the underlying interface is down or you bound the wrong one. Return to S8.</p>
+</div>
+
+<h3>Setup Troubleshooting</h3>
+
+<table>
+  <tr><th style="width:230px;">Symptom</th><th style="width:200px;">Cause</th><th>Fix</th></tr>
+  <tr><td>The VMs cannot ping each other</td><td>Second adapter missing, or both on NAT</td><td>Repeat S1. NAT alone cannot carry guest-to-guest traffic.</td></tr>
+  <tr><td>Ping works one direction only</td><td>Firewall on the silent node</td><td>S7 on that node.</td></tr>
+  <tr><td>Address disappears after reboot</td><td><code>ip addr add</code> is not persistent, or cloud-init overwrote netplan</td><td>The netplan block in S3, plus the cloud-init disable line.</td></tr>
+  <tr><td><code>netplan apply</code> warns about permissions</td><td>Config file is world-readable</td><td><code>sudo chmod 600</code> on it.</td></tr>
+  <tr><td><code>modprobe: module not found</code></td><td>Base kernel image omits <code>rdma_rxe</code></td><td><code>linux-modules-extra-$(uname -r)</code>, then reboot if a new kernel was installed.</td></tr>
+  <tr><td><code>rdma link add</code> says the netdev does not exist</td><td>Interface name mistyped, or it is down</td><td><code>ip -br link</code>, then S8 again.</td></tr>
+  <tr><td><code>PORT_DOWN</code> in <code>ibv_devinfo</code></td><td>Bound to the NAT interface, or the interface is down</td><td>Delete the link and recreate it on the S2 interface.</td></tr>
+  <tr><td><code>rxe0</code> gone after reboot</td><td>Expected &mdash; links are not persistent</td><td>Re-run S8.</td></tr>
+  <tr><td>Everything times out with no error</td><td>Firewall blocking UDP 4791</td><td>S7.</td></tr>
+  <tr><td>A guide tells you to run <code>rxe_cfg</code></td><td>The guide predates the in-tree driver</td><td>Close it. Use <code>rdma link add</code>.</td></tr>
+</table>
+
+<hr>
+
+<h2>Technical Requirements</h2>
+
+<p>Everything below produces knowledge or an artifact. Setup produced a working machine; these produce the reason it was worth building.</p>
+
+<h3>R1 &mdash; Determine the Correct GID Index, and Say Why</h3>
+<p>A RoCE port has several entries in its GID table. Enumerate them, identify which is correct for this fabric, and record both the index and the reasoning.</p>
+<p>Record in <code>docs/fabric.md</code>: every populated index with its type and GID value, which index you selected, and one sentence on why the others are wrong.</p>
+<p>This is the rung&rsquo;s first real decision. Section 8 of the Prior Knowledge document explains what a GID is and why the table has more than one entry. The index you find here is an argument you will type on every command for the rest of the ladder, and arriving at it by trial and error means meeting the same confusion again in TRD-02 with no idea why.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H1</span>
+
+<h3>R2 &mdash; Move Bytes Over Raw Verbs</h3>
+<p>Complete an <code>ibv_rc_pingpong</code> exchange between the two nodes using the index from R1. Both processes must report a byte count and a throughput figure and exit 0.</p>
+<p>Record the full command line and output from both sides in <code>docs/fabric.md</code>.</p>
+<p>This is the raw-verbs path: the two processes exchange queue-pair parameters over a side TCP channel and drive the state transitions by hand. You will write this yourself in TRD-02 and TRD-03.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H2</span>
+
+<h3>R3 &mdash; Move Bytes Over the Connection Manager, and Note the Difference</h3>
+<p>Complete an <code>rping</code> exchange of at least 10 verified iterations.</p>
+<p>Then record, in one short paragraph in <code>docs/fabric.md</code>, <strong>what differed about how you invoked it</strong> compared to R2 &mdash; specifically what R2 required you to supply that R3 did not, and what that implies about which component determined it instead.</p>
+<p>Both paths must work. A failure in exactly one isolates the fault precisely, which is why both are required rather than either.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H3</span>
+
+<h3>R4 &mdash; See RoCEv2 on the Wire</h3>
+<p>Capture the traffic during an <code>ib_send_bw</code> run and confirm what the encapsulation actually is.</p>
+<p>Record in <code>docs/fabric.md</code>: the capture command, the packet count observed, and confirmation that the traffic is UDP with destination port 4791.<span class="cite">[3]</span></p>
+<div class="callout">
+  <div class="callout-label">Why this capture is itself the lesson</div>
+  <p>You can capture this traffic because the software provider <em>is</em> the kernel &mdash; the packets traverse the ordinary network stack, so an ordinary packet sniffer sees them. On a hardware RDMA adapter the same capture typically shows nothing, because the adapter transmits directly and the host stack is never involved. Practitioners resort to vendor tools such as <code>ibdump</code>, or to a switch mirror port, precisely because the traffic does not pass through the host.</p>
+  <p>So this capture succeeding is direct evidence of what section 7 calls kernel bypass &mdash; by demonstrating its <em>absence</em>. Record one sentence in <code>docs/fabric.md</code> on why the same capture would be expected to fail on hardware.</p>
+</div>
+<span class="hint-ref">Stuck? &rarr; Hints H4</span>
+
+<h3>R5 &mdash; Measure the Fabric</h3>
+<p>Run <code>ib_send_bw</code> and <code>ib_send_lat</code> between the nodes and record in <code>docs/baseline-rxe.md</code>:</p>
+<ul>
+  <li>Average bandwidth, with the message size it was measured at</li>
+  <li>Median and 99th-percentile latency, with its message size</li>
+  <li>Distribution, kernel release, hypervisor, vCPU count and memory per node</li>
+  <li>The MTU on both the network interface and the RDMA port</li>
+  <li>The date</li>
+</ul>
+<p>The figures will be poor. That is the correct result, and section 9 of the Prior Knowledge document explains why. Record them as measured; do not investigate.</p>
+<p>This file is the control for a comparison that has not happened yet. It costs ten minutes now and cannot be reconstructed later.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H5</span>
+
+<h3>R6 &mdash; Compare Against TCP, and Explain the Result</h3>
+<p>Measure ordinary TCP throughput over the same link with <code>iperf3</code>, and record it in <code>docs/baseline-rxe.md</code> beside the R5 figures.</p>
+<p>Then write two to four sentences explaining the comparison. <strong>Do not assume RDMA wins.</strong> Report what you actually measured and account for it using section 9&rsquo;s explanation of what the software provider does and does not do.</p>
+<p>This requirement exists because a number with nothing to compare it against teaches nothing. Whichever way the comparison falls, explaining it correctly requires understanding what is actually executing &mdash; which is the point of the rung.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H6</span>
+
+<h3>R7 &mdash; Capture the Device Attributes</h3>
+<p>Record the full output of <code>ibv_devinfo -v -d rxe0</code> in <code>docs/baseline-rxe.md</code>, and extract these fields explicitly: <code>max_qp</code>, <code>max_qp_wr</code>, <code>max_cq</code>, <code>max_cqe</code>, <code>max_mr</code>, <code>max_sge</code>, <code>max_qp_rd_atom</code>, <code>active_mtu</code>, and <code>gid_tbl_len</code>.</p>
+<p>Also record in <code>docs/fabric.md</code>: the interface <code>rxe0</code> is bound to, the two node addresses, whether you disabled the firewall or opened the port, and the exact commands to recreate the fabric after a reboot.</p>
+<p>TRD-01 reads these attributes rather than assuming them, and TRD-02 sizes its queues against them. Code that hardcodes a queue depth learned from the software provider fails on a real adapter for reasons that look unrelated.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H7</span>
+
+<h3>R8 &mdash; Repository and Build System</h3>
+<p>Initialise a Git repository with an initial commit and this layout:</p>
+<pre>limen/
+&#9500;&#9472;&#9472; CMakeLists.txt
+&#9500;&#9472;&#9472; README.md
+&#9500;&#9472;&#9472; .gitignore
+&#9500;&#9472;&#9472; docs/
+&#9474;   &#9500;&#9472;&#9472; fabric.md
+&#9474;   &#9492;&#9472;&#9472; baseline-rxe.md
+&#9500;&#9472;&#9472; include/limen/
+&#9500;&#9472;&#9472; src/
+&#9500;&#9472;&#9472; scripts/
+&#9492;&#9472;&#9472; tests/</pre>
+<p>The <code>CMakeLists.txt</code> must require CMake 3.16 or later, declare a C++20 project, locate <code>libibverbs</code> and <code>librdmacm</code> and their headers as required, export a compilation database, configure cleanly, and define no build targets.</p>
+<p>A required lookup that fails is an environment problem &mdash; the class of problem this entire rung exists to eliminate before TRD-01 begins.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H8</span>
+
+<h2>Acceptance Criteria</h2>
+
+<p>Setup is verified as a precondition and reported separately. Only the rows below are graded.</p>
+
+<table>
+  <tr><th style="width:40px;">ID</th><th>Criterion</th><th style="width:215px;">Verified by</th></tr>
+  <tr><td>R1</td><td><code>docs/fabric.md</code> records a GID index with its type and reasoning</td><td><code>test_gid_index_recorded</code></td></tr>
+  <tr><td>R2</td><td><code>ibv_rc_pingpong</code> completes against the peer and exits 0</td><td><code>test_raw_verbs_transfer</code></td></tr>
+  <tr><td>R3</td><td><code>rping</code> completes 10 verified iterations and exits 0</td><td><code>test_cm_transfer</code></td></tr>
+  <tr><td>R3</td><td><code>docs/fabric.md</code> notes what the CM path did not require</td><td><code>test_cm_difference_noted</code></td></tr>
+  <tr><td>R4</td><td>A capture confirms UDP 4791 traffic during a transfer</td><td><code>test_wire_capture</code></td></tr>
+  <tr><td>R4</td><td><code>docs/fabric.md</code> explains why this capture fails on hardware</td><td><code>test_capture_explained</code></td></tr>
+  <tr><td>R5</td><td><code>ib_send_bw</code> returns a positive average bandwidth</td><td><code>test_bandwidth_measured</code></td></tr>
+  <tr><td>R5</td><td><code>docs/baseline-rxe.md</code> records a bandwidth and a latency figure</td><td><code>test_baseline_recorded</code></td></tr>
+  <tr><td>R6</td><td>A TCP measurement is recorded beside the RDMA figures</td><td><code>test_tcp_comparison_recorded</code></td></tr>
+  <tr><td>R6</td><td>The comparison carries a written explanation</td><td><code>test_comparison_explained</code></td></tr>
+  <tr><td>R7</td><td>All nine named device attributes appear in the baseline</td><td><code>test_device_attrs_recorded</code></td></tr>
+  <tr><td>R7</td><td><code>docs/fabric.md</code> records the interface, addresses, and recreation commands</td><td><code>test_fabric_documented</code></td></tr>
+  <tr><td>R8</td><td>Required directories and files exist; the repository has a commit</td><td><code>test_repo_layout</code></td></tr>
+  <tr><td>R8</td><td><code>cmake -S . -B build</code> exits 0 and reports both library paths</td><td><code>test_cmake_configures</code></td></tr>
+</table>
+
+<h2>Deliverables</h2>
+
+<ul>
+  <li>A Git repository matching the R8 layout, with at least one commit.</li>
+  <li><code>docs/fabric.md</code> &mdash; the GID index and its justification, both transfer results, the R3 comparison paragraph, the R4 capture and its explanation, and the fabric configuration from R7.</li>
+  <li><code>docs/baseline-rxe.md</code> &mdash; the R5 measurements, the R6 TCP comparison with its explanation, and the R7 device attributes.</li>
+  <li><code>CMakeLists.txt</code> configuring cleanly and locating both libraries.</li>
+  <li><code>scripts/trd-00-tests.sh</code>, executable, passing.</li>
+  <li>Written answers to the comprehension questions.</li>
+</ul>
+
+<h2>What Comes Next</h2>
+
+<p>TRD-01 opens the device you verified here and writes the project&rsquo;s first verbs code: enumerating adapters, opening a context, allocating a protection domain, and registering memory. It reads the attributes recorded in R7 rather than assuming them, and uses the build system from R8 to produce the first compiled target.</p>
+
+<p>The two tools from R2 and R3 reappear as source rather than as instruments &mdash; <code>rc_pingpong.c</code> is the direct skeleton for TRD-02 and TRD-03, and <code>rping.c</code> is the structural model for TRD-05.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] linux-rdma. <em>rdma-core: RDMA core userspace libraries and daemons.</em> <code>Documentation/rxe.md</code> for the Soft-RoCE configuration procedure used in S6 and S8. Accessed 2026-07. https://github.com/linux-rdma/rdma-core</li>
+
+  <li>[2] <em>rdma-link(8).</em> Linux manual page, section 8. Documents <code>rdma link add</code> as used in S8, superseding the out-of-tree <code>rxe_cfg</code> method referenced in older material.</li>
+
+  <li>[3] Internet Assigned Numbers Authority. <em>Service Name and Transport Protocol Port Number Registry.</em> Entry <code>roce</code>, 4791/udp &mdash; the destination port S7 concerns and R4 confirms on the wire. Accessed 2026-07. https://www.iana.org/assignments/service-names-port-numbers/</li>
+
+  <li>[4] linux-rdma. <em>perftest: RDMA performance benchmark suite.</em> Source of <code>ib_send_bw</code> and <code>ib_send_lat</code>, and of the output format R5 requires you to record. Accessed 2026-07. https://github.com/linux-rdma/perftest</li>
+
+  <li>[5] <em>ibv_devinfo(1).</em> Linux manual page, section 1. The attribute fields R7 requires, and the meaning of the verbose flag.</li>
+</ol>
+
+<div class="footer">
+  TRD-00: Fabric Up &nbsp;|&nbsp; Requirements &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

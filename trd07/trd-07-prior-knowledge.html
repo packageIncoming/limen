@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-07: Completion Efficiency — Prior Knowledge</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-07: Completion Efficiency</h1>
+  <div class="subtitle">Prior Knowledge &mdash; Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-06 &nbsp;|&nbsp; Difficulty: High &nbsp;|&nbsp; Estimated: 4&ndash;6 sessions</div>
+</div>
+
+<h2>1 &nbsp; Where This Fits</h2>
+
+<p>Six rungs built a transport that works. Every send is signalled, every completion is polled in a tight spin, every payload is fetched by the adapter from a registered buffer, and exactly one operation is in flight at a time. It is correct and it is naive in four separate ways.</p>
+
+<p>This rung fixes all four. You will add inline data for small payloads, unsignaled sends with periodic signalling, completion-queue moderation, and event-driven reaping as an alternative to spinning &mdash; and, critically, you will make each one selectable at runtime so TRD-08 can measure them against each other.</p>
+
+<p>Two warnings before starting. First, <strong>every one of these trades something away</strong>, and the trade is the content of this rung; applying them without naming what was given up is cargo-culting. Second, none of them will measurably help on the software provider, because TRD-00 &sect;9&rsquo;s explanation still holds &mdash; the bottleneck is a CPU running the transport in software, and these optimisations reduce costs that are noise beside it. You are building the mechanisms and the measurement harness. TRD-08 is where the numbers arrive.</p>
+
+<p>This is the hardest rung after TRD-02, and for a different reason: the failure in &sect;6 is a hang caused by a race you cannot see in the source.</p>
+
+<h2>2 &nbsp; Where the Time Actually Goes</h2>
+
+<p>Per small message, the naive implementation pays roughly this:</p>
+
+<table>
+  <tr><th style="width:230px;">Cost</th><th style="width:150px;">Paid on</th><th>Removed by</th></tr>
+  <tr><td>Adapter fetches the payload by DMA</td><td>Every send</td><td>Inline data (&sect;3)</td></tr>
+  <tr><td>Completion generated, written, polled</td><td>Every send</td><td>Unsignaled sends (&sect;4)</td></tr>
+  <tr><td>One interrupt or poll per completion</td><td>Every completion</td><td>Moderation (&sect;5)</td></tr>
+  <tr><td>A core spinning at 100% while idle</td><td>Continuously</td><td>Event-driven reaping (&sect;6)</td></tr>
+  <tr><td>Round trip latency with nothing in flight</td><td>Every message</td><td>Pipelining (&sect;7)</td></tr>
+</table>
+
+<p>On hardware these are the dominant per-message costs once the transport itself is in silicon. A 64-byte send might cost 1.5 microseconds naively and under 1 microsecond with the first two applied &mdash; a third of the time spent on bookkeeping rather than on moving data.</p>
+
+<p>The last row is the largest and the least discussed. With one operation outstanding, the link is idle for an entire round trip per message, so throughput is bounded by latency rather than by bandwidth. Pipelining is what unsignaled sends exist to make practical.</p>
+
+<h2>3 &nbsp; Inline Data</h2>
+
+<p>Normally a work request points at a registered buffer and the adapter fetches the payload by direct memory access. For a small payload that fetch costs more than the payload is worth.</p>
+
+<p><code>IBV_SEND_INLINE</code> copies the payload into the work request itself. The adapter receives the data with the descriptor and performs no separate fetch.<span class="cite">[1]</span> Three consequences:</p>
+
+<ul>
+  <li><strong>The local key is not checked</strong>, because the adapter never touches your memory. The buffer need not even be registered.</li>
+  <li><strong>The buffer is reusable immediately</strong> after <code>ibv_post_send</code> returns &mdash; not after the completion. The data has already been copied.</li>
+  <li>The remote side is unaware. Inline affects only how the local adapter obtains the data.<span class="cite">[1]</span></li>
+</ul>
+
+<p>The second point is worth sitting with: it is the only mechanism in this ladder that relaxes TRD-03 &sect;10&rsquo;s buffer ownership rule, and it does so completely.</p>
+
+<div class="callout">
+  <div class="callout-label">The limit must be requested before the queue pair exists</div>
+  <p><code>max_inline_data</code> is a field of <code>ibv_qp_init_attr.cap</code>, set at creation. Providers frequently grant more than requested, and some grant zero unless asked. Read it back after <code>ibv_create_qp</code> &mdash; as TRD-02 R2 taught &mdash; and use the granted value, because posting inline data larger than it produces <code>EINVAL</code> from <code>ibv_post_send</code>.</p>
+  <p>Typical hardware grants 64 to 1024 bytes. Requesting a large value costs send-queue memory per entry, so it is not free.</p>
+</div>
+
+<p>The tradeoff: the payload is copied by the CPU into the descriptor rather than fetched by the adapter. Below the threshold that copy is cheaper than the DMA round trip; above it, it is not. That threshold is a measurement, not a constant, and finding it is TRD-08&rsquo;s business.</p>
+
+<h2>4 &nbsp; Unsignaled Sends</h2>
+
+<p>TRD-02 created the queue pair with <code>sq_sig_all</code> at zero, so sends produce completions only when flagged. TRD-03 flagged every one and R9 there made you observe what happens when you do not: the data moves and nothing tells you.</p>
+
+<p>The technique is to signal <em>periodically</em> &mdash; every <em>n</em>th send &mdash; rather than always or never.</p>
+
+<div class="callout">
+  <div class="callout-label">Why periodic signalling is sufficient</div>
+  <p>Work requests on a send queue complete in order. A completion for request <em>n</em> therefore implies every request before it has also completed. One completion in sixteen still bounds buffer reuse and still drains the send queue; it simply does so at coarser granularity.</p>
+</div>
+
+<p>What you give up is granularity. You no longer know that request 5 finished &mdash; only that everything through 16 did. So buffers must be reused in batches, and you need <em>n</em> of them in flight rather than one. That is why unsignaled sends and buffer pooling arrive together in every real transport.</p>
+
+<p>What you also give up is prompt error reporting. An unsignaled request that fails still terminates the queue pair and flushes everything outstanding, but you learn about it at the next signalled completion rather than immediately. The failure is not lost; its detection is delayed by up to <em>n</em> operations.</p>
+
+<div class="warning">
+  Never signal <em>nothing</em>. Completions are what drain the send queue, so with no signalling the queue fills and <code>ibv_post_send</code> eventually returns <code>ENOMEM</code> with every request having succeeded &mdash; a confusing failure that TRD-03 &sect;11 lists and that this technique makes easy to reach. The signalling period must divide into the send queue depth with room to spare.
+</div>
+
+<h2>5 &nbsp; Completion Queue Moderation</h2>
+
+<p>Moderation batches completion notifications: rather than notifying on every completion, the adapter waits until a count is reached or a period elapses, then notifies once. Fewer interrupts, fewer wakeups, higher throughput &mdash; at the cost of up to the configured period in added latency.</p>
+
+<p>It is configured with <code>ibv_modify_cq</code> and an <code>ibv_moderate_cq</code> structure carrying <code>cq_count</code> and <code>cq_period</code>, the latter in microseconds. Either may be zero to disable that half.</p>
+
+<div class="warning">
+  This is an optional capability. <code>ibv_modify_cq</code> may return <code>EOPNOTSUPP</code> or fail outright on providers that do not implement it, and the software provider is one of them. Treat a failure as &ldquo;unavailable&rdquo; rather than as an error: report it and continue. A rung that refuses to run because an optimisation is unsupported is worse than one that reports the fact.
+</div>
+
+<p>The tradeoff is unusually explicit here because you set the numbers directly. A period of 16 microseconds adds up to 16 microseconds of latency to a completion that would otherwise be reported immediately &mdash; ruinous for a latency-bound workload, free for a throughput-bound one.</p>
+
+<h2>6 &nbsp; Event-Driven Reaping, and the Race</h2>
+
+<p>Every rung so far has polled in a tight loop. That is the lowest-latency approach and it burns a core continuously whether or not anything is happening.</p>
+
+<p>The alternative is a completion channel: a file descriptor that becomes readable when a completion arrives, so a thread can block instead of spinning.</p>
+
+<pre>struct ibv_comp_channel *ch = ibv_create_comp_channel(ctx);
+struct ibv_cq *cq = ibv_create_cq(ctx, depth, nullptr, ch, 0);</pre>
+
+<p>TRD-02 passed <code>nullptr</code> for the channel, which selected polling. Passing a channel selects the event path.</p>
+
+<h3>The sequence, and why each step is where it is</h3>
+
+<pre>ibv_req_notify_cq(cq, 0);              /* arm BEFORE any completion can arrive */
+
+for (;;) {
+    struct ibv_cq *ev_cq; void *ev_ctx;
+    ibv_get_cq_event(ch, &amp;ev_cq, &amp;ev_ctx);   /* blocks */
+    ++unacked;
+
+    ibv_req_notify_cq(cq, 0);          /* RE-ARM: the CQ is now disarmed */
+
+    while (ibv_poll_cq(cq, n, wc) &gt; 0) { /* DRAIN completely */ }
+
+    if (unacked &gt;= 64) { ibv_ack_cq_events(cq, unacked); unacked = 0; }
+}</pre>
+
+<p>Four rules, each of which corrects a specific failure:</p>
+
+<p><strong>Arm before the first completion can arrive.</strong> <code>ibv_req_notify_cq</code> requests notification for the <em>next</em> completion added; anything already in the queue when you call it produces no notification.<span class="cite">[3]</span> Arming after posting means the completion may already be there and no event will ever come.</p>
+
+<p><strong>Re-arm after every event.</strong> Once a notification is sent the completion queue is <em>disarmed</em> and sends no further notifications until re-armed.<span class="cite">[2]</span> Forgetting this yields exactly one event and then silence.</p>
+
+<p><strong>Drain completely.</strong> One event does not mean one completion &mdash; it means at least one. Several may have accumulated, and any left in the queue will not generate a new event, because the next notification fires only for completions added <em>after</em> the re-arm. Poll until empty every time. Note also that an event may arrive with no completion behind it at all, which is legal and must not be treated as an error.<span class="cite">[3]</span></p>
+
+<p><strong>Batch the acknowledgements.</strong> <code>ibv_ack_cq_events</code> takes a mutex and is relatively expensive on the data path; acknowledging many events in one call performs better.<span class="cite">[2][3]</span> Count them and acknowledge in batches. Every event must be acknowledged before the completion queue is destroyed, so drain the count during teardown.</p>
+
+<h3>The race</h3>
+
+<div class="warning">
+  Even with all four rules, a completion arriving <em>between</em> your final poll and your call to <code>ibv_req_notify_cq</code> generates no notification &mdash; it was already in the queue when you armed. The thread then blocks in <code>ibv_get_cq_event</code> forever with work sitting in the queue.
+</div>
+
+<p>The remedy is prescribed by the specification itself: <strong>poll the completion queue once more after requesting notification.</strong><span class="cite">[4]</span> If that poll returns anything, handle it and do not block.</p>
+
+<p>The window is a few instructions wide, which is what makes this so dangerous. It does not appear in development, it does not appear under light load, and it appears as a permanent hang under sustained traffic on faster hardware. The linux-rdma mailing list has an entire thread devoted to spotting this in code that looks correct.<span class="cite">[5]</span> A kernel-side flag was eventually added so drivers could report whether the extra poll was necessary, on the grounds that some hardware does generate the event anyway and the redundant poll is waste<span class="cite">[4]</span> &mdash; but at the userspace verbs level the extra poll is the portable answer.</p>
+
+<p>The corrected shape:</p>
+
+<pre>while (ibv_poll_cq(cq, n, wc) &gt; 0) { handle(); }
+ibv_req_notify_cq(cq, 0);
+while (ibv_poll_cq(cq, n, wc) &gt; 0) { handle(); }   /* the race-closing poll */
+ibv_get_cq_event(ch, &amp;ev_cq, &amp;ev_ctx);              /* now safe to block */</pre>
+
+<h3>Non-blocking channels</h3>
+
+<p>The channel&rsquo;s file descriptor can be made non-blocking and driven by <code>poll</code> or <code>epoll</code>, which is how a server integrates RDMA completions with other event sources. That is the same descriptor discipline as TRD-05&rsquo;s connection-manager channel, and combining both in one event loop is how a real server is structured.</p>
+
+<h2>7 &nbsp; Pipelining</h2>
+
+<p>The largest win is not in this list of four. With one operation outstanding, the link idles for a full round trip per message and throughput is bounded by latency. Posting several before reaping any keeps the adapter busy.</p>
+
+<p>The bounds are ones you have already met. The send queue&rsquo;s depth, <code>max_send_wr</code>, caps outstanding sends. For reads, the negotiated <code>max_rd_atomic</code> from TRD-06 &sect;5 caps outstanding requests far lower &mdash; often 16 or fewer, and 1 in this ladder&rsquo;s configuration. Writes and sends pipeline deeply; reads do not.</p>
+
+<p>Pipelining is what makes unsignaled sends worth having: with one message in flight there is nothing to batch. The two techniques are the same technique.</p>
+
+<h2>8 &nbsp; Choosing</h2>
+
+<table>
+  <tr><th style="width:170px;">Technique</th><th>Gains</th><th>Costs</th></tr>
+  <tr><td>Inline data</td><td>Removes a DMA fetch; frees the buffer immediately</td><td>CPU copy; bounded by <code>max_inline_data</code>; send-queue memory</td></tr>
+  <tr><td>Unsignaled sends</td><td>Removes most completion processing</td><td>Coarser buffer reuse; delayed error detection; needs pooling</td></tr>
+  <tr><td>Moderation</td><td>Fewer interrupts and wakeups</td><td>Up to the configured period in added latency; often unsupported</td></tr>
+  <tr><td>Event-driven</td><td>Frees a core; scales to many queues</td><td>Wakeup latency; the &sect;6 race; more code</td></tr>
+  <tr><td>Pipelining</td><td>Decouples throughput from latency</td><td>More buffers in flight; bounded hard for reads</td></tr>
+</table>
+
+<p>The pattern: every row above trades latency for CPU, or CPU for latency, or granularity for throughput. There is no row that is free, and a transport that applies all of them uniformly has chosen a point on a curve without knowing it.</p>
+
+<p>Real transports select per workload. Bulk transfer takes moderation and deep pipelining and does not care about a few microseconds. A latency-critical control path takes inline data and polls, and accepts a burned core. The same library does both, in different connections.</p>
+
+<h2>9 &nbsp; Failure Modes</h2>
+
+<table>
+  <tr><th style="width:225px;">Symptom</th><th style="width:215px;">Cause</th><th>Resolution</th></tr>
+  <tr><td>Event loop hangs under load, works in testing</td><td>The &sect;6 race &mdash; a completion arrived between the last poll and the arm.<span class="cite">[4][5]</span></td><td>Poll again after arming, before blocking.</td></tr>
+  <tr><td>Exactly one event, then silence</td><td>Not re-armed. A notification disarms the queue.<span class="cite">[2]</span></td><td>Re-arm after every event.</td></tr>
+  <tr><td>Completions accumulate but no events</td><td>Not drained. Only completions added after the arm notify.<span class="cite">[3]</span></td><td>Poll until empty every time.</td></tr>
+  <tr><td>An event with no completion</td><td>Legal and expected.<span class="cite">[3]</span></td><td>Not an error. Continue.</td></tr>
+  <tr><td>Destroying the completion queue hangs</td><td>Unacknowledged events outstanding.</td><td>Acknowledge the remaining count during teardown.</td></tr>
+  <tr><td><code>ibv_post_send</code> returns <code>EINVAL</code> with inline</td><td>Payload exceeds the granted <code>max_inline_data</code>.</td><td>Read the granted value back after creation and check against it.</td></tr>
+  <tr><td>Inline requested, granted zero</td><td>Provider grants none unless asked, or none at all.</td><td>Set it in <code>cap</code> before creation; fall back if still zero.</td></tr>
+  <tr><td><code>ibv_post_send</code> returns <code>ENOMEM</code> after a while</td><td>Send queue full &mdash; signalling period too long, or nothing signalled.</td><td>Signal at least once per queue depth.</td></tr>
+  <tr><td>Corrupt payloads with unsignaled sends</td><td>Buffer reused before the covering completion.</td><td>Track which buffers a signalled completion covers. &sect;4.</td></tr>
+  <tr><td>Errors reported late or attributed wrongly</td><td>Unsignaled requests report at the next signalled one.</td><td>Expected. &sect;4.</td></tr>
+  <tr><td><code>ibv_modify_cq</code> fails</td><td>Provider does not support moderation.</td><td>Report as unavailable and continue. &sect;5.</td></tr>
+  <tr><td>No measurable improvement from any of it</td><td>Software provider. TRD-00 &sect;9.</td><td>Expected. Build the mechanism; TRD-08 measures it.</td></tr>
+</table>
+
+<h2>10 &nbsp; What Is Deliberately Left Out</h2>
+
+<p>No buffer pool with a proper allocator. Unsignaled sends need <em>n</em> buffers in flight and this rung uses a fixed ring indexed by sequence number, which is enough to be correct and is not a general allocator.</p>
+
+<p>No multiple completion queues, no separate send and receive queues, no completion vectors bound to specific cores. All matter for a multi-core server and none for two nodes.</p>
+
+<p>No adaptive tuning. Real transports adjust the signalling period and moderation settings in response to observed load. Doing that requires measurement, which is TRD-08.</p>
+
+<p>And no conclusions about which technique is best. You are building selectable mechanisms. Anyone who tells you inline data is worth 30% has measured it on specific hardware at a specific size, and TRD-08 is where you get your own number.</p>
+
+<h2>11 &nbsp; Further Reading</h2>
+
+<p><strong>Read before starting:</strong></p>
+<ul>
+  <li><strong><code>ibv_get_cq_event(3)</code></strong><span class="cite">[3]</span> &mdash; contains a complete worked example of the event loop and the statement that acknowledging is expensive. Read the example line by line; &sect;6 is an annotation of it.</li>
+  <li><strong>RDMAmojo on <code>ibv_req_notify_cq</code></strong><span class="cite">[6]</span> &mdash; the arming semantics, and specifically that completions already present do not notify.</li>
+</ul>
+
+<p><strong>Read while implementing:</strong></p>
+<ul>
+  <li><strong><code>ibv_post_send(3)</code></strong><span class="cite">[1]</span> &mdash; the inline and signalled flag semantics, for the fourth and last time.</li>
+  <li><strong>NVIDIA&rsquo;s active queue pair operations chapter</strong><span class="cite">[2]</span> &mdash; the clearest statement of the arm/disarm cycle and the acknowledgement batching rationale.</li>
+</ul>
+
+<p><strong>Reference as needed:</strong></p>
+<ul>
+  <li><strong>The linux-rdma race thread</strong><span class="cite">[5]</span> &mdash; experienced developers finding this bug in code that looks correct. Worth reading once for calibration about how subtle it is.</li>
+  <li><strong>Dreier&rsquo;s missed-events patch</strong><span class="cite">[4]</span> &mdash; states the specification&rsquo;s remedy explicitly and explains why some hardware makes the extra poll redundant.</li>
+</ul>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_post_send(3).</em> Linux manual page, section 3. The <code>IBV_SEND_INLINE</code> and <code>IBV_SEND_SIGNALED</code> flags, and the statement that inline data affects only how the local adapter obtains the data, the remote side being unaware. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+
+  <li>[2] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual</em>, &ldquo;Active Queue Pair Operations.&rdquo; States that once a notification is sent the completion queue is disarmed until re-armed by a further <code>ibv_req_notify_cq</code>, and that <code>ibv_ack_cq_events</code> takes a mutex and is somewhat expensive, so acknowledging multiple events in one call may perform better. https://docs.nvidia.com/networking/display/rdmaawareprogrammingv17/active+queue+pair+operations</li>
+
+  <li>[3] <em>ibv_get_cq_event(3)</em> and <em>ibv_ack_cq_events(3).</em> Linux manual pages, section 3. The worked event-loop example reproduced in &sect;6, the note that an extra event may arrive with no completion in the queue, and the statement that acknowledging may be relatively expensive in the data path since it must take a mutex. https://man7.org/linux/man-pages/man3/ibv_ack_cq_events.3.html</li>
+
+  <li>[4] Dreier, Roland. <em>IB: Return &ldquo;maybe missed event&rdquo; hint from ib_req_notify_cq().</em> Linux kernel patch. States the race directly &mdash; a completion added before the notification request generates no event &mdash; and that to close it, the InfiniBand specification recommends doing another poll of the completion queue after requesting notification. Accessed 2026-07. https://lkml.rescloud.iu.edu/0704.3/1689.html</li>
+
+  <li>[5] linux-rdma mailing list. <em>&ldquo;Identify the race condition in this code.&rdquo;</em> Thread in which the arm-and-block race is diagnosed in code that appears correct. Accessed 2026-07. https://linux-rdma.vger.kernel.narkive.com/JVi964G1/identify-the-race-condition-in-this-code-and-win-the-respect-of-developers</li>
+
+  <li>[6] Barak, Dotan. <em>RDMAmojo &mdash; ibv_req_notify_cq().</em> States that notification is requested for the next work completion added, and that any completions already present when the call is made will not result in a notification. Accessed 2026-07. https://www.rdmamojo.com/2013/02/22/ibv_req_notify_cq/</li>
+
+  <li>[7] <em>ibv_create_cq(3)</em>, <em>ibv_create_comp_channel(3)</em>, <em>ibv_modify_cq(3).</em> Linux manual pages, section 3. Channel creation, the completion-queue association, and the moderation interface discussed in &sect;5.</li>
+</ol>
+
+<div class="footer">
+  TRD-07: Completion Efficiency &nbsp;|&nbsp; Prior Knowledge &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

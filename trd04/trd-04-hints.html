@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-04: The RAII Layer — Hints</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.level-box { border: 2px solid #000; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
+.level-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .level-box, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-04: The RAII Layer</h1>
+  <div class="subtitle">Hints — Limen RDMA Transport Project</div>
+  <div class="meta">Level 1 = nudge &nbsp;|&nbsp; Level 2 = stronger push &nbsp;|&nbsp; Try Level 1 for 15+ minutes before escalating</div>
+</div>
+
+<p>Level 1 points at the right place. Level 2 names the mechanism.</p>
+
+<p>The failure character here is different again. TRD-02 failed at one call with one uninformative error; TRD-03 failed by hanging. This rung mostly fails <em>silently</em> — a wrapper that copies instead of moving compiles cleanly, runs correctly on the happy path, and double-frees on exit. The defence is compile-time: R1's static assertions and R6's compile-fail test catch these before anything runs, which is why the suite is mostly compilation rather than execution. Write those first.</p>
+
+<h2>H1 — The Ownership Contract (R1)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Start by writing the assertion file, before any wrapper exists. It will not compile, and the errors are your specification — each one names a property you have not yet provided.</p>
+  <p>Then write <em>one</em> wrapper completely and get it passing. The protection domain is the right first choice: no arguments to speak of, one handle, one release call. Do not start with the memory region, which owns two things, or the context, which enumerates.</p>
+  <p>On the template question: write the first one by hand. You cannot design a good abstraction over a shape you have not yet written once, and after two or three you will know whether the shapes are actually the same. They are less identical than they look — the release conventions differ, and one wrapper owns an extra resource.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>/* tests/static_contract.cpp */
+#include &lt;limen/verbs.hpp&gt;
+#include &lt;type_traits&gt;
+
+template &lt;typename T&gt;
+constexpr void check() {
+    static_assert(!std::is_copy_constructible_v&lt;T&gt;,        "must not be copyable");
+    static_assert(!std::is_copy_assignable_v&lt;T&gt;,           "must not be copy-assignable");
+    static_assert(std::is_nothrow_move_constructible_v&lt;T&gt;, "move ctor must be noexcept");
+    static_assert(std::is_nothrow_move_assignable_v&lt;T&gt;,    "move assign must be noexcept");
+    static_assert(std::is_nothrow_destructible_v&lt;T&gt;,       "dtor must be noexcept");
+    static_assert(std::is_nothrow_default_constructible_v&lt;T&gt;, "empty state must exist");
+}
+
+int main() {
+    check&lt;limen::Context&gt;();
+    check&lt;limen::ProtectionDomain&gt;();
+    check&lt;limen::MemoryRegion&gt;();
+    check&lt;limen::CompletionQueue&gt;();
+    check&lt;limen::QueuePair&gt;();
+}</pre>
+  <p>If <code>is_nothrow_move_constructible_v</code> fails while you believe you wrote a move constructor, the usual cause is that you declared a destructor and did not declare the moves — the implicit ones were suppressed, and what you are testing is the deleted copy.<span class="cite">[4]</span></p>
+</div>
+
+<h2>H2 — Context (R2)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The body is TRD-01's R2 and R3 moved into a constructor. The list must be freed on every path out, including the throwing ones — which is exactly the kind of thing this layer exists to stop you hand-writing, so consider whether a tiny local guard type is worth it for the list, or whether the function is short enough to be obviously correct.</p>
+  <p>The release convention here is the odd one out: it returns <code>-1</code> rather than an errno value. Normalise it, so that callers of <code>close()</code> never have to know which of the three conventions a given wrapper wraps. That normalisation is a quiet benefit of this layer worth noticing.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>Context::Context(const char *name) {
+    int n = 0;
+    ibv_device **list = ibv_get_device_list(&amp;n);
+    if (!list) throw VerbsError("ibv_get_device_list", errno);
+
+    ibv_device *dev = nullptr;
+    for (int i = 0; i &lt; n; ++i)
+        if (std::strcmp(ibv_get_device_name(list[i]), name) == 0) { dev = list[i]; break; }
+
+    if (!dev) { ibv_free_device_list(list); throw VerbsError("device not found", ENODEV); }
+
+    ctx_ = ibv_open_device(dev);
+    int saved = errno;
+    ibv_free_device_list(list);                    /* before the throw, on both paths */
+    if (!ctx_) throw VerbsError("ibv_open_device", saved);
+}
+
+int Context::close() noexcept {
+    if (!ctx_) return 0;                           /* idempotent */
+    int rc = ibv_close_device(ctx_) ? EIO : 0;     /* -1 convention normalised */
+    ctx_ = nullptr;
+    return rc;
+}</pre>
+  <p>Save <code>errno</code> before <code>ibv_free_device_list</code>. Any intervening call may overwrite it, and reporting the wrong cause is worse than reporting none.</p>
+</div>
+
+<h2>H3 — ProtectionDomain (R3)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The simplest of the five and the one to get completely right before writing any others — every remaining wrapper is this shape with a different acquire and release call.</p>
+  <p>Once it passes the assertions, copy it four times and change the two calls. Then decide whether the duplication bothers you enough to template it. Deciding after you can see all five is the point; deciding before is guessing.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>ProtectionDomain::ProtectionDomain(Context &amp;ctx) {
+    pd_ = ibv_alloc_pd(ctx.get());
+    if (!pd_) throw VerbsError("ibv_alloc_pd", errno);
+}
+
+ProtectionDomain::ProtectionDomain(ProtectionDomain &amp;&amp;o) noexcept
+    : pd_(std::exchange(o.pd_, nullptr)) {}
+
+ProtectionDomain &amp;ProtectionDomain::operator=(ProtectionDomain &amp;&amp;o) noexcept {
+    if (this != &amp;o) { close(); pd_ = std::exchange(o.pd_, nullptr); }
+    return *this;
+}
+
+int ProtectionDomain::close() noexcept {
+    if (!pd_) return 0;
+    int rc = ibv_dealloc_pd(pd_);                  /* 0 or an errno value */
+    pd_ = nullptr;                                 /* clear regardless    */
+    return rc;
+}
+
+ProtectionDomain::~ProtectionDomain() noexcept {
+    if (int e = close(); e != 0)
+        report_release_failure("ibv_dealloc_pd", e);
+}</pre>
+  <p>Clear the handle even when the release reports failure. Retaining it invites a second attempt on the next destruction, and there is nothing useful to retry.</p>
+</div>
+
+<h2>H4 — MemoryRegion (R4)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Two resources, one object, and a mandatory order between them: deregister before freeing. Getting that backwards hands the adapter a pointer into freed memory, which is the exact hazard making this a single type rather than two is meant to eliminate.</p>
+  <p>Moving must transfer both. A move that takes the registration and leaves the buffer behind produces a source that frees memory the destination is still registered against — a bug that will not appear until something is moved, which may be much later.</p>
+  <p>The accessors need to work on an empty region. Every one of them dereferences a handle in the obvious implementation, so each needs a guard.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>class MemoryRegion {
+    ibv_mr     *mr_   = nullptr;
+    void       *buf_  = nullptr;
+    std::size_t size_ = 0;
+};
+
+MemoryRegion::MemoryRegion(ProtectionDomain &amp;pd, std::size_t bytes, int access) {
+    buf_ = std::aligned_alloc(4096, (bytes + 4095) &amp; ~std::size_t{4095});
+    if (!buf_) throw VerbsError("aligned_alloc", ENOMEM);
+    std::memset(buf_, 0, bytes);
+
+    mr_ = ibv_reg_mr(pd.get(), buf_, bytes, access);
+    if (!mr_) { int e = errno; std::free(buf_); buf_ = nullptr;
+                throw VerbsError("ibv_reg_mr", e); }
+    size_ = bytes;
+}
+
+int MemoryRegion::close() noexcept {
+    int rc = 0;
+    if (mr_)  { rc = ibv_dereg_mr(mr_); mr_ = nullptr; }   /* deregister FIRST */
+    if (buf_) { std::free(buf_); buf_ = nullptr; }         /* then free        */
+    size_ = 0;
+    return rc;
+}
+
+std::uint32_t MemoryRegion::lkey() const noexcept { return mr_ ? mr_-&gt;lkey : 0; }
+std::uint32_t MemoryRegion::rkey() const noexcept { return mr_ ? mr_-&gt;rkey : 0; }
+void         *MemoryRegion::data() const noexcept { return buf_; }
+std::size_t   MemoryRegion::size() const noexcept { return size_; }</pre>
+  <p>The constructor's failure path frees the buffer by hand, because the object does not exist yet and its destructor will not run. That is the one place in this layer where manual cleanup is correct and unavoidable — a constructor that throws leaves nothing behind for the language to clean up.</p>
+  <p><code>std::aligned_alloc</code> requires the size to be a multiple of the alignment, hence the rounding. It pairs with plain <code>std::free</code>.</p>
+</div>
+
+<h2>H5 — CompletionQueue and QueuePair (R5)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Same shape again. The only new work is capturing what the provider granted, which for the completion queue is a field on the created object and for the queue pair is written back into the structure you passed.</p>
+  <p>Store the granted values as members at construction. Reading them back later through <code>get()</code> works for the completion queue and does not for the queue pair, since the structure you passed was a local that is gone.</p>
+  <p>The warning in R5 is worth sitting with for a moment: the queue pair holds a reference to the completion queue that neither wrapper knows about. Think about where that could be made structural, then read R7.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>CompletionQueue::CompletionQueue(Context &amp;ctx, int want) {
+    cq_ = ibv_create_cq(ctx.get(), want, nullptr, nullptr, 0);
+    if (!cq_) throw VerbsError("ibv_create_cq", errno);
+    requested_ = want;
+    granted_   = cq_-&gt;cqe;                 /* may exceed the request */
+}
+
+QueuePair::QueuePair(ProtectionDomain &amp;pd, ibv_qp_init_attr &amp;init) {
+    qp_ = ibv_create_qp(pd.get(), &amp;init);
+    if (!qp_) throw VerbsError("ibv_create_qp", errno);
+    qp_num_ = qp_-&gt;qp_num;
+    cap_    = init.cap;                    /* written back by the call */
+}</pre>
+  <p>Take the init structure by non-const reference precisely because the call modifies it — a const reference would not compile, and a by-value parameter would discard the granted capabilities. The signature documents the behaviour.</p>
+</div>
+
+<h2>H6 — Move Semantics (R6)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Three obligations for a correct move, listed in section 5 of the Prior Knowledge document. Most people get the first two and miss the third, and the third only fails when you assign over a live object — which the test suite does deliberately.</p>
+  <p>For the compile-fail test: a test that requires compilation to <em>fail</em> is unusual and worth thinking about before writing. The file must be excluded from the normal build, or the project will not compile at all.</p>
+  <p>The self-assignment guard looks like paranoia and is not. Without it, <code>a = std::move(a)</code> releases the resource and then adopts the null you just left behind, silently destroying the object.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>/* tests/copy_must_not_compile.cpp — NOT in the default build */
+#include &lt;limen/verbs.hpp&gt;
+int main() {
+    limen::ProtectionDomain a;
+    limen::ProtectionDomain b = a;      /* must be rejected: copy ctor deleted */
+    (void)b;
+}</pre>
+  <p>Exclude it with <code>EXCLUDE_FROM_ALL</code> so the suite can invoke the compiler on it directly and require a non-zero exit:</p>
+  <pre>add_executable(copy_must_not_compile EXCLUDE_FROM_ALL tests/copy_must_not_compile.cpp)</pre>
+  <p>For the move-assign test, instrument the release path in diagnostic mode and count the reports. Assigning a live object over another live object must produce exactly one release at the assignment and one at scope exit — two in total, not three and not one.</p>
+</div>
+
+<h2>H7 — Destruction Order by Declaration (R7)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>This requirement is mostly a matter of writing five member declarations in the right sequence and then <em>not</em> writing a destructor. The temptation to add one and release things explicitly is exactly the mistake — a hand-written destructor is a place the order can be wrong, and the implicit one cannot be.</p>
+  <p>The diagnostic mode needs each wrapper to know its own name. A string passed to the reporting function is the least clever option and the one that will not surprise you later.</p>
+  <p>Think about construction. Members are initialised in declaration order, and each one needs the previous — so the constructor's initialiser list has a natural shape that mirrors the declarations. If you find yourself wanting to initialise them out of order, the declaration order is wrong.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>class Endpoint {
+public:
+    Endpoint(const char *dev, std::size_t bytes, int access,
+             int cq_depth, ibv_qp_init_attr &amp;init)
+        : ctx_(dev)
+        , pd_(ctx_)
+        , mr_(pd_, bytes, access)
+        , cq_(ctx_, cq_depth)
+        , qp_(pd_, (init.send_cq = init.recv_cq = cq_.get(), init))
+    {}
+    /* No destructor. The implicit one is correct. */
+
+    Context          &amp;context() noexcept { return ctx_; }
+    /* ... accessors ... */
+
+private:
+    Context          ctx_;   /* destroyed 5th */
+    ProtectionDomain pd_;    /* destroyed 4th */
+    MemoryRegion     mr_;    /* destroyed 3rd */
+    CompletionQueue  cq_;    /* destroyed 2nd */
+    QueuePair        qp_;    /* destroyed 1st */
+};</pre>
+  <p>Members are initialised in <em>declaration</em> order regardless of the order they appear in the initialiser list, so writing the list in the same order keeps the two aligned and avoids a warning. Compile with <code>-Wreorder</code> — enabled by <code>-Wall</code> — and the compiler will tell you if they diverge.</p>
+  <p>For the diagnostic mode:</p>
+  <pre>void limen::report_release(const char *what) noexcept {
+    if (std::getenv("LIMEN_TRACE_RELEASE"))
+        std::fprintf(stderr, "release: %s\n", what);
+}</pre>
+  <p>Call it from each <code>close()</code>. Running an <code>Endpoint</code> with that variable set produces the five lines the suite checks, in order.</p>
+</div>
+
+<h2>H8 — Non-Throwing Release (R8)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The design is in section 6 of the Prior Knowledge document and it is short: an explicit release that returns the status, and a destructor that calls it and reports. The work is in making <code>close()</code> genuinely idempotent, which means it must be safe to call from the destructor after a caller has already called it.</p>
+  <p>The pattern that makes idempotence fall out is clearing the handle inside <code>close()</code> and returning early when it is already null. Every wrapper then gets the property for free.</p>
+  <p>Resist any design where the destructor decides whether it is safe to throw. Section 6 explains why that particular cleverness is rejected by name.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>void limen::report_release_failure(const char *op, int err) noexcept {
+    std::fprintf(stderr, "limen: %s failed during release: %s (%d)\n",
+                 op, std::strerror(err), err);
+}</pre>
+  <p>Every destructor is the same three lines:</p>
+  <pre>~QueuePair() noexcept {
+    if (int e = close(); e != 0) report_release_failure("ibv_destroy_qp", e);
+}</pre>
+  <p>Mark <code>close()</code> and the reporting function <code>noexcept</code> explicitly. The destructor is implicitly <code>noexcept</code><span class="cite">[2]</span> but a function it calls is not, and a throw escaping through the destructor terminates the program just the same.</p>
+  <p>To confirm the assertion in <code>static_contract.cpp</code> is testing what you think, temporarily add a <code>throw</code> to one destructor and check that the file fails to compile. Then remove it.</p>
+</div>
+
+<h2>H9 — Constructors Throw (R9)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>One exception type carrying an operation name and an errno value is enough; resist a hierarchy.</p>
+  <p>The interesting part is what happens in <code>Endpoint</code>'s constructor when the fourth member throws. Three members are fully constructed and one is not. Work out what the language does, and confirm you believe it before writing the test — the answer is what makes R9 true and it is worth deriving rather than being told.</p>
+  <p>Note the one place manual cleanup is still correct: inside a constructor, before the object exists. H4's memory region shows it.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>VerbsError::VerbsError(const char *op, int err)
+    : std::runtime_error(std::string(op) + ": " + std::strerror(err))
+    , err_(err) {}</pre>
+  <p>When a member's constructor throws, the members already fully constructed are destroyed in reverse order, and the object under construction never existed, so its destructor does not run. That is exactly the behaviour R9 wants: a failure at the completion queue leaves the region, domain, and context released correctly with no code written to do it.</p>
+  <p>Test it by pointing at a device that exists and requesting a completion queue larger than <code>max_cqe</code>:</p>
+  <pre>try {
+    limen::Endpoint ep("rxe0", 4096, acc, 1 &lt;&lt; 30, init);   /* cq too large */
+} catch (const limen::VerbsError &amp;e) {
+    /* three members were constructed and released; valgrind must be clean */
+}</pre>
+</div>
+
+<h2>H10 — Refactor All Three Programs (R10)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Do them one at a time, smallest first, and run that program's own suite after each. Refactoring all three before testing any produces a failure you cannot localise.</p>
+  <p>The method that works: delete the cleanup block first, then fix every compile error it causes. Deleting it forces the issue and stops you from leaving half of it behind, which R10's warning identifies as the worst outcome.</p>
+  <p>The <code>teardown:</code> line is the one thing that needs thought. It reports per-stage status, and destructors run after your last statement — so you need the status <em>before</em> scope exit. Section 6 of the Prior Knowledge document explains what explicit release is for, and this is the case.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <p>Call <code>close()</code> explicitly in the order the line reports, then let the destructors run as no-ops:</p>
+  <pre>int e;
+const char *qp_s  = (e = ep.qp().close())  ? errno_name(e) : "ok";
+const char *cq_s  = (e = ep.cq().close())  ? errno_name(e) : "ok";
+const char *mr_s  = (e = ep.mr().close())  ? errno_name(e) : "ok";
+const char *pd_s  = (e = ep.pd().close())  ? errno_name(e) : "ok";
+const char *ctx_s = (e = ep.context().close()) ? errno_name(e) : "ok";
+std::printf("teardown: qp=%s cq=%s mr=%s pd=%s context=%s\n",
+            qp_s, cq_s, mr_s, pd_s, ctx_s);</pre>
+  <p>Because <code>close()</code> is idempotent, the destructors that follow release nothing and report nothing. And because the explicit calls are in the same order the destructors would have used, an exception thrown before reaching this block still produces correct cleanup — the reporting is skipped, the release is not.</p>
+  <p>Order the port: <code>limen_devinfo</code> first (smallest, three wrappers), then <code>limen_connect</code>, then <code>limen_pingpong</code>. Run <code>scripts/trd-01-tests.sh</code>, then <code>trd-02</code>, then <code>trd-03</code> after each respective port. Every one must pass unmodified — if you find yourself editing an old test, the refactor changed behaviour and has gone wrong.</p>
+</div>
+
+<h2>H11 — No Raw Handles Outside the Layer (R11)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Mostly a verification requirement rather than a construction one: if R10 is complete, this passes. Run the grep yourself before running the suite.</p>
+  <p>Expect to find one or two survivors — a stray destroy in an error path that the compiler had no reason to complain about. That is the requirement doing its job.</p>
+  <p>For the leak checks, remember to exercise a failure path for each program, not just the success path. Cleanup on the happy path is the part that was already working.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>grep -rn -E 'ibv_(destroy_qp|destroy_cq|dereg_mr|dealloc_pd|close_device)' \
+     src/ include/ --include='*.c' --include='*.cpp' --include='*.hpp' \
+  | grep -v 'src/verbs.cpp' | grep -v 'include/limen/verbs.hpp'</pre>
+  <p>Empty output is the passing condition. Similarly for surviving manual cleanup:</p>
+  <pre>grep -rn 'goto cleanup' src/ | grep -v verbs.cpp</pre>
+  <p>The failure paths worth leak-checking are the ones each program already has: an unknown device for <code>limen_devinfo</code>, a forced RTR failure for <code>limen_connect</code>, and the finite-retry RNR run for <code>limen_pingpong</code>. All three now exit by unwinding rather than by jumping, which is precisely the change that could have introduced a leak.</p>
+</div>
+
+<h2>Debugging This TRD</h2>
+
+<table>
+  <tr><th style="width:235px;">Question</th><th>Instrument</th></tr>
+  <tr><td>Is my wrapper actually move-only?</td><td><code>tests/static_contract.cpp</code>. If it compiles, it is. No runtime test is as reliable.</td></tr>
+  <tr><td>Did something copy instead of moving?</td><td>Deleted copy operations turn this into a compile error. If it compiles, nothing copied.</td></tr>
+  <tr><td>Is the destruction order right?</td><td><code>LIMEN_TRACE_RELEASE=1 ./build/limen_pingpong ...</code> and read the five lines.</td></tr>
+  <tr><td>Double free or driver crash on exit</td><td><code>valgrind</code>. Then look for a move that did not null its source, or a wrapper passed by value.</td></tr>
+  <tr><td>Leak that the C version did not have</td><td>Almost always a surviving <code>goto cleanup</code> being skipped by a throw. Grep for it.</td></tr>
+  <tr><td><code>EBUSY</code> in a release diagnostic</td><td>Member declaration order. The layer is telling you it has a hole.</td></tr>
+  <tr><td>Did behaviour change?</td><td>The three earlier suites, run unmodified. That is what they are for.</td></tr>
+  <tr><td>Which special member is missing?</td><td>Read the <code>static_assert</code> message rather than guessing — each one names its property.</td></tr>
+</table>
+
+<div class="callout">
+  <div class="callout-label">The most useful habit on this rung</div>
+  <p>Compile early and often. Nearly every defect available here is a compile-time defect, and the assertion file plus the compile-fail test catch most of them before anything executes. A wrapper that passes <code>static_contract.cpp</code> and the three regression suites is very likely correct, which is not something that could be said of any previous rung.</p>
+</div>
+
+<h2>The Tool Boundary</h2>
+
+<p>This is the one rung where the compiler is the primary diagnostic instrument. Read the error messages properly — a deleted-function error names the function and the call site, and a failed <code>static_assert</code> names the property. Both are more precise than anything a debugger would tell you afterwards.</p>
+
+<p>An AI assistant is appropriate for reviewing code once it works, clarifying a concept a document left unclear, and grading comprehension answers. It is not appropriate for writing or debugging the implementation — and on this rung in particular, wrapper types are exactly the sort of boilerplate it is tempting to delegate, which would skip the entire lesson.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] cppreference.com. <em>Destructors.</em> Reverse-declaration-order member destruction, relied on in H7. Accessed 2026-07. https://en.cppreference.com/w/cpp/language/destructor</li>
+
+  <li>[2] Software Engineering Institute, Carnegie Mellon University. <em>DCL57-CPP: Do not let exceptions escape from destructors or deallocation functions.</em> The implicit <code>noexcept</code> specification referenced in H8. Accessed 2026-07. https://wiki.sei.cmu.edu/confluence/display/cplusplus/DCL57-CPP.+Do+not+let+exceptions+escape+from+destructors+or+deallocation+functions</li>
+
+  <li>[3] cppreference.com. <em>std::exchange.</em> The move idiom used in H3. Accessed 2026-07. https://en.cppreference.com/w/cpp/utility/exchange</li>
+
+  <li>[4] cppreference.com. <em>Move constructors.</em> The rule that a user-declared destructor suppresses implicit move operations — the cause of the assertion failure diagnosed in H1. Accessed 2026-07. https://en.cppreference.com/w/cpp/language/move_constructor</li>
+
+  <li>[5] <em>ibv_destroy_qp(3)</em>, <em>ibv_destroy_cq(3)</em>, <em>ibv_dereg_mr(3)</em>, <em>ibv_dealloc_pd(3)</em>, <em>ibv_close_device(3).</em> Linux manual pages, section 3. Release conventions normalised in H2 through H5.</li>
+
+  <li>[6] cppreference.com. <em>std::aligned_alloc.</em> Size and alignment requirements noted in H4. Accessed 2026-07. https://en.cppreference.com/w/cpp/memory/c/aligned_alloc</li>
+</ol>
+
+<div class="footer">
+  TRD-04: The RAII Layer &nbsp;|&nbsp; Hints &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

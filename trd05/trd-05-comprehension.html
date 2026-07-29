@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-05: Connection Management — Comprehension</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.answer-key { page-break-before: always; }
+.qa-block { border: 1.5px solid #000; padding: 12px 14px; margin: 14px 0; page-break-inside: avoid; }
+.qa-block .qa-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px; }
+.qa-miss { border-left: 4px solid #000; padding: 6px 12px; margin: 8px 0 0 0; font-size: 9.5pt; font-style: italic; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .qa-block, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-05: Connection Management</h1>
+  <div class="subtitle">Comprehension — Limen RDMA Transport Project</div>
+  <div class="meta">8 questions &nbsp;|&nbsp; Answer in writing before the key &nbsp;|&nbsp; Est.: 55–80 minutes</div>
+</div>
+
+<h2>Questions</h2>
+
+<p><strong>Q1.</strong> Failing to acknowledge a completion queue entry in TRD-03 would have leaked. Failing to acknowledge a connection manager event does something worse. Explain what and why, and explain why that consequence is what makes RAII the right answer rather than merely a tidy one.</p>
+
+<p><strong>Q2.</strong> On a connect request, the library creates an identifier and hands it to you. Explain why none of TRD-04's five wrapper types could represent that, what you had to add, and why <code>adopt()</code> is a named static function rather than a constructor taking a pointer.</p>
+
+<p><strong>Q3.</strong> R4 required <code>Event</code> to expose no accessor returning the private data pointer. Explain the hazard that removal prevents, and explain why the RAII type from R3 makes that hazard <em>more</em> likely rather than less.</p>
+
+<p><strong>Q4.</strong> The private data limits are 56 bytes on connect and 196 on accept. Explain what goes wrong if you design a payload against the larger figure, and say why a compile-time assertion is a better defence than a runtime check.</p>
+
+<p><strong>Q5.</strong> The ready-marker exchange from TRD-03 was deleted without replacement. Reconstruct the argument that it is unnecessary, then state precisely which ordering in your own code the argument depends on. What would break if that ordering were reversed?</p>
+
+<p><strong>Q6.</strong> The connection manager fixes the minimum RNR timer at 0, which is 655 ms, where TRD-02 set it to 12, which is 0.64 ms. Describe the observable consequence for the experiments in TRD-03, and give one situation in which losing control of this field would be a genuine problem rather than a curiosity.</p>
+
+<p><strong>Q7.</strong> The queue pair now belongs to the connection identifier and is destroyed through <code>rdma_destroy_qp(id)</code> rather than by a TRD-04 <code>QueuePair</code> object. Explain why, and say what the ported program gave up by no longer owning its own queue pair.</p>
+
+<p><strong>Q8.</strong> TRD-04's comprehension asked you to name what would make your templating decision wrong. Three new resources have now arrived. Assess your TRD-04 layer honestly: what did it accommodate without change, what did it need, and what would you do differently if you were writing it again from here?</p>
+
+<hr>
+
+<p><em>Answer all eight in writing before turning the page. Writing is the point — an answer that feels clear in your head and falls apart on paper was never clear. Then compare against the key. Where your answer is thinner than the key's, reread the Prior Knowledge section named at the end of that answer before starting TRD-06. Where you disagree with the key and can defend the disagreement, that is a good sign rather than a wrong answer.</em></p>
+
+<div class="answer-key">
+
+<h2>Answer Key</h2>
+
+<div class="qa-block">
+  <div class="qa-label">Q1 — Answer</div>
+  <p><strong>Destruction of an <code>rdma_cm_id</code> blocks until its related events have been acknowledged.</strong><span class="cite">[1]</span> So a missed acknowledgement does not leak a small allocation — it deadlocks the destructor. The program completes its work, prints its results, and then stops forever with no error, no output, and nothing to indicate which of the several destructors is stuck.</p>
+  <p>That is a materially worse failure than a leak in three respects. A leak is bounded and invisible until it accumulates; this is unbounded and immediate. A leak is found by a tool; this requires attaching a debugger to a hung process and reading a backtrace. And a leak does not change program behaviour; this prevents the program from ever exiting.</p>
+  <p><strong>Why that makes RAII the right answer rather than a tidy one:</strong> the argument for RAII usually rests on convenience and on exception paths. Here it rests on the size of the consequence. The acknowledgement must happen on <em>every</em> path out of every function that retrieves an event — the success path, the four or five error returns, and any exception passing through. Hand-written acknowledgement gets the success path right immediately and gets one of the error paths wrong eventually, and that error path is now a hang rather than a small leak.</p>
+  <p>Put differently: a destructor is the only mechanism in the language that runs on all exits without being written at each one. When the cost of missing one exit is a deadlock, that property stops being a convenience and becomes the requirement.</p>
+  <div class="qa-miss">Common miss: describing the consequence as "a leak of the event structure." The structure is small and its leak is the least important part. The blocking rule is the whole point, and an answer that does not name it has missed why this resource needed a type when the completion queue entry did not.</div>
+  <p><em>Covered in Prior Knowledge §3 and §6, rule 2, and in reference [1].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q2 — Answer</div>
+  <p>Every TRD-04 wrapper had exactly one way to come into existence: a constructor calling an acquisition function. <code>ibv_alloc_pd</code>, <code>ibv_create_cq</code>, and the rest all follow that shape, and the wrapper's constructor <em>is</em> the acquisition.</p>
+  <p>A connect request breaks it. The library creates the identifier and delivers it through <code>event-&gt;id</code>;<span class="cite">[1][3]</span> there is no function you call to obtain it and nothing to wrap the acquisition around. Yet you are responsible for destroying it. So the type needs a second way in: one that takes an already-live handle and assumes responsibility without acquiring anything.</p>
+  <p>That is what <code>adopt()</code> adds — a constructor for a resource you did not create. It is the first shape in the layer that is not "acquire in the constructor, release in the destructor," and it is the concrete answer to the question TRD-04's comprehension left open about whether the layer generalises.</p>
+  <p><strong>Why a named static function rather than a constructor from <code>rdma_cm_id *</code>:</strong> three reasons, in increasing importance.</p>
+  <ul>
+    <li>A constructor from a pointer is a conversion. Even marked <code>explicit</code> it participates in overload resolution and can be selected in contexts you did not intend.</li>
+    <li>The name is the documentation. <code>ConnectionId::adopt(p)</code> states at the call site that ownership is being transferred; <code>ConnectionId c(p)</code> states nothing, and a reader must consult the header to learn whether the wrapper now owns the pointer or merely refers to it.</li>
+    <li>Ownership transfer should be conspicuous. It is exactly the operation where a mistake produces a double free or a leak, and making it require a distinctive spelling means every instance is greppable and every instance was deliberate.</li>
+  </ul>
+  <p>The same reasoning is why the standard library spells this kind of thing with names rather than conversions — <code>unique_ptr::release</code> and <code>reset</code> rather than implicit conversions to and from raw pointers.</p>
+  <div class="qa-miss">Common miss: treating adoption as a minor addition. It is a different lifetime model living in the same type, and the type now has two invariants to maintain rather than one. That is worth noticing, and it is the reason the answer to Q8 is not simply "the layer worked fine."</div>
+  <p><em>Covered in Prior Knowledge §6, rule 1, and Requirements R2.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q3 — Answer</div>
+  <p><strong>The hazard:</strong> the private data buffer referenced by an event is deallocated by <code>rdma_ack_cm_event</code>.<span class="cite">[1]</span> A pointer obtained from the event and read after acknowledgement is a dangling read. Because freed memory frequently still contains its former contents, the read usually returns the right answer — in development, on an idle machine, at low load. Under load, with allocation churn, it returns something else, and what it returns is a remote key that TRD-06 will use to write into a peer's memory.</p>
+  <p><strong>Why R3 makes it more likely:</strong> because R3 removes the visible acknowledgement.</p>
+  <p>With hand-written acknowledgement, <code>rdma_ack_cm_event(ev)</code> appears in the source as a statement, and anything reading <code>ev-&gt;param.conn.private_data</code> after it is at least in principle visible to a careful reader — the two lines are in the same function and the order between them is on the page.</p>
+  <p>With the RAII type, acknowledgement happens at a closing brace. There is no statement to be after. A pointer captured inside a block and used outside it looks entirely ordinary, and the moment of invalidation is a scope boundary rather than a call. The safety mechanism has hidden the very event whose timing matters.</p>
+  <p>This is a general property worth carrying: <strong>automating a release makes the release invisible, and anything whose validity was tied to that release becomes harder to reason about, not easier.</strong> The fix is not to abandon the automation but to remove the thing whose validity depended on the timing — which is exactly what R4 does. With no accessor returning the pointer, the dangling read has no expression, and the interaction between the two requirements resolves cleanly.</p>
+  <div class="qa-miss">Common miss: proposing a documented rule — "copy before the event goes out of scope" — as the defence. That is the rule the type is supposed to be enforcing. Every place this ladder has offered a comment as a safety mechanism, the comprehension key has pointed out that a comment is a rule the compiler is not checking, and this is no exception.</div>
+  <p><em>Covered in Prior Knowledge §6, rule 3, and Requirements R4.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q4 — Answer</div>
+  <p>A payload sized against the 196-byte accept limit fits in one direction and not the other. The server's <code>rdma_accept</code> succeeds; the client's <code>rdma_connect</code> fails, because the connect direction is capped at 56 bytes.<span class="cite">[2][3]</span></p>
+  <p>The failure is asymmetric and therefore confusing. It appears only on the client, only at connect time, as an <code>EINVAL</code> from a call with several other reasons to return <code>EINVAL</code>. A developer testing the server first — which is the natural order, since it must be running before the client connects — sees the accept side work and reasonably concludes the payload is fine.</p>
+  <p><strong>Why a compile-time assertion is better than a runtime check:</strong></p>
+  <ul>
+    <li>It fires when the payload is <em>defined</em>, not when it is sent. Adding a field to <code>ConnInfo</code> is the action that breaks the constraint, and the assertion sits next to the struct so the break is reported at the edit rather than at the next two-node test run.</li>
+    <li>It requires no execution and therefore no coverage. A runtime check is only useful on a path that runs, and the connect path is precisely the one a server-first workflow exercises last.</li>
+    <li>The size is a compile-time property. Checking a compile-time property at runtime is a category error — the value cannot change between builds, so deferring the check gains nothing and costs the ability to fail early.</li>
+  </ul>
+  <p>This is the same principle as TRD-04's static contract: prefer to check the property rather than an instance of it, and check it at the earliest moment the information exists.</p>
+  <div class="qa-miss">Common miss: assuming both limits are the same, or that the larger one governs. The asymmetry is real and documented, and the smaller figure is the binding constraint because both directions must work.</div>
+  <p><em>Covered in Prior Knowledge §5, and in references [2] and [3].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q5 — Answer</div>
+  <p><strong>The argument:</strong> a message can only arrive over a connection, and no connection exists until the handshake completes. The handshake completes only after both sides have made their call — the client's <code>rdma_connect</code> and the server's <code>rdma_accept</code>. So if receives are posted before that call, they are in place before any message can possibly arrive. <code>ESTABLISHED</code> on either side implies the peer had already reached its own call, and therefore had already posted.</p>
+  <p><strong>The ordering it depends on:</strong> receives posted <em>before</em> <code>rdma_connect</code> and <code>rdma_accept</code>, on both sides. That is the entire load-bearing assumption, and it is a property of your code rather than of the API.</p>
+  <p><strong>What breaks if reversed:</strong> posting after the connecting call reopens exactly the race TRD-03 described. The client connects, the handshake completes, and both sides are live; if the client then posts its receives and sends its opening message before the server has finished posting, that message arrives at a queue pair with nothing posted. The result is the receiver-not-ready condition — which, with the default retry count of 7 meaning infinite, is a silent hang.</p>
+  <p>Worse than in TRD-03, in fact. The connection manager's imposed 655 ms minimum RNR timer means the retry interval is a thousand times longer, so even a finite retry count takes seconds to report. And because the ready marker is gone, there is nothing in the program that looks like synchronisation, so nothing to inspect when it hangs.</p>
+  <p>The general lesson: deleting an explicit synchronisation because an implicit one subsumes it is correct only while the implicit one holds. It holds here because of an ordering in your own code, so that ordering has become load-bearing without being marked as such — which is worth a comment, and is the kind of thing that belongs in <code>docs/cm-notes.md</code>.</p>
+  <div class="qa-miss">Common miss: attributing the safety to the connection manager rather than to your ordering. The CM guarantees that no message precedes the connection. It guarantees nothing about whether you posted before connecting. That part is yours, and the deletion is only safe because you got it right.</div>
+  <p><em>Covered in Requirements R10, and Hints H10.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q6 — Answer</div>
+  <p><strong>Observable consequence:</strong> the receiver-not-ready retry interval goes from 0.64 ms to 655 ms — roughly a thousandfold.<span class="cite">[2]</span> TRD-03's two experiments behave as follows:</p>
+  <ul>
+    <li><code>--no-recv</code> with infinite retry: unchanged. It hung before and it hangs now; the interval between futile retries is irrelevant when there is no limit on them.</li>
+    <li><code>--no-recv --rnr-retry 1</code>: still reports <code>IBV_WC_RNR_RETRY_EXC_ERR</code>, but takes on the order of a second rather than a millisecond. A test suite with a short timeout could now spuriously fail, and the slowdown looks like a defect if you do not know why.</li>
+  </ul>
+  <p><strong>A situation where the loss is a genuine problem:</strong> a transport with credit-based flow control where a receive shortage is expected to be brief and self-correcting. The design assumes the sender retries quickly, absorbs a shortage lasting tens of microseconds, and proceeds — that is the reason to choose infinite retry in the first place. With a 655 ms floor, a shortage that would have cost 0.64 ms now stalls the connection for two thirds of a second. At high message rates that is not a delay, it is an outage: the send queue backs up, the application blocks, and throughput collapses for a condition the design considered routine.</p>
+  <p>A concrete version: a server replenishing receives in batches of sixteen. Under burst load it momentarily runs dry between batches. With a 0.64 ms retry the sender re-attempts almost immediately and the gap is invisible. With 655 ms, every dry moment costs more than half a second, and a workload producing a few of those per second is unusable.</p>
+  <p>The general point: convenience layers make choices on your behalf, and the choices are reasonable defaults rather than universally correct ones. Knowing which fields you surrendered is why TRD-02 set them by hand first — you cannot notice the loss of a control you never knew existed.</p>
+  <div class="qa-miss">Common miss: treating it as purely academic because this project's ping-pong never hits RNR. That is true of this project and is precisely what makes the question worth asking — the cost is invisible at this scale and decisive at another, which is the pattern that makes surrendered controls dangerous.</div>
+  <p><em>Covered in Prior Knowledge §7, and in reference [2].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q7 — Answer</div>
+  <p><strong>Why:</strong> <code>rdma_create_qp</code> creates the queue pair <em>on the identifier</em> and the connection manager then owns its state. The CM drives it through <code>INIT</code>, <code>RTR</code>, and <code>RTS</code> during the handshake and back to error or reset on disconnect. A queue pair whose transitions are performed by another component is not one your program can independently own, and the matching destruction is <code>rdma_destroy_qp(id)</code>, which takes the identifier rather than the queue pair.</p>
+  <p>So the ownership follows the control: the identifier owns the queue pair because the identifier's library drives it. Your <code>ConnectionId::close()</code> destroys the queue pair before the identifier, and no <code>QueuePair</code> object is involved.</p>
+  <p><strong>What the program gave up:</strong></p>
+  <ul>
+    <li><em>Independent lifetime.</em> The queue pair cannot outlive the identifier or be moved to another one. For a transport that migrates connections this would matter; here it does not.</li>
+    <li><em>Direct control of the transitions</em>, and with it the fields TRD-02 set by hand: the path MTU, the packet sequence numbers, the GID index, and the minimum RNR timer from Q6.</li>
+    <li><em>The type-level guarantees of TRD-04.</em> Posting now takes a raw <code>ibv_qp *</code> from <code>id.qp()</code> rather than a wrapper. Nothing prevents that pointer from being retained past the identifier's destruction, which the wrapper's move-only ownership would have made difficult.</li>
+  </ul>
+  <p>The third is the interesting one, because it is a real regression in safety introduced by a library that is otherwise a clear improvement. The honest framing is that the layer's coverage is now partial: it owns the identifier and the identifier owns the queue pair, but the pointer handed out in between is unmanaged. A stricter design would have the identifier hand out a non-owning reference type whose validity is tied to the identifier's, rather than a raw pointer — at the cost of another type for a hazard nothing in this program comes close to.</p>
+  <div class="qa-miss">Common miss: describing this as the CM "taking over" without identifying what was lost. Every convenience layer trades control for simplicity, and the useful answer names the specific things traded rather than characterising the trade in general terms.</div>
+  <p><em>Covered in Prior Knowledge §4 and §7, and Hints H2 and H10.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q8 — Answer</div>
+  <p>This is about your own code, so the value is in the specificity. A strong answer separates the three parts cleanly and does not claim the layer was perfect.</p>
+  <p><strong>What it accommodated unchanged.</strong> The ownership machinery held completely. Move-only semantics, the null-checked idempotent <code>close()</code>, the non-throwing destructor calling it, the <code>std::exchange</code> moves, the empty-state accessors — every one of those applied to all three new resources without modification. If you templated the machinery, all three instantiated it directly; if you hand-wrote it, you copied the same thirty lines a sixth, seventh, and eighth time. That is a genuine validation: the shape was right.</p>
+  <p><strong>What it needed.</strong> Three additions, of increasing significance:</p>
+  <ul>
+    <li>A fourth release convention. <code>rdma_destroy_event_channel</code> returns <code>void</code>, joining the three from TRD-01. Trivial, and further evidence that normalising conventions inside the wrappers was worth doing.</li>
+    <li><em>Adoption</em> — a second way for a resource to enter the layer, per Q2. This is a real extension to the model rather than a new instance of it.</li>
+    <li><em>A resource whose release has a consequence beyond leaking.</em> Every TRD-04 resource leaked if you forgot it. An event <em>deadlocks</em>. The layer's design was adequate; what changed is how much the layer was carrying, which raises the cost of any hole in it.</li>
+  </ul>
+  <p><strong>What to do differently.</strong> The defensible answers, and each is a real position:</p>
+  <ul>
+    <li><em>Build the ownership machinery as a reusable base from the start.</em> By the eighth resource the duplication argument is decisive in a way it was not at five. If you hand-wrote, this is the honest conclusion; if you templated, this rung vindicated the choice.</li>
+    <li><em>Make adoption part of the model rather than an addition.</em> Once one resource needs it, the question "how does this enter the layer" is a design axis rather than an assumption, and a layer built with two entry points from the beginning is simpler than one retrofitted with a second.</li>
+    <li><em>Distinguish owning from non-owning handles.</em> Q7's raw <code>ibv_qp *</code> is the gap, and it exists because the layer has no vocabulary for "a reference whose validity is tied to another object." That is the addition TRD-06 and TRD-07 will keep pressing on.</li>
+  </ul>
+  <p>An answer claiming nothing should change is weak unless it engages with the adoption case, which was genuinely not anticipated. An answer proposing a rewrite is weak unless it says what the rewrite buys — the layer works, and "it could be more elegant" is not a reason to rebuild something that is holding.</p>
+  <div class="qa-miss">Common miss: assessing the layer on aesthetics rather than on what it prevented. The measure is whether defects were caught. Deleted copy operations, non-throwing destructors, and automatic acknowledgement each removed a class of bug; a design that does that and is slightly repetitive has succeeded.</div>
+  <p><em>Covered throughout Prior Knowledge §6, and follows TRD-04's comprehension Q8.</em></p>
+</div>
+
+<h2>References Cited in This Key</h2>
+
+<ol class="refs">
+  <li>[1] <em>rdma_get_cm_event(3).</em> Linux manual page, section 3. https://man7.org/linux/man-pages/man3/rdma_get_cm_event.3.html</li>
+  <li>[2] <em>rdma_connect(3).</em> Linux manual page, section 3. https://man7.org/linux/man-pages/man3/rdma_connect.3.html</li>
+  <li>[3] <em>rdma_accept(3).</em> Linux manual page, section 3. https://man7.org/linux/man-pages/man3/rdma_accept.3.html</li>
+</ol>
+
+<p style="font-size:9pt; font-style:italic;">Numbering matches the reference list in the TRD-05 Prior Knowledge document.</p>
+
+</div>
+
+<div class="footer">
+  TRD-05: Connection Management &nbsp;|&nbsp; Comprehension &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

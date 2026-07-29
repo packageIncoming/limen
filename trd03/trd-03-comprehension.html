@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-03: Two-Sided Transfer — Comprehension</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.answer-key { page-break-before: always; }
+.qa-block { border: 1.5px solid #000; padding: 12px 14px; margin: 14px 0; page-break-inside: avoid; }
+.qa-block .qa-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px; }
+.qa-miss { border-left: 4px solid #000; padding: 6px 12px; margin: 8px 0 0 0; font-size: 9.5pt; font-style: italic; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .qa-block, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-03: Two-Sided Transfer</h1>
+  <div class="subtitle">Comprehension — Limen RDMA Transport Project</div>
+  <div class="meta">8 questions &nbsp;|&nbsp; Answer in writing before the key &nbsp;|&nbsp; Est.: 55–80 minutes</div>
+</div>
+
+<h2>Questions</h2>
+
+<p><strong>Q1.</strong> Trace a single <code>IBV_WR_SEND</code> from the moment you call <code>ibv_post_send</code> to the moment its completion appears. Name every party involved and say what each does. Then state precisely when the send buffer becomes safe to modify again, and why nothing in the language or the operating system will stop you from modifying it earlier.</p>
+
+<p><strong>Q2.</strong> You ran <code>--no-recv</code> twice, once at the default retry count and once with <code>--rnr-retry 1</code>, and got two entirely different symptoms from one fault. Explain the mechanism that produces each, and argue for which retry value you would choose in a production transport.</p>
+
+<p><strong>Q3.</strong> A send completion and a receive completion arrive on the same completion queue. What in the completion distinguishes them, and what does <em>not</em>? Explain why the answer forces a design decision on you before you post the first request.</p>
+
+<p><strong>Q4.</strong> When a completion's status is not <code>IBV_WC_SUCCESS</code>, only four of the structure's fields are valid. Name them, and explain why a program that prints the whole structure uniformly produces output that is worse than printing nothing.</p>
+
+<p><strong>Q5.</strong> One real error on a reliable-connected queue pair produces a burst of completions. Explain what causes the burst, which completion in it carries the diagnosis, and what happens to the queue pair and to the completion queue afterwards.</p>
+
+<p><strong>Q6.</strong> R6 required posting the replacement receive <em>before</em> sending the reply. Explain the failure that the opposite order permits. Then explain why that failure is more dangerous than one that appears immediately.</p>
+
+<p><strong>Q7.</strong> The <code>--unsignaled</code> run moved data and produced no send completions. Explain what was lost by suppressing them — not the completion itself, but the guarantee it carried — and describe the technique real transports use to get most of the saving back without losing that guarantee.</p>
+
+<p><strong>Q8.</strong> This program now holds seven handles and two buffers, with an ownership rule that the type system does not express and a destruction order that must be reversed by hand. Describe one specific place in your own code where you found yourself relying on memory or a comment rather than on structure. Then state what TRD-04 would have to provide for that reliance to become unnecessary.</p>
+
+<hr>
+
+<p><em>Answer all eight in writing before turning the page. Writing is the point — an answer that feels clear in your head and falls apart on paper was never clear. Then compare against the key. Where your answer is thinner than the key's, reread the Prior Knowledge section named at the end of that answer before starting TRD-04. Where you disagree with the key and can defend the disagreement, that is a good sign rather than a wrong answer.</em></p>
+
+<div class="answer-key">
+
+<h2>Answer Key</h2>
+
+<div class="qa-block">
+  <div class="qa-label">Q1 — Answer</div>
+  <p><code>ibv_post_send</code> validates the request and places it on the send queue, then returns. It does not transmit anything, and its return value says only that the request was accepted — never that it succeeded.</p>
+  <p>The local adapter then removes the request from the queue, reads the buffer named by the scatter-gather entry by direct memory access — validating the local key against its registered regions as it does so — and transmits. The remote adapter receives the message, consumes the peer's next posted receive work request, writes the payload into that buffer by direct memory access, generates a receive completion on the peer's completion queue, and returns an acknowledgement. On a reliable-connected queue pair the local adapter waits for that acknowledgement, retransmitting on timeout, and only once it arrives does it write a completion to your completion queue. Your polling loop then finds it.</p>
+  <p>Four parties: your code, the local adapter, the remote adapter, and the peer's code — and the peer's <em>code</em> is only involved in having posted a receive earlier. It is not running at the moment of the transfer.</p>
+  <p><strong>The buffer becomes safe when the completion is retrieved,</strong> not when <code>ibv_post_send</code> returns.<span class="cite">[1]</span> Between those two events the adapter may read the buffer at any moment. Nothing prevents you from writing it because nothing knows: the compiler sees an ordinary pointer to ordinary memory with no aliasing it can detect, and the operating system sees pinned pages it has been told not to move. The adapter's access is direct memory access — it does not go through the page tables in a way the process observes, takes no locks, and generates no fault. The violation is invisible to every mechanism that would normally catch it, which is why the resulting corruption is intermittent and appears only under load.</p>
+  <div class="qa-miss">Common miss: treating <code>ibv_post_send</code> returning 0 as meaning the message was sent. It means the request was queued. Everything interesting happens afterwards, and the completion is the only report of it. A second miss is omitting the acknowledgement — on a reliable-connected queue pair the completion is delayed until the peer's adapter has acknowledged, which is precisely why send latency is a round trip rather than a one-way trip.</div>
+  <p><em>Covered in Prior Knowledge §2 and §10, and in reference [1].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q2 — Answer</div>
+  <p>The fault is identical in both runs: a message arrives at a queue pair with no posted receive, and the responder returns an RNR negative acknowledgement — receiver not ready.</p>
+  <p>What differs is the sender's response, governed by <code>rnr_retry</code> set at the RTS transition. At 7, which means <strong>infinite</strong>,<span class="cite">[5]</span> the sender waits <code>min_rnr_timer</code> and retries, forever. No completion is ever generated because the request never terminates — it is neither succeeding nor failing. Your polling loop sees an empty queue indefinitely, and without R4's timeout the program simply stops making progress with no output at all.</p>
+  <p>At 1, the budget is exhausted after a single retry and the request terminates in failure, producing an <code>IBV_WC_RNR_RETRY_EXC_ERR</code> completion. The fault names itself, the queue pair goes to the error state, and your program can report something true.</p>
+  <p><strong>Which to choose</strong> depends on what a shortage of receives <em>means</em> in your protocol, and a defensible answer says so rather than picking one universally.</p>
+  <p>Infinite retry is right when a shortage is expected and transient — a receiver that is briefly behind on replenishment under burst load will catch up, and failing the connection over a condition that resolves itself in microseconds would be worse than waiting. Many production transports do choose 7 for exactly this reason.</p>
+  <p>Finite retry is right when a shortage means something is wrong: a peer that has stopped replenishing is probably deadlocked, crashed, or misconfigured, and an error is more useful than a hang. The cost is that a legitimate burst can now kill a healthy connection.</p>
+  <p>The honest answer is that <em>neither is the real fix</em>. Both are policies for handling a condition that flow control should prevent. A transport with credit-based flow control never sends more messages than the peer has receives posted, so RNR becomes a bug rather than a tuning parameter — and at that point infinite retry is safe because the condition should not occur, and if it does you have a defect that a hang will make you find.</p>
+  <div class="qa-miss">Common miss: "infinite retry is obviously wrong because it hangs." The hang is a symptom of a missing flow-control layer, not of the retry setting. A transport that sets finite retry and still has no flow control has converted a hang into a dropped connection under load, which is not obviously an improvement.</div>
+  <p><em>Covered in Prior Knowledge §8, and in reference [5].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q3 — Answer</div>
+  <p><strong>What distinguishes them:</strong> the <code>opcode</code> field, which reads <code>IBV_WC_SEND</code> or <code>IBV_WC_RECV</code>, and the <code>wr_id</code> you assigned when posting.</p>
+  <p><strong>What does not:</strong> essentially everything else. The completion does not name the queue it came from, does not carry a pointer to the request, does not identify the buffer, and does not indicate which iteration or slot it belongs to. <code>qp_num</code> identifies the queue pair but not which of its two queues.</p>
+  <p>Critically, <code>opcode</code> is only usable when the status is success. On an error completion it is undefined,<span class="cite">[2]</span> which means the one field that would otherwise classify the completion is exactly the field you cannot read in the case where classification matters most — when you are trying to work out what failed.</p>
+  <p><strong>The design decision this forces</strong> is the <code>wr_id</code> scheme, and it must be settled before the first request is posted because the identifier is chosen at posting time and is the only thing that survives into the completion. It has to encode everything you will need to know: at minimum whether this was a send or a receive, and for receives which slot the data landed in. A scheme that encodes only "the twelfth request" is useless, because by the time the completion arrives you have posted others and there is no table mapping ordinals to buffers unless you built one.</p>
+  <p>The practical form is a tagged identifier — a high bit or a numeric range distinguishing kinds, with the slot index in the low bits. It is worth designing deliberately, because it is the single link between the asynchronous world and your data structures, and it becomes load-bearing in TRD-07 where several requests are outstanding at once.</p>
+  <div class="qa-miss">Common miss: relying on completion ordering — assuming a send completion arrives before the receive completion for the reply, or that completions arrive in posting order. Neither is guaranteed across two queues sharing one completion queue, and an assumption that holds on soft-RoCE can stop holding on faster hardware. Branch on <code>wr_id</code>, never on arrival order.</div>
+  <p><em>Covered in Prior Knowledge §4 and §6, and in reference [2].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q4 — Answer</div>
+  <p>The four valid fields are <code>wr_id</code>, <code>status</code>, <code>qp_num</code>, and <code>vendor_err</code>.<span class="cite">[2]</span> Everything else — <code>opcode</code>, <code>byte_len</code>, the immediate-data union, <code>wc_flags</code>, and the addressing fields — is undefined.</p>
+  <p>They are undefined rather than zeroed because the adapter had no reason to compute them. A transfer that failed produced no byte count, and an operation that never reached a stage where its opcode was recorded in the completion has no opcode to report. The provider writes what it knows and leaves the rest as whatever was in the memory.</p>
+  <p><strong>Why uniform printing is worse than printing nothing:</strong> because the output is not obviously wrong. A completion reporting <code>byte_len=0</code> looks like a definite statement that no data moved — and you will believe it, and you will start looking for reasons the transfer never began, when in fact part of it may have. An <code>opcode</code> naming <code>IBV_WC_RDMA_READ</code> in a program that has never posted a read looks like a serious bug in your own code, and you can lose an hour to it before realising the field was never valid.</p>
+  <p>Printing nothing leaves you with the four true fields and no false leads. Printing everything gives you the same four fields plus fabricated evidence that is indistinguishable in appearance from real evidence. The general principle is that an error path which reports uninitialised data does not merely fail to help — it actively misdirects, and misdirection costs more than silence.</p>
+  <p>This is why R5 required two separate printing paths rather than one format string with conditional fields. The duplication is the mechanism that makes the invalid fields unreachable.</p>
+  <div class="qa-miss">Common miss: assuming the fields are zeroed and therefore harmless. Nothing zeroes them; the completion structure is memory the provider wrote part of. On a reused array entry the "garbage" is frequently the previous completion's values, which is the most convincing wrong answer available — a plausible byte count from a transfer that already happened.</div>
+  <p><em>Covered in Prior Knowledge §6, and normatively in reference [2].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q5 — Answer</div>
+  <p>One error terminates the queue pair, not just the request. On a reliable-connected queue pair, a completion with an error status transitions the queue pair to the error state.<span class="cite">[3]</span> Every work request still outstanding on either queue at that moment is then completed with <code>IBV_WC_WR_FLUSH_ERR</code><span class="cite">[6]</span> — flushed rather than performed. With eight receives posted and a send in flight, one real failure yields nine completions.</p>
+  <p><strong>The diagnosis is the first non-success completion.</strong> Every subsequent flush error is a consequence of the state transition the first one caused, and carries no information about why. A program that reports the last error it observed reports <code>IBV_WC_WR_FLUSH_ERR</code> every time, which is true and useless — it says a request was outstanding when something went wrong, without saying what.</p>
+  <p>This is why R10 required latching the first status into a variable guarded so it is written once. The natural implementation, which overwrites on each error, systematically discards the only informative completion in the burst.</p>
+  <p><strong>Afterwards:</strong> the queue pair is permanently unusable. Recovery requires transitioning it back through <code>RESET</code> and repeating the entire bringup on both nodes, including a fresh parameter exchange — the whole of TRD-02. There is no reset-in-place and no partial recovery.</p>
+  <p>The completion queue, however, survives and remains fully usable.<span class="cite">[3]</span> Only the queue pair died. If several queue pairs share one completion queue, the others are unaffected — which is what makes shared completion queues viable in a server holding many connections, since one client's failure does not disturb the rest.</p>
+  <div class="qa-miss">Common miss: treating the flush errors as additional independent failures and trying to diagnose each. They are debris from a single event. A related miss is attempting to reuse the queue pair after draining the burst — it will reject everything, and the rejections look like new failures, which sends you chasing a fault that already happened.</div>
+  <p><em>Covered in Prior Knowledge §9, and in references [3] and [6].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q6 — Answer</div>
+  <p>Sending first opens a window. Between posting the reply and posting the replacement receive, your queue pair has one fewer receive available than it should — and the peer, having just been given a message to respond to, is about to send. If its reply arrives inside that window and no receive is posted, the receiver-not-ready condition occurs.</p>
+  <p>The window is small — a few instructions — but it is a race, and races are decided by relative speed rather than by the size of the gap. On soft-RoCE, where a round trip costs tens of microseconds and your instructions cost nanoseconds, the peer cannot possibly reply fast enough and the bug is invisible. On a hardware adapter with round trips near a microsecond, the margin narrows by an order of magnitude. Under load, with several messages in flight and the receive queue already drained toward empty, it closes.</p>
+  <p><strong>Why this is more dangerous than an immediate failure:</strong> because it passes. It passes your tests, it passes on your development fabric, it passes a hundred iterations and a thousand. It fails later — on faster hardware, at higher concurrency, in production — and when it fails it presents as the symptom from Q2: either an unexplained hang under infinite retry, or an <code>RNR_RETRY_EXC_ERR</code> on a connection that has been working for hours. Neither symptom points at the ordering of two lines written months earlier.</p>
+  <p>A bug that fails immediately is found by the person who wrote it, with the context still in their head. A bug that fails only under conditions the author never reproduced is found by someone else, later, with none of that context. The cost difference is enormous and has nothing to do with the severity of the bug itself.</p>
+  <p>The rule generalises past this specific pair of lines: <strong>replenish receives before taking any action that could cause the peer to send.</strong> Posting several receives up front is the same defence with slack, giving the peer room to run ahead of your replenishment.</p>
+  <div class="qa-miss">Common miss: judging the window's danger by its size in instructions. What matters is the ratio between the window and the peer's round trip, and that ratio is a property of the fabric rather than of your code — which means correct code on one fabric becomes incorrect on another without a line changing.</div>
+  <p><em>Covered in Prior Knowledge §7 and §8, and Requirements R6.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q7 — Answer</div>
+  <p>The completion itself is a notification you could often do without. What was lost is the <strong>guarantee it carried: that the adapter has finished reading the send buffer.</strong></p>
+  <p>Between posting and completion the buffer belongs to the adapter.<span class="cite">[1]</span> The completion is the only mechanism that reports the handover back. Suppress it and there is no longer any moment at which you learn the buffer is yours again — so refilling it for the next message is unsynchronised. In the strict ping-pong of this rung a collision is unlikely, because the peer's reply cannot arrive before your send was transmitted. Under pipelining, where several sends are outstanding, it is not unlikely at all.</p>
+  <p>A second thing is lost: completions are what drain the send queue. Without them the queue fills, and <code>ibv_post_send</code> eventually returns <code>ENOMEM</code> with no obvious cause — the requests all succeeded, and the queue is full of finished work nobody reaped.</p>
+  <p><strong>The technique real transports use is periodic signalling.</strong> Signal every <em>n</em>th send rather than every one — every sixteenth, say. Because a reliable-connected queue pair completes requests in order, a completion for request <em>n</em> implies that every request before it has also completed. One completion in sixteen therefore still bounds buffer reuse and still drains the queue; it simply does so at coarser granularity. The application tracks which buffers are covered by the most recent completion and reuses only those.</p>
+  <p>The saving is real: completion processing is a meaningful fraction of per-message cost at high rates, and reducing it fifteen-sixteenths while keeping the ordering guarantee is close to free. The cost is that buffer reuse is now bounded in batches rather than individually, so you need <em>n</em> buffers in flight rather than one — which is why this technique and buffer pooling arrive together.</p>
+  <p>TRD-07 implements this. Observing the naive version's failure mode here is what makes the design obvious there rather than arbitrary.</p>
+  <div class="qa-miss">Common miss: concluding that unsignalled sends are simply unsafe and should not be used. They are the standard technique at high message rates and every serious RDMA transport uses them. What is unsafe is unsignalled sends with <em>no</em> signalling at all — the discipline is periodic, not absent.</div>
+  <p><em>Covered in Prior Knowledge §5 and §10, and Hints H9. Implemented in TRD-07.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q8 — Answer</div>
+  <p>This asks about your own code, so there is no single right answer — but a strong response identifies a <em>specific</em> place, explains what the reliance is, and names a mechanism rather than a wish. The three places this most commonly appears:</p>
+  <p><strong>The cleanup block.</strong> Six or seven conditional destructions in a fixed order, reached by a jump, with correctness depending on an ordering that exists only in the sequence of lines. Nothing prevents an edit from moving the completion queue's destruction above the queue pair's. The failure would be an <code>EBUSY</code> that a program not checking return values would never see.</p>
+  <p><strong>The send buffer refill.</strong> Almost everyone writes a comment here — some form of "do not touch until the completion is reaped." A comment is a request to a future reader, enforced by nothing.</p>
+  <p><strong>The <code>wr_id</code> scheme.</strong> A convention that certain numeric ranges mean certain things, enforced by macros at best, with no type-level distinction between a send identifier and a receive identifier.</p>
+  <p><strong>What TRD-04 must provide</strong> for each:</p>
+  <ul>
+    <li><em>For destruction order:</em> types whose destructors release their own resource, held as members in creation order. C++ destroys members in reverse declaration order automatically, so the ordering stops being something you maintain and becomes something the language guarantees. Getting it wrong requires reordering declarations, which is a visible structural edit rather than a line moved in a cleanup block.</li>
+    <li><em>For buffer ownership:</em> a type that holds the buffer and can only surrender access through an operation that first waits for the completion — so the unsafe access is not merely discouraged but unreachable. This is harder than the destruction case and is where the abstraction has to be designed rather than derived.</li>
+    <li><em>For identifiers:</em> distinct types for send and receive identifiers rather than a shared integer, so a mix-up is a compile error.</li>
+  </ul>
+  <p>The general principle worth extracting: a comment that describes a rule is a rule the compiler is not enforcing, and every such comment is a candidate for a type. That is the entire content of TRD-04 stated in one sentence, and noticing it yourself while writing this program is worth more than being told it.</p>
+  <div class="qa-miss">Common miss: answering that the code "should be cleaner" or "should use RAII" without naming a specific site and a specific mechanism. TRD-04 will require you to build these; a vague answer now becomes a vague design then. The other miss is claiming no such reliance exists — if the program is correct and the compiler cannot prove it, the reliance is on you, and locating it is the exercise.</div>
+  <p><em>Covered in Prior Knowledge §10, Requirements R11, and Hints H11. Resolved in TRD-04.</em></p>
+</div>
+
+<h2>References Cited in This Key</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_post_send(3).</em> Linux manual page, section 3. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+  <li>[2] <em>ibv_poll_cq(3).</em> Linux manual page, section 3. https://man7.org/linux/man-pages/man3/ibv_poll_cq.3.html</li>
+  <li>[3] Barak, Dotan. <em>RDMAmojo — ibv_poll_cq().</em> https://www.rdmamojo.com/2013/02/15/ibv_poll_cq/</li>
+  <li>[5] Barak, Dotan. <em>RDMAmojo — ibv_post_send().</em> https://www.rdmamojo.com/2013/01/26/ibv_post_send/</li>
+  <li>[6] <em>ibv_wc completion status reference.</em> https://docs.rs/ibverbs/0.3.0/ibverbs/ffi/struct.ibv_wc.html</li>
+</ol>
+
+<p style="font-size:9pt; font-style:italic;">Numbering matches the reference list in the TRD-03 Prior Knowledge document.</p>
+
+</div>
+
+<div class="footer">
+  TRD-03: Two-Sided Transfer &nbsp;|&nbsp; Comprehension &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

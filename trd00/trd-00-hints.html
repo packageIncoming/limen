@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-00: Fabric Up — Hints</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.hint-ref { border: 1px solid #000; padding: 3px 8px; margin: 6px 0 2px 0; font-size: 9pt; font-style: italic; display: inline-block; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+.level-box { border: 2px solid #000; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
+.level-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+@media print { body { padding: 0; } table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-00: Fabric Up</h1>
+  <div class="subtitle">Hints — Limen RDMA Transport Project</div>
+  <div class="meta">Level 1 = nudge &nbsp;|&nbsp; Level 2 = stronger push &nbsp;|&nbsp; Try Level 1 for 15+ minutes before escalating</div>
+</div>
+
+<p>Level 1 points at the right place. Level 2 names the mechanism.</p>
+
+<p>These hints cover the <strong>requirements only</strong>. Setup problems are not hinted at &mdash; the Setup section of the Requirements document has the exact commands, and its Troubleshooting table covers the ways it goes wrong. If you are fighting the environment, you are in the wrong document.</p>
+
+<h2>H1 &mdash; Determine the Correct GID Index (R1)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Two pieces of information exist for every table entry: the GID value itself, and the entry&rsquo;s <em>type</em>. Both live in <code>sysfs</code> under the device, in sibling directories. The type is what distinguishes the candidates, and section 8 of the Prior Knowledge document explains what the two types mean and why only one of them is routable.</p>
+  <p>The GID for an IPv4 address contains that address in hexadecimal at the end. Convert your node&rsquo;s address by hand and look for it &mdash; that plus the type narrows eight entries to one.</p>
+  <p>A tool from the benchmark package also prints the table in readable form, if you would rather read than derive.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>for i in $(seq 0 7); do
+  t=$(cat /sys/class/infiniband/rxe0/ports/1/gid_attrs/types/$i 2>/dev/null)
+  [ -n "$t" ] &amp;&amp; echo "$i  $t  $(cat /sys/class/infiniband/rxe0/ports/1/gids/$i)"
+done</pre>
+  <p>Or simply <code>show_gids</code>, which comes with <code>perftest</code>.</p>
+  <p>Select the entry whose type reads <strong><code>RoCE v2</code></strong> and whose GID ends in your dotted-quad in hex &mdash; <code>10.0.0.1</code> appears as <code>...:0a00:0001</code>, since 10 is 0x0a and 1 is 0x01. Typically index 1 or 3.</p>
+  <p>The entries you are rejecting are RoCE v1 ones, which encapsulate directly in Ethernet with their own EtherType and cannot be routed, and any IPv6 entries. Index 0 is very often RoCE v1, which is why defaulting to it fails with an error that never mentions GIDs.</p>
+  <p>Record all of it, not just the answer &mdash; R1 asks for the reasoning because the reasoning is what transfers.</p>
+</div>
+
+<h2>H2 &mdash; Raw Verbs Transfer (R2)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The tool runs in two modes distinguished by whether you give it a peer address: with one it is a client, without one it is a server. Start the server first and leave it running.</p>
+  <p>It also needs the GID index from R1. If it fails, do not try other indices at random &mdash; go back and check your R1 reasoning, because an index that fails here means the reasoning was wrong and you want to know how.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre># node A (10.0.0.1) &mdash; server, start first
+ibv_rc_pingpong -d rxe0 -g 3
+
+# node B &mdash; client
+ibv_rc_pingpong -d rxe0 -g 3 10.0.0.1</pre>
+  <p>Substitute your index for the <code>3</code>. Both sides need the same flag.</p>
+  <p>Once it passes, read the source before moving on &mdash; roughly 800 lines, and it is the direct skeleton of TRD-02 and TRD-03.<span class="cite">[1]</span> Find it in the <code>rdma-core</code> repository under <code>libibverbs/examples/rc_pingpong.c</code>. Annotating it now is the best preparation available for those rungs.</p>
+</div>
+
+<h2>H3 &mdash; Connection Manager Transfer (R3)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>This tool takes an address rather than a device, and server and client are selected by explicit flags rather than by argument position. Read the usage text.</p>
+  <p>Note the asymmetry with H2 as you type the two commands: both sides here are given the <em>same</em> address. That is a clue toward the paragraph R3 asks for.</p>
+  <p>For that paragraph: compare your two command lines side by side. One argument you had to supply in R2 is absent here. Ask what determined it instead, and what that component must have done in order to know.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre># node A
+rping -s -a 10.0.0.1 -v -C 10
+
+# node B
+rping -c -a 10.0.0.1 -v -C 10</pre>
+  <p><code>-s</code> server, <code>-c</code> client, <code>-a</code> the server&rsquo;s address on both sides, <code>-v</code> verify payload, <code>-C 10</code> ten iterations.</p>
+  <p>The difference R3 wants: <strong>no <code>-g</code>.</strong> The connection manager resolved the address to a device, a port, and the correct GID index on your behalf &mdash; the same index you derived by hand in R1. That resolution is the primary service it provides, and it is why TRD-05 deletes a large amount of code you will have written by then.</p>
+  <p>If this fails while R2 passed, the fault is isolated to the connection-manager path: check <code>lsmod | grep rdma_ucm</code> and that <code>/dev/infiniband/rdma_cm</code> exists.</p>
+  <p><code>rping.c</code> in <code>librdmacm/examples/</code> is the structural model for TRD-05.<span class="cite">[1]</span></p>
+</div>
+
+<h2>H4 &mdash; See RoCEv2 on the Wire (R4)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Capture on the RDMA interface while a transfer runs. You need two terminals on the same node: one capturing, one running the client.</p>
+  <p>Filter on the port rather than capturing everything, or the ping-pong&rsquo;s own side channel and your SSH session will drown the output.</p>
+  <p>Bound the capture with a packet count so it exits on its own rather than needing a signal.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre># terminal 1 &mdash; start this first
+sudo tcpdump -i enp0s8 -n udp port 4791 -c 20
+
+# terminal 2 &mdash; then run a transfer
+ib_send_bw -d rxe0 10.0.0.1</pre>
+  <p>Expect lines showing UDP datagrams between your two addresses with destination port 4791. To see the payload structure, add <code>-X</code> for a hex dump &mdash; the bytes after the UDP header are the InfiniBand transport headers described in section 8.</p>
+  <p>For the explanation R4 asks for, the shape of the answer is: the capture works here because the software provider is implemented in the kernel and the packets pass through the ordinary network stack, where a sniffer can see them. A hardware adapter builds and transmits these packets itself without involving the host stack, so the same command shows nothing &mdash; which is why practitioners use vendor tools such as <code>ibdump</code> or a switch mirror port instead.</p>
+  <p>Write that in your own words. The point is that the capture&rsquo;s success is measuring the <em>absence</em> of kernel bypass on this fabric.</p>
+</div>
+
+<h2>H5 &mdash; Measure the Fabric (R5)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Same server-and-client pattern as H2: no address means server, an address means client. Start the server first.</p>
+  <p>Both tools print a table with a header row and data rows. The bandwidth tool reports both a peak and an average &mdash; take the average, since peak over a short run is noise. The latency tool reports several percentiles; the median and the 99th are the two worth recording, and the mean is the one to ignore.</p>
+  <p>Do not investigate the numbers. Section 9 explains why they are low and the explanation is structural rather than fixable.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre># bandwidth &mdash; server first
+ib_send_bw -d rxe0                      # node A
+ib_send_bw -d rxe0 10.0.0.1             # node B
+
+# latency &mdash; server first
+ib_send_lat -d rxe0                     # node A
+ib_send_lat -d rxe0 10.0.0.1            # node B</pre>
+  <p>The bandwidth data row carries, in order: message size, iterations, peak bandwidth, average bandwidth, message rate. Take the fourth column. The latency output includes <code>t_med</code> and a 99th-percentile column.</p>
+  <p>A skeleton for <code>docs/baseline-rxe.md</code>:</p>
+  <pre># Soft-RoCE Baseline
+
+Measured:        2026-07-26
+Distro / kernel: Ubuntu 24.04.2 LTS / 6.8.0-51-generic
+Hypervisor:      VirtualBox 7.x, internal network
+Per node:        2 vCPU, 2048 MB
+Netdev MTU:      1500     RDMA active_mtu: 1024
+
+## ib_send_bw
+  size 65536 B, average BW: ___ MB/sec
+
+## ib_send_lat
+  size 2 B, median: ___ us, p99: ___ us
+
+## iperf3 (R6)
+  ___ Gbit/sec
+
+## Comparison (R6)
+  ...
+
+## ibv_devinfo -v -d rxe0 (R7)
+  (full output appended)</pre>
+</div>
+
+<h2>H6 &mdash; Compare Against TCP (R6)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Server and client again, over the same interface, so the comparison is like for like.</p>
+  <p>Before you run it, write down what you expect. Then run it. The gap between the two is the useful part of this requirement, whichever direction it goes.</p>
+  <p>For the explanation, the question to answer is: on this fabric, what work does an RDMA transfer do that a TCP transfer does not? Section 9 has the answer, and it is not the answer most people expect before measuring.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre># node A
+iperf3 -s
+
+# node B
+iperf3 -c 10.0.0.1 -t 10</pre>
+  <p>Take the sender&rsquo;s figure and convert units so the two are comparable &mdash; <code>iperf3</code> reports Gbit/sec and <code>ib_send_bw</code> reports MB/sec. One Gbit/sec is 125 MB/sec.</p>
+  <p><strong>Expect TCP to win, possibly by a lot.</strong> That is the correct result on soft-RoCE and it surprises nearly everyone.</p>
+  <p>The reason: TCP over a virtual link is a well-optimised kernel path with segmentation offload and years of tuning behind it. Soft-RoCE runs the <em>entire</em> InfiniBand transport in software &mdash; queue-pair state, sequence numbers, acknowledgements, encapsulation &mdash; and then hands the result to that same kernel network stack. It is doing strictly more work over the same wire.</p>
+  <p>Which is exactly the point. RDMA&rsquo;s advantage comes from hardware performing that transport work and writing directly into memory. Remove the hardware and you keep all the protocol cost and none of the benefit. If you had measured only the RDMA number you might have concluded the technology is slow; the comparison shows instead that <em>this implementation</em> is slow, for a reason that names precisely what the hardware would have contributed.</p>
+  <p>Write two to four sentences saying that, in your own words, with your own numbers.</p>
+</div>
+
+<h2>H7 &mdash; Capture the Device Attributes (R7)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>One command with a verbosity flag produces everything. Append it rather than transcribing fields by hand, then pull out the nine named ones into a short summary above it.</p>
+  <p>The fabric configuration half of this requirement is a note to your future self. You will reboot, the link will be gone, and you will want the exact commands rather than a reconstruction.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>{
+  echo
+  echo '## ibv_devinfo -v -d rxe0'
+  ibv_devinfo -v -d rxe0
+} &gt;&gt; docs/baseline-rxe.md</pre>
+  <p>Then a summary block at the top with the nine fields, so TRD-01 and TRD-02 can find them without reading two hundred lines.</p>
+  <p>For <code>docs/fabric.md</code>:</p>
+  <pre># Fabric
+
+Node A: 10.0.0.1   Node B: 10.0.0.2
+RDMA interface: enp0s8   (NAT is on enp0s3 &mdash; do not use it)
+GID index: 3   (RoCE v2, IPv4-mapped)
+Firewall: ufw disabled on both nodes
+
+## Recreate after reboot (both nodes)
+sudo ip link set enp0s8 up
+sudo ip addr add 10.0.0.1/24 dev enp0s8     # .2 on node B
+sudo modprobe rdma_rxe rdma_ucm
+sudo rdma link add rxe0 type rxe netdev enp0s8</pre>
+</div>
+
+<h2>H8 &mdash; Repository and Build System (R8)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Two CMake commands find things: one searches for a library file, the other for a header directory. Both accept a flag that turns a failure into a hard configuration error rather than a silently empty variable &mdash; and R8 wants that flag on all four lookups, because a silently empty variable defers the failure to TRD-01, which is what this rung exists to prevent.</p>
+  <p>Git will not track an empty directory. Decide how the empty source directories survive the initial commit.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>cmake_minimum_required(VERSION 3.16)
+project(limen LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+find_library(IBVERBS_LIB ibverbs REQUIRED)
+find_library(RDMACM_LIB  rdmacm  REQUIRED)
+find_path(IBVERBS_INCLUDE_DIR infiniband/verbs.h REQUIRED)
+find_path(RDMACM_INCLUDE_DIR  rdma/rdma_cma.h    REQUIRED)
+
+message(STATUS "libibverbs: ${IBVERBS_LIB}")
+message(STATUS "librdmacm:  ${RDMACM_LIB}")
+
+# TRD-01 adds the first target here.</pre>
+  <p>Verify with <code>cmake -S . -B build</code>. Both status lines must print real paths; a failing <code>find_library</code> means the development package from S5 is missing.</p>
+  <p>Place a <code>.gitkeep</code> in <code>include/limen/</code>, <code>src/</code>, <code>scripts/</code>, and <code>tests/</code> so the layout survives the first commit. Add <code>build/</code> and <code>compile_commands.json</code> to <code>.gitignore</code>.</p>
+</div>
+
+<h2>Debugging This TRD</h2>
+
+<p>Environment failures belong to the Setup Troubleshooting table in the Requirements document. What follows is for the requirements.</p>
+
+<table>
+  <tr><th style="width:225px;">Question</th><th>Instrument</th></tr>
+  <tr><td>Is my GID index right?</td><td><code>show_gids</code>, or the <code>sysfs</code> loop in H1. Verify the type reads <code>RoCE v2</code> and the GID ends in your address.</td></tr>
+  <tr><td>R2 fails but R3 passes</td><td>Wrong GID index. The connection manager chose correctly and you did not &mdash; revisit R1.</td></tr>
+  <tr><td>R3 fails but R2 passes</td><td><code>rdma_ucm</code> not loaded. <code>sudo modprobe rdma_ucm</code>.</td></tr>
+  <tr><td>Both fail</td><td>Setup problem, not a requirement problem. Return to S9 and confirm <code>PORT_ACTIVE</code>.</td></tr>
+  <tr><td>The capture shows nothing</td><td>Capturing on the wrong interface. Use the S2 interface, not the NAT one.</td></tr>
+  <tr><td>Transfers hang on larger sizes</td><td>MTU mismatch between the nodes. Compare <code>ip link</code> on both.</td></tr>
+  <tr><td>Did the kernel object?</td><td><code>sudo dmesg -T | tail -30</code> immediately after a failure.</td></tr>
+</table>
+
+<h2>The Tool Boundary</h2>
+
+<p>Reach for the diagnostics before reaching for a chat window. On this rung that means <code>ibv_devinfo</code>, <code>tcpdump</code>, <code>dmesg</code>, and the two troubleshooting tables; on later rungs it will mean <code>gdb</code>, <code>valgrind</code>, and completion status codes. Building the habit now is why the later rungs stay tractable, because RDMA&rsquo;s error reporting is poor enough that a practitioner without diagnostic instincts is simply stuck.</p>
+
+<p>An AI assistant is appropriate for reviewing code once it works, clarifying a concept a document left unclear, and grading comprehension answers. It is not appropriate for writing or debugging the implementation.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] linux-rdma. <em>rdma-core.</em> <code>libibverbs/examples/rc_pingpong.c</code> and <code>librdmacm/examples/rping.c</code> &mdash; the reference implementations behind the tools in H2 and H3. Accessed 2026-07. https://github.com/linux-rdma/rdma-core</li>
+
+  <li>[2] linux-rdma. <em>perftest.</em> Documents the column layout of <code>ib_send_bw</code> and <code>ib_send_lat</code> output parsed in H5, and provides <code>show_gids</code> used in H1. Accessed 2026-07. https://github.com/linux-rdma/perftest</li>
+
+  <li>[3] <em>ibv_devinfo(1).</em> Linux manual page, section 1. Output fields captured in H7, including the verbose flag.</li>
+
+  <li>[4] <em>tcpdump(1).</em> Linux manual page, section 1. Capture filters and options used in H4.</li>
+
+  <li>[5] <em>iperf3(1).</em> Linux manual page, section 1. The TCP measurement in H6.</li>
+</ol>
+
+<div class="footer">
+  TRD-00: Fabric Up &nbsp;|&nbsp; Hints &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

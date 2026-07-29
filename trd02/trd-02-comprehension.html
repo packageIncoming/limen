@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-02: Queue Pairs and the State Machine — Comprehension</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.answer-key { page-break-before: always; }
+.qa-block { border: 1.5px solid #000; padding: 12px 14px; margin: 14px 0; page-break-inside: avoid; }
+.qa-block .qa-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px; }
+.qa-miss { border-left: 4px solid #000; padding: 6px 12px; margin: 8px 0 0 0; font-size: 9.5pt; font-style: italic; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .qa-block, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-02: Queue Pairs and the State Machine</h1>
+  <div class="subtitle">Comprehension — Limen RDMA Transport Project</div>
+  <div class="meta">8 questions &nbsp;|&nbsp; Answer in writing before the key &nbsp;|&nbsp; Est.: 55–80 minutes</div>
+</div>
+
+<h2>Questions</h2>
+
+<p><strong>Q1.</strong> The queue pair state machine has three transitions rather than one "connect" call. Explain what information each transition supplies that was not available before it, and say why the order cannot be rearranged.</p>
+
+<p><strong>Q2.</strong> On RoCE, <code>ah_attr.is_global</code> must be 1 even when both nodes are on the same subnet — the opposite of what is correct on native InfiniBand. Explain why, in terms of what the two fabrics use to address a peer.</p>
+
+<p><strong>Q3.</strong> Inside the address vector, <code>grh.dgid</code> and <code>grh.sgid_index</code> sit adjacent and are entirely different kinds of value. State what each one is, where it comes from, and what happens if you supply a GID value where an index is expected.</p>
+
+<p><strong>Q4.</strong> Your <code>rq_psn</code> at RTR and your <code>sq_psn</code> at RTS must hold different values. Say which is which and why. Then explain why swapping them produces no error at either transition, and where the mistake actually surfaces.</p>
+
+<p><strong>Q5.</strong> Four values crossed a TCP socket before the RTR transition could run. Why does the RDMA specification not define how they get there? Name a consequence of that omission that is a genuine advantage, and one that is a genuine cost.</p>
+
+<p><strong>Q6.</strong> There are now two independent access-flag settings in the program: <code>qp_access_flags</code> at the INIT transition, and the flags passed to <code>ibv_reg_mr()</code> in TRD-01. Explain the relationship between them for an incoming one-sided write, and why R5 required you to set the queue pair's flags for an operation that will not exist until TRD-06.</p>
+
+<p><strong>Q7.</strong> <code>ibv_modify_qp()</code> returns <code>EINVAL</code> from the INIT→RTR transition and says nothing else. Describe the diagnostic strategy that resolves this efficiently, and explain why reading your own code is the slow path.</p>
+
+<p><strong>Q8.</strong> You made two decisions this TRD did not dictate: the queue depths you requested at R2, and the format and framing of the side-channel exchange at R4. Defend both. For the depths, say what you would need to measure to know whether your choice was right.</p>
+
+<hr>
+
+<p><em>Answer all eight in writing before turning the page. Writing is the point — an answer that feels clear in your head and falls apart on paper was never clear. Then compare against the key. Where your answer is thinner than the key's, reread the Prior Knowledge section named at the end of that answer before starting TRD-03. Where you disagree with the key and can defend the disagreement, that is a good sign rather than a wrong answer.</em></p>
+
+<div class="answer-key">
+
+<h2>Answer Key</h2>
+
+<div class="qa-block">
+  <div class="qa-label">Q1 — Answer</div>
+  <p>Each transition supplies a distinct category of information, and the categories become available at different times.</p>
+  <ul>
+    <li><strong>RESET → INIT</strong> supplies the queue pair's <em>local</em> identity: which physical port it uses, which partition, and what classes of incoming remote operation it will accept. All of this is knowable without any contact with a peer, which is why it comes first. Afterwards the queue pair may accept posted receive requests, though it cannot yet receive from the wire.</li>
+    <li><strong>INIT → RTR</strong> supplies the <em>peer's</em> identity: its queue pair number, its starting sequence number, and the address vector describing how to reach it. None of this is knowable until the peer has been contacted, which is why an exchange must happen in between. Afterwards the queue pair can receive.</li>
+    <li><strong>RTR → RTS</strong> supplies <em>retry and timeout policy</em> and the sending sequence number. Afterwards the queue pair can send.</li>
+  </ul>
+  <p>The order is forced by dependency, not convention. The peer's parameters cannot be supplied before the peer is known, and the exchange that makes them known is itself something you perform between the first and second transitions. Sending must come last because a queue pair that could send before its peer could receive would emit packets into a queue pair that is not ready to accept them — which is why the same ordering applies <em>between</em> the two nodes as well: both should reach RTR before either proceeds to RTS.</p>
+  <p>The deeper reason there is no single "connect" call is that RDMA deliberately does not define connection establishment at this layer. There is nothing for a connect call to do that the application has not already had to arrange.</p>
+  <div class="qa-miss">Common miss: describing the states as "initialization steps" without saying what each one supplies. The states are not a warm-up sequence; each one is a point at which the adapter has learned something specific and can therefore do something it previously could not.</div>
+  <p><em>Covered in Prior Knowledge §5 through §9.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q2 — Answer</div>
+  <p>The two fabrics address peers with different mechanisms, and only one of them exists on Ethernet.</p>
+  <p>Native InfiniBand assigns every port a Local Identifier, a 16-bit address managed by the subnet manager and valid within one subnet. Reaching a peer inside the subnet needs only that LID, carried in the local route header — the <code>dlid</code> field. The global route header, and therefore the 128-bit GID, is needed only to cross a subnet boundary. So on InfiniBand, <code>is_global = 0</code> on a local subnet is correct and is the efficient choice.</p>
+  <p>Ethernet has no Local Identifier. There is no subnet manager assigning one, and the <code>dlid</code> field is ignored entirely when the link layer is Ethernet. The only addressing RoCE has is the GID, which is derived from the port's IP address — and the GID lives in the global route header. Populating it therefore is not an optimisation for routed traffic; it is the only way to name the peer at all.</p>
+  <p>This is why the correct InfiniBand reasoning produces a broken RoCE program, and why the failure is <code>EINVAL</code> at the RTR transition rather than something that mentions addressing.<span class="cite">[3]</span> The adapter is being asked to reach a peer identified by a LID on a fabric that has none.</p>
+  <div class="qa-miss">Common miss: "RoCE is routable so it needs the global header." Close, but it inverts the causation — RoCEv2 is routable <em>because</em> it uses IP addressing, and the requirement holds identically on a single flat subnet with no router anywhere. The reason is the absence of an alternative, not the presence of routing.</div>
+  <p><em>Covered in Prior Knowledge §8, and in references [3] and [5].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q3 — Answer</div>
+  <p><code>grh.dgid</code> is the <strong>peer's GID</strong> — a 128-bit value that arrived over the side channel. It identifies the destination.</p>
+  <p><code>grh.sgid_index</code> is an <strong>index into your own local GID table</strong> — a small integer, typically 0 to 7. It selects which of your port's several GID entries is used as the source address. It is not the peer's index, and the peer's index need not match yours.</p>
+  <p>The asymmetry is real and easy to miss because the fields sit adjacent in the same structure and both have "gid" in the name. One is a value describing somewhere else; the other is a selector describing here.</p>
+  <p>Supplying a GID value where the index belongs does not produce a type error, because the field is a single byte and the assignment will either truncate or fail to compile depending on how you wrote it. If it compiles — for instance by assigning some byte of the GID — the resulting index is almost certainly outside the table or selects the wrong entry, and the transition fails with <code>EINVAL</code>. The error names neither field. This is why R9 requires validating the index against <code>gid_tbl_len</code> before the transition: a bounds check on a small integer catches at argument-parse time what would otherwise appear as an uninformative failure eleven fields deep.</p>
+  <div class="qa-miss">Common miss: assuming the two ends must use the same GID index. They select entries in two different tables on two different machines, and there is no requirement that the tables be laid out identically — though on two identically configured nodes they usually are, which is exactly what makes the wrong assumption survive testing.</div>
+  <p><em>Covered in Prior Knowledge §8, and in reference [7].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q4 — Answer</div>
+  <p><code>rq_psn</code>, set at RTR, is the sequence number your <em>receive</em> queue expects the first inbound packet to carry. It must therefore equal the number the peer will start sending from — the peer's value, which arrived over the side channel.</p>
+  <p><code>sq_psn</code>, set at RTS, is the sequence number your <em>send</em> queue will start from. It is your own value, the one you sent to the peer so that it could set its <code>rq_psn</code> to match.</p>
+  <p>The two directions are independent. Each carries its own sequence space, and each end's send number is the other end's receive number.</p>
+  <p>Swapping them produces no error at either transition because neither value is checkable locally. Both are 24-bit integers in valid range; the adapter has no way to know which number the peer intends to use, and nothing in the transition contacts the peer. Both calls therefore succeed and the queue pair reaches RTS reporting a healthy state — which R8's verification will confirm, correctly and unhelpfully.</p>
+  <p>The mistake surfaces in TRD-03, on the first actual transfer. The receiver sees a packet whose sequence number does not match what it expects, and treats it as a sequence error rather than as data. Depending on the direction and the retry policy, the symptom is a transfer that never completes, a completion with a transport-retry-exceeded status after the timeout budget runs out, or a queue pair that falls into the error state. None of those mentions sequence numbers, and all of them appear one rung after the defect was written.</p>
+  <div class="qa-miss">Common miss: setting both to the same value — often your own — and reasoning that the numbers only need to be internally consistent. They need to be consistent <em>across the two machines</em>, in each direction separately. A single shared value happens to work only if both ends independently chose the same number, which randomisation is specifically designed to prevent.</div>
+  <p><em>Covered in Prior Knowledge §7 and §9, and in Requirements R7's callout.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q5 — Answer</div>
+  <p>The specification defines what a connected queue pair requires and deliberately says nothing about how the two ends come to agree, because connection establishment is a policy question rather than a transport question. The transport's job begins once both endpoints are configured. How an application discovers its peer — a directory service, a configuration file, a TCP socket, a command-line argument, an existing cluster membership protocol — is not something a wire specification can usefully constrain, and any choice it made would be wrong for some deployment.</p>
+  <p><strong>The advantage:</strong> you can use whatever you already have. A distributed system with an existing coordination layer can carry queue pair parameters over it, with no additional listening port, no extra failure mode, and no second authentication path. A system that already knows its topology from configuration can skip discovery entirely. Nothing is imposed.</p>
+  <p><strong>The cost:</strong> every RDMA application must build it, and they all build it differently. There is no interoperability at this layer — two independently written RDMA programs cannot connect to each other even though their queue pairs would work perfectly once configured. It is also a genuine source of bugs that have nothing to do with RDMA: the deadlock where both ends read before either writes, byte-order mistakes in a hand-rolled encoding, truncated reads. The connection manager introduced in TRD-05 exists precisely because this cost was paid enough times to justify a standard answer.</p>
+  <div class="qa-miss">Common miss: treating the omission as an oversight or an immaturity in the specification. It is a deliberate layering decision, and the evidence is that the connection manager was added as a <em>library</em> on top rather than as a change to the transport — the specification's silence was left intact.</div>
+  <p><em>Covered in Prior Knowledge §10. Resolved in TRD-05.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q6 — Answer</div>
+  <p>They are two independent gates and an incoming one-sided write must pass both.</p>
+  <p>When a remote write arrives, the adapter checks the <em>queue pair</em>: does <code>qp_access_flags</code> include remote write? If not, the operation is rejected regardless of what memory it targeted. Then it checks the <em>memory region</em> named by the remote key: was it registered with remote write permission? If not, rejected regardless of what the queue pair permits.</p>
+  <p>The two checks answer different questions. The queue pair's flags answer "may this connection perform this class of operation at all" — a per-peer decision. The memory region's flags answer "may this specific buffer be written by anyone" — a per-buffer decision. A server might permit remote writes on a connection to a trusted peer while still registering most of its buffers without remote write permission, and the pair of checks expresses that cleanly where either alone could not.</p>
+  <p>R5 required setting the queue pair's flags now, for an operation that does not exist until TRD-06, because <code>qp_access_flags</code> is supplied at the INIT transition and <strong>cannot be changed on a connected queue pair</strong>. Altering it requires transitioning back through RESET, which discards the connection and means repeating the entire bringup and the side-channel exchange. Setting it correctly at INIT costs nothing; discovering the omission in TRD-06 costs a rebuild of everything this rung established.</p>
+  <div class="qa-miss">Common miss: assuming the memory region's flags alone govern remote access, since that is where the remote key comes from. The key identifies which memory; the queue pair's flags decide whether this connection is allowed to reach it. Both are enforced, and a program that sets only one will fail in TRD-06 with a protection error that appears to implicate the wrong flag.</div>
+  <p><em>Covered in Prior Knowledge §6, and TRD-01 Prior Knowledge §7 and §8.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q7 — Answer</div>
+  <p>The efficient strategy is <strong>instrumentation before inspection</strong>, in roughly this order:</p>
+  <ol>
+    <li><strong>Establish that the fabric and the GID index are not at fault.</strong> Run the reference implementation between the same two nodes with the same index. If it also fails, nothing in your program is implicated and you have saved yourself from debugging correct code.</li>
+    <li><strong>Print what you passed.</strong> The attribute mask rendered as flag names, and every attribute the mask names, with its actual value. This is R10, and it converts an opaque failure into a printout you can read against the manual page's required-attribute table.</li>
+    <li><strong>Check the three known traps first,</strong> in likelihood order: <code>is_global</code> not set on RoCE; a value supplied where an index belongs, or the peer's number where your own belongs; a field set but absent from the mask, or named in the mask but never set.</li>
+    <li><strong>Verify the round trip of anything that was serialised.</strong> A GID that survives printing but not parsing produces an <code>EINVAL</code> that looks like a verbs bug and is a string bug.</li>
+  </ol>
+  <p>Reading your own code is the slow path for a specific reason: <code>EINVAL</code> tells you that <em>some</em> field among eleven is unacceptable, and every one of those fields looks plausible in source. The wrong field is not wrong-looking — it is a valid integer assigned from a valid variable, and the defect is that it came from the wrong place. Source review is therefore a linear scan with no signal to guide it, and the scan passes over the mistake as easily as your eye passes over a familiar typo. A printout of actual values compared against the peer's actual values makes the discrepancy visible rather than inferable.</p>
+  <p>The general lesson is worth carrying forward: when an API reports failure without localising it, the first move is to make the program report its own inputs, not to reread the code that produced them.</p>
+  <div class="qa-miss">Common miss: naming a debugger as the primary tool. A debugger shows the same values your code already assigned and is no better at telling you which one is wrong. The value here comes from comparing <em>across the two machines</em> — your destination GID against the peer's local GID, your <code>rq_psn</code> against the peer's <code>sq_psn</code> — and that comparison needs both printouts side by side, not a breakpoint on one of them.</div>
+  <p><em>Covered in Prior Knowledge §12 and Hints H6 and H10.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q8 — Answer</div>
+  <p>Both are open and a strong answer commits, gives the reason, and names what would change it.</p>
+  <p><strong>Queue depths.</strong> The depth bounds how many work requests may be outstanding before you must reap completions. Small values — 1 to 16 — are defensible at this rung: the queue pair transmits nothing, deep queues consume adapter resources for no benefit, and a shallow queue makes an over-posting bug in TRD-03 fail loudly and immediately rather than after a delay. Larger values are defensible for continuity, if you intend to keep the same numbers through the pipelining work in TRD-07 rather than change them and re-tune.</p>
+  <p>What you would need to <em>measure</em> to know: the depth matters only under load, and specifically it is the point at which posting stalls waiting for completions. The measurement is a send loop at increasing depth, recording sustained message rate against queue depth — the curve flattens once the queue is deep enough to keep the adapter busy while completions are reaped, and further depth buys nothing but memory. That measurement is TRD-08's business, which is the honest answer: at this rung the choice is unmeasurable, and any defence of a specific number that claims otherwise is overclaiming.</p>
+  <p><strong>Side-channel format.</strong> Text with a delimiter is defensible: it is inspectable in a packet capture, immune to endianness and structure-padding differences between the two machines, and trivially debuggable when the exchange is what broke — which it will be at least once. A length-prefixed binary struct is defensible for a production protocol but not here, because it trades away the debuggability that is the format's main value at this rung and buys efficiency on an exchange that happens once per connection.</p>
+  <p>What is not defensible is transmitting a raw struct with <code>write(fd, &amp;s, sizeof s)</code>. It appears to work between two identical nodes and is broken by construction — compiler padding and byte order are both unspecified across machines, and the failure it produces is an <code>EINVAL</code> at RTR that looks like a verbs problem.</p>
+  <div class="qa-miss">Common miss: defending the queue depth with a performance claim. Nothing in this rung transmits, so no performance claim about the depth is supportable from anything you have observed. Saying "I do not yet have the evidence to justify this number, and here is the experiment that would produce it" is the stronger answer.</div>
+  <p><em>Covered in Prior Knowledge §4 and §10, and Requirements R2 and R4.</em></p>
+</div>
+
+<h2>References Cited in This Key</h2>
+
+<ol class="refs">
+  <li>[3] linux-rdma mailing list. <em>"EINVAL when INIT -&gt; RTR on RoCE."</em> https://linux-rdma.vger.kernel.narkive.com/sBIMjfva/einval-when-init-rtr-on-roce</li>
+  <li>[5] linux-rdma. <em>rdma-core.</em> <code>libibverbs/examples/rc_pingpong.c</code>. https://github.com/linux-rdma/rdma-core</li>
+  <li>[7] <em>ibv_create_ah(3).</em> Linux manual page, section 3.</li>
+</ol>
+
+<p style="font-size:9pt; font-style:italic;">Numbering matches the reference list in the TRD-02 Prior Knowledge document.</p>
+
+</div>
+
+<div class="footer">
+  TRD-02: Queue Pairs and the State Machine &nbsp;|&nbsp; Comprehension &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

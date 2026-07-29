@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-06: One-Sided Operations — Prior Knowledge</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-06: One-Sided Operations</h1>
+  <div class="subtitle">Prior Knowledge &mdash; Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-05 &nbsp;|&nbsp; Difficulty: Medium &nbsp;|&nbsp; Estimated: 3&ndash;4 sessions</div>
+</div>
+
+<h2>1 &nbsp; Where This Fits</h2>
+
+<p>Five rungs have built toward one thing. TRD-01 registered memory and printed a remote key that nothing used. TRD-02 set queue-pair access flags for operations that did not exist yet. TRD-05 carried an address, a length, and that remote key across the handshake and printed them on a line no code consumed.</p>
+
+<p>This rung consumes all of it. You will write directly into a peer&rsquo;s memory and read directly out of it, without the peer&rsquo;s software participating in either.</p>
+
+<p>This is the operation the technology exists for. Everything before it &mdash; the registration, the protection domains, the keys, the state machine &mdash; is scaffolding erected so that this operation can be safe. Two-sided <code>SEND</code> and <code>RECV</code> are a convenience that RDMA offers; one-sided access is what RDMA <em>is</em>.</p>
+
+<p>It is also the rung with the most dangerous failure mode in the ladder, and the danger is not in the operations. It is in knowing when they have finished.</p>
+
+<h2>2 &nbsp; What Changes</h2>
+
+<p>In TRD-03 both sides ran. The sender posted, the receiver had posted a matching receive, and both reaped a completion. Data landed in a buffer the <em>receiver</em> had chosen, and the receiver was told it arrived.</p>
+
+<p>One-sided operations remove the receiver from all of that.</p>
+
+<table>
+  <tr><th style="width:150px;"></th><th>Two-sided (TRD-03)</th><th>One-sided (this rung)</th></tr>
+  <tr><td>Remote posts a receive</td><td>Required, or RNR</td><td>Not required, not consumed</td></tr>
+  <tr><td>Destination address</td><td>Chosen by the receiver</td><td>Chosen by the <strong>sender</strong>, carried in the request</td></tr>
+  <tr><td>Remote completion</td><td>Yes &mdash; the arrival notification</td><td><strong>None</strong></td></tr>
+  <tr><td>Remote CPU</td><td>Reaps and processes</td><td>Executes nothing, learns nothing</td></tr>
+  <tr><td>Needs from the peer</td><td>A connection</td><td>A connection, a remote address, and an rkey</td></tr>
+  <tr><td>Local completion</td><td>Yes, if signalled</td><td>Yes, if signalled &mdash; unchanged</td></tr>
+</table>
+
+<p>The local side is almost unchanged: you post a work request and reap a completion exactly as before. What disappears is everything on the far side.</p>
+
+<div class="callout">
+  <div class="callout-label">A one-sided completion means less than a two-sided one</div>
+  <p>On an <code>IBV_WR_SEND</code>, your completion arrives after the peer&rsquo;s adapter has acknowledged, so it tells you the message was delivered <em>and</em> that the peer&rsquo;s receive buffer was consumed. On an <code>IBV_WR_RDMA_WRITE</code>, your completion tells you the write was acknowledged &mdash; and nothing whatever about whether the peer has noticed, because the peer cannot notice. That gap is what section 6 is about.</p>
+</div>
+
+<h2>3 &nbsp; The Work Request</h2>
+
+<p>The structure is TRD-03&rsquo;s, with the previously unused union populated:</p>
+
+<pre>struct ibv_send_wr {
+    uint64_t             wr_id;
+    struct ibv_send_wr  *next;
+    struct ibv_sge      *sg_list;      /* LOCAL buffer, as before  */
+    int                  num_sge;
+    enum ibv_wr_opcode   opcode;       /* RDMA_WRITE / RDMA_READ   */
+    unsigned int         send_flags;
+    __be32               imm_data;     /* WRITE_WITH_IMM only      */
+    union {
+        struct {
+            uint64_t remote_addr;      /* the PEER's address       */
+            uint32_t rkey;             /* the PEER's key           */
+        } rdma;
+        /* ... atomic, ud ... */
+    } wr;
+};</pre>
+
+<p>Three fields describe two different machines, and keeping them straight is the whole of the mechanical difficulty:</p>
+
+<table>
+  <tr><th style="width:190px;">Field</th><th style="width:90px;">Whose</th><th>Source</th></tr>
+  <tr><td><code>sg_list[].addr</code></td><td>Yours</td><td>Your own registered buffer</td></tr>
+  <tr><td><code>sg_list[].lkey</code></td><td>Yours</td><td><code>mr-&gt;lkey</code>, as in TRD-03</td></tr>
+  <tr><td><code>wr.rdma.remote_addr</code></td><td><strong>Theirs</strong></td><td>The <code>ConnInfo</code> from TRD-05&rsquo;s handshake</td></tr>
+  <tr><td><code>wr.rdma.rkey</code></td><td><strong>Theirs</strong></td><td>The same <code>ConnInfo</code></td></tr>
+</table>
+
+<p>A local key where a remote key belongs, or your own address where the peer&rsquo;s belongs, produces a remote access error rather than anything that names the mistake.</p>
+
+<h3>Opcodes</h3>
+
+<table>
+  <tr><th style="width:230px;">Opcode</th><th>Effect</th></tr>
+  <tr><td><code>IBV_WR_RDMA_WRITE</code></td><td>Your local buffer is written into the peer&rsquo;s memory at <code>remote_addr</code>. No remote completion, no receive consumed.</td></tr>
+  <tr><td><code>IBV_WR_RDMA_READ</code></td><td>The peer&rsquo;s memory at <code>remote_addr</code> is fetched into your local buffer. Your completion means the data has arrived.</td></tr>
+  <tr><td><code>IBV_WR_RDMA_WRITE_WITH_IMM</code></td><td>A write that additionally carries four bytes of immediate data, <strong>consumes a receive request</strong> on the peer, and generates a remote completion.<span class="cite">[3][6]</span> Section 6.</td></tr>
+</table>
+
+<p><code>RDMA_READ</code> reverses the direction of every other operation you have posted: the scatter-gather list is where data will be <em>deposited</em>, not where it is read from. On a read, your local region needs <code>IBV_ACCESS_LOCAL_WRITE</code>, because your own adapter writes into it.</p>
+
+<h2>4 &nbsp; Two Access Gates, Again</h2>
+
+<p>An incoming one-sided operation passes two independent checks, and both were configured rungs ago:</p>
+
+<ol>
+  <li><strong>The queue pair</strong> &mdash; <code>qp_access_flags</code>, set at the <code>INIT</code> transition in TRD-02 R5, or supplied through the connection manager in TRD-05. Does this connection permit this class of operation at all?</li>
+  <li><strong>The memory region</strong> &mdash; the flags passed to <code>ibv_reg_mr</code> in TRD-01. Does this specific buffer permit this access from anyone?</li>
+</ol>
+
+<p>Both must allow it.<span class="cite">[4]</span> Failing either produces <code>IBV_WC_REM_ACCESS_ERR</code> on the initiator, which does not distinguish between them.</p>
+
+<table>
+  <tr><th style="width:190px;">Operation</th><th>Remote QP needs</th><th>Remote MR needs</th></tr>
+  <tr><td><code>RDMA_WRITE</code></td><td><code>IBV_ACCESS_REMOTE_WRITE</code></td><td><code>REMOTE_WRITE</code> + <code>LOCAL_WRITE</code></td></tr>
+  <tr><td><code>RDMA_READ</code></td><td><code>IBV_ACCESS_REMOTE_READ</code></td><td><code>REMOTE_READ</code></td></tr>
+</table>
+
+<p>The <code>LOCAL_WRITE</code> requirement in the first row is the constraint TRD-01&rsquo;s R8 made you provoke deliberately &mdash; a remote write is performed by the <em>local</em> adapter writing into local memory, so local write permission is its prerequisite.</p>
+
+<div class="callout">
+  <div class="callout-label">The trust boundary, now real</div>
+  <p>Handing a peer your rkey grants unsupervised access to that region for as long as the registration lives. Your software is not consulted per operation, is not notified when one occurs, and cannot revoke the grant short of deregistering. TRD-01 described this; this rung is where it becomes an actual capability held by an actual peer.</p>
+</div>
+
+<h2>5 &nbsp; RDMA READ and Responder Resources</h2>
+
+<p>A read is a request-and-response, so unlike a write it cannot be fire-and-forget. Two attributes bound how many may be in flight, and they are not the same field:</p>
+
+<table>
+  <tr><th style="width:210px;">Attribute</th><th style="width:110px;">Set at</th><th>Bounds</th></tr>
+  <tr><td><code>max_rd_atomic</code></td><td>RTS (TRD-02 R7)</td><td>Reads and atomics <em>you initiate</em> that may be outstanding</td></tr>
+  <tr><td><code>max_dest_rd_atomic</code></td><td>RTR (TRD-02 R6)</td><td>Reads and atomics <em>you serve</em> that may be outstanding</td></tr>
+</table>
+
+<p>Through the connection manager these become <code>initiator_depth</code> and <code>responder_resources</code> in <code>rdma_conn_param</code>, which TRD-05 R8 had you populate. Both are bounded by the device attributes captured in TRD-01: <code>max_qp_init_rd_atom</code> and <code>max_qp_rd_atom</code> respectively.</p>
+
+<p>Posting more concurrent reads than the negotiated depth allows does not queue politely &mdash; it produces a transport error. If both sides set 1, as this ladder does, exactly one read may be outstanding at a time.</p>
+
+<p>Ordering also differs. Write-class requests &mdash; <code>SEND</code>, <code>RDMA_WRITE</code>, <code>RDMA_WRITE_WITH_IMM</code> &mdash; are totally ordered within a send queue. Requests that return a value are tracked separately, so a read issued after a write is not automatically guaranteed to observe that write&rsquo;s effect unless it is fenced.<span class="cite">[7]</span> <code>IBV_SEND_FENCE</code> exists for exactly this: it holds a request until all prior requests on the queue have completed.</p>
+
+<h2>6 &nbsp; How the Receiver Finds Out &mdash; and the Trap</h2>
+
+<p>This is the section that matters. An <code>RDMA_WRITE</code> lands in the peer&rsquo;s memory and tells the peer nothing. Detecting it is a protocol you design, and there are three approaches, of which <strong>the most obvious one is wrong</strong>.</p>
+
+<div class="diagram">
+  <svg viewBox="0 0 680 220" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif" font-size="8.5">
+    <defs><marker id="a9" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0, 7 2.5, 0 5" fill="#000"/></marker></defs>
+
+    <text x="112" y="14" text-anchor="middle" font-weight="bold" font-size="9">A &mdash; poll the last byte</text>
+    <rect x="20" y="24" width="185" height="52" fill="none" stroke="#000" stroke-width="1.5" stroke-dasharray="5,3"/>
+    <text x="112" y="44" text-anchor="middle">write payload, then spin on</text>
+    <text x="112" y="57" text-anchor="middle">the final byte of the buffer</text>
+    <text x="112" y="70" text-anchor="middle" font-weight="bold">BROKEN</text>
+    <text x="112" y="94" text-anchor="middle" font-size="8" font-style="italic">bytes within one message</text>
+    <text x="112" y="105" text-anchor="middle" font-size="8" font-style="italic">have no ordering guarantee</text>
+
+    <text x="340" y="14" text-anchor="middle" font-weight="bold" font-size="9">B &mdash; separate flag write</text>
+    <rect x="248" y="24" width="185" height="52" fill="none" stroke="#000" stroke-width="2.5"/>
+    <text x="340" y="44" text-anchor="middle">write payload, then a</text>
+    <text x="340" y="57" text-anchor="middle">SECOND write to a flag</text>
+    <text x="340" y="70" text-anchor="middle" font-weight="bold">CORRECT</text>
+    <text x="340" y="94" text-anchor="middle" font-size="8" font-style="italic">write requests ARE totally</text>
+    <text x="340" y="105" text-anchor="middle" font-size="8" font-style="italic">ordered against each other</text>
+
+    <text x="568" y="14" text-anchor="middle" font-weight="bold" font-size="9">C &mdash; WRITE_WITH_IMM</text>
+    <rect x="476" y="24" width="185" height="52" fill="none" stroke="#000" stroke-width="2.5"/>
+    <text x="568" y="44" text-anchor="middle">write carrying immediate</text>
+    <text x="568" y="57" text-anchor="middle">data; peer reaps a completion</text>
+    <text x="568" y="70" text-anchor="middle" font-weight="bold">CORRECT</text>
+    <text x="568" y="94" text-anchor="middle" font-size="8" font-style="italic">but consumes a receive,</text>
+    <text x="568" y="105" text-anchor="middle" font-size="8" font-style="italic">so RNR is back in play</text>
+
+    <line x1="112" y1="120" x2="112" y2="140" stroke="#000" stroke-width="1" marker-end="url(#a9)"/>
+    <line x1="340" y1="120" x2="340" y2="140" stroke="#000" stroke-width="1" marker-end="url(#a9)"/>
+    <line x1="568" y1="120" x2="568" y2="140" stroke="#000" stroke-width="1" marker-end="url(#a9)"/>
+    <rect x="20" y="142" width="185" height="30" fill="none" stroke="#000" stroke-width="1"/>
+    <text x="112" y="161" text-anchor="middle">torn reads under load</text>
+    <rect x="248" y="142" width="185" height="30" fill="none" stroke="#000" stroke-width="1"/>
+    <text x="340" y="161" text-anchor="middle">receiver stays passive</text>
+    <rect x="476" y="142" width="185" height="30" fill="none" stroke="#000" stroke-width="1"/>
+    <text x="568" y="161" text-anchor="middle">receiver becomes active</text>
+
+    <text x="340" y="200" text-anchor="middle" font-size="8" font-style="italic">B keeps the remote CPU out of it. C brings it back in, and with it TRD-03&rsquo;s RNR condition.</text>
+  </svg>
+  <div class="diagram-caption">Figure 1 &mdash; Three ways to detect a one-sided write. Only two of them work.</div>
+</div>
+
+<h3>A &mdash; polling the last byte, and why it fails</h3>
+
+<p>The natural idea: the payload is written in order, so watch the final byte, and when it changes the message has landed.</p>
+
+<p>It is wrong. <strong>Within a single message, the order in which bytes are placed into the destination is not guaranteed.</strong> Reliable-connected service guarantees that messages are delivered reliably and in order relative to one another &mdash; it does not guarantee anything about the order of byte placement inside one message. A large write may be segmented, and nothing requires the final segment to land last.<span class="cite">[2]</span></p>
+
+<p>The failure profile is the worst available. On a short message that fits one packet, it works. On a quiet fabric, it works. Under load, at larger sizes, the observer occasionally sees the last byte set while earlier bytes still hold stale data &mdash; and reads a torn buffer with no error anywhere. This is the single most-repeated mistake in application-level RDMA code, and the correct advice is explicit: use work completions to know that the content is in memory.<span class="cite">[2]</span></p>
+
+<h3>B &mdash; a separate flag write</h3>
+
+<p>Post two requests: the payload, then a second, tiny <code>RDMA_WRITE</code> to a distinct flag location. The peer polls the flag.</p>
+
+<p>This is correct, and the reason is precise. Write-class work requests within one send queue are <em>totally ordered</em> against each other.<span class="cite">[7]</span> The flag write is a separate message, issued after the payload write, so it cannot be placed before the payload write has completed. Observing the flag therefore implies the payload is entirely present.</p>
+
+<p>What it costs: a second round trip&rsquo;s worth of request, and a polling loop burning a core on the remote side. What it preserves: the remote CPU never enters the data path, which is the property one-sided operations exist to provide.</p>
+
+<h3>C &mdash; write with immediate data</h3>
+
+<p><code>IBV_WR_RDMA_WRITE_WITH_IMM</code> performs the write and additionally delivers four bytes of immediate data to the peer, generating a completion there.<span class="cite">[3][5][6]</span> The peer polls its completion queue exactly as in TRD-03 and finds an <code>IBV_WC_RECV_RDMA_WITH_IMM</code> carrying the immediate value.</p>
+
+<p>The immediate field is genuinely useful &mdash; a length, a sequence number, a buffer index &mdash; and it removes the need for in-band framing.</p>
+
+<div class="warning">
+  It <strong>consumes a receive work request</strong> on the peer.<span class="cite">[3][6]</span> If none is posted, the responder returns a receiver-not-ready error, exactly as for a plain <code>SEND</code>.<span class="cite">[5]</span> Everything TRD-03 taught about RNR applies again, including that the connection manager fixed the minimum RNR timer at 655&nbsp;ms. A write with immediate is a two-sided operation wearing a one-sided opcode, and calling it one-sided is a category error that produces a hang.
+</div>
+
+<p>Which to choose is a real design decision. Flag polling wins on latency and keeps the receiver passive; immediate data wins on CPU efficiency and scales to many connections, because one completion queue can be polled instead of many memory locations. Production transports use both, in different places.</p>
+
+<h2>7 &nbsp; Failure Modes</h2>
+
+<table>
+  <tr><th style="width:225px;">Symptom</th><th style="width:215px;">Cause</th><th>Resolution</th></tr>
+  <tr><td><code>IBV_WC_REM_ACCESS_ERR</code></td><td>One of the two access gates refused &mdash; queue-pair flags or region flags.<span class="cite">[4]</span></td><td>Print both sides&rsquo; flags. Section 4&rsquo;s table says which are needed.</td></tr>
+  <tr><td>Same error, flags look right</td><td>Local key used where a remote key belongs, or your own address in <code>remote_addr</code>.</td><td>Print all four fields from section 3 and check whose each is.</td></tr>
+  <tr><td>Payload occasionally torn</td><td>Last-byte polling. Bytes within one message are not ordered.<span class="cite">[2]</span></td><td>Separate flag write, or immediate data. Section 6.</td></tr>
+  <tr><td>Write with immediate hangs</td><td>No receive posted; it consumes one.<span class="cite">[3][5]</span></td><td>Post receives before writing with immediate, as in TRD-03.</td></tr>
+  <tr><td>Read returns stale data</td><td>Read issued after a write with no fence; the two are ordered separately.<span class="cite">[7]</span></td><td><code>IBV_SEND_FENCE</code> on the read, or reap the write&rsquo;s completion first.</td></tr>
+  <tr><td>Transport error posting several reads</td><td>More outstanding reads than the negotiated depth.</td><td>Section 5. Bound concurrency by <code>max_rd_atomic</code>.</td></tr>
+  <tr><td>Read fails, write to the same region works</td><td>Region lacks <code>IBV_ACCESS_REMOTE_READ</code>. The two flags are independent.</td><td>Grant both at registration, or grant deliberately.</td></tr>
+  <tr><td>Local protection error on a read</td><td>Local region lacks <code>IBV_ACCESS_LOCAL_WRITE</code>; a read writes into it.</td><td>Reads deposit locally. Section 3.</td></tr>
+  <tr><td>Peer never reacts to a write</td><td>Correct behaviour. It cannot.</td><td>Not a fault. You have not built a notification yet.</td></tr>
+  <tr><td>Works locally, wrong data across nodes</td><td>Address or key not byte-order converted in the handshake.</td><td>TRD-05 R7&rsquo;s conversion. Print the <code>ConnInfo</code> on both sides.</td></tr>
+</table>
+
+<h2>8 &nbsp; What Is Deliberately Left Out</h2>
+
+<p>No atomics. Compare-and-swap and fetch-and-add complete the one-sided family and are the basis of RDMA-based locking and lock-free remote data structures. They add a third access flag and their own outstanding-operation accounting, and nothing here needs them.</p>
+
+<p>No scatter-gather across several remote regions, no memory windows, no dynamically re-registered buffers. One region, one address, exchanged once at connection time.</p>
+
+<p>No credit scheme. The write-with-immediate path reintroduces the receiver-not-ready condition and this rung handles it by posting enough receives, exactly as TRD-03 did. Real flow control remains unbuilt.</p>
+
+<p>And no measurement. One-sided operations should be dramatically cheaper than two-sided ones on real hardware, and on the software provider they are not, for the reasons in TRD-00&rsquo;s section 9. TRD-08 is where the difference becomes visible.</p>
+
+<h2>9 &nbsp; Further Reading</h2>
+
+<p><strong>Read before starting:</strong></p>
+<ul>
+  <li><strong><code>ibv_post_send(3)</code></strong><span class="cite">[1]</span> &mdash; the opcode list and the <code>wr.rdma</code> union. You have read this page twice; read the parts you skipped.</li>
+  <li><strong>RDMAmojo on <code>ibv_post_send</code></strong><span class="cite">[3]</span> &mdash; specifically the paragraph on immediate data consuming a receive request on the remote queue pair, and the comment thread on access-flag failures.</li>
+</ul>
+
+<p><strong>Read while implementing:</strong></p>
+<ul>
+  <li><strong>RDMAmojo on Fence</strong><span class="cite">[2]</span> &mdash; short, and it contains the discussion that section 6 rests on, including why the last byte of a message is not a safe indicator.</li>
+  <li><strong><code>ibv_reg_mr(3)</code></strong><span class="cite">[4]</span> &mdash; the access flags, for the third time and the first time they all matter at once.</li>
+</ul>
+
+<p><strong>Reference as needed:</strong></p>
+<ul>
+  <li><strong>&ldquo;Design and Evaluation of an RDMA-aware Data Shuffling Operator&rdquo;</strong><span class="cite">[5]</span> &mdash; a clear published treatment of the passive-versus-active receiver distinction and the synchronisation each requires.</li>
+  <li><strong>InfiniBand Architecture Specification, Volume 1, ch. 9</strong><span class="cite">[8]</span> &mdash; normative on ordering and on RDMA operation semantics. For settling questions.</li>
+</ul>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_post_send(3).</em> Linux manual page, section 3. The opcode enumeration, the <code>wr.rdma</code> union with <code>remote_addr</code> and <code>rkey</code>, and the send flags including <code>IBV_SEND_FENCE</code>. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+
+  <li>[2] Barak, Dotan. <em>RDMAmojo &mdash; Fence.</em> Source for section 6&rsquo;s central claim: that observing the last byte of a message does not establish that the whole message is present, and that work completions are the recommended mechanism for knowing content exists in memory. Accessed 2026-07. https://www.rdmamojo.com/2013/12/06/fence/</li>
+
+  <li>[3] Barak, Dotan. <em>RDMAmojo &mdash; ibv_post_send().</em> States that for an RDMA WRITE opcode with immediate data, a work request is consumed from the remote queue pair&rsquo;s receive queue. Accessed 2026-07. https://www.rdmamojo.com/2013/01/26/ibv_post_send/</li>
+
+  <li>[4] <em>ibv_reg_mr(3).</em> Linux manual page, section 3. The access flags tabulated in section 4, and the requirement that remote write access be accompanied by local write access.</li>
+
+  <li>[5] Barthels, Claude, et al. <em>Design and Evaluation of an RDMA-aware Data Shuffling Operator for Parallel Database Systems.</em> ACM. Establishes that a plain RDMA write leaves the receiver totally passive with no notification mechanism, while a write with immediate data consumes a receive request and generates a completion entry, requiring the receiver to be active. Accessed 2026-07. https://dl.acm.org/doi/fullHtml/10.1145/3360900</li>
+
+  <li>[6] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual.</em> States that if no receive buffers are posted and a transmitter attempts a send or an RDMA write with immediate, a receiver-not-ready error is returned. https://docs.nvidia.com/rdma-aware-networks-programming-user-manual-1-7.pdf</li>
+
+  <li>[7] Reda, Waleed, et al. <em>RDMA is Turing complete, we just did not know it yet.</em> arXiv. Source for the ordering rule in sections 5 and 6: RDMA guarantees in-order execution of work requests within a single work queue, with write-class requests (SEND, WRITE, WRITE_WITH_IMM) totally ordered, and requests returning a value tracked as a separate category. Accessed 2026-07. https://arxiv.org/pdf/2103.13351</li>
+
+  <li>[8] InfiniBand Trade Association. <em>InfiniBand Architecture Specification, Volume 1.</em> Ch. 9, &ldquo;Transport Layer&rdquo; &mdash; normative definition of RDMA operation semantics, ordering rules, and responder resource accounting. https://www.infinibandta.org/ibta-specification/</li>
+</ol>
+
+<div class="footer">
+  TRD-06: One-Sided Operations &nbsp;|&nbsp; Prior Knowledge &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

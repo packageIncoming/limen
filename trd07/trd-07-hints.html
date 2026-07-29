@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-07: Completion Efficiency — Hints</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+.level-box { border: 2px solid #000; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
+.level-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-07: Completion Efficiency</h1>
+  <div class="subtitle">Hints &mdash; Limen RDMA Transport Project</div>
+  <div class="meta">Level 1 = nudge &nbsp;|&nbsp; Level 2 = stronger push &nbsp;|&nbsp; Try Level 1 for 15+ minutes before escalating</div>
+</div>
+
+<p>Level 1 points at the right place. Level 2 names the mechanism.</p>
+
+<p>Build in this order: R1 first, so every subsequent change is visible in the config line; then R2 through R5, which are independent and easy; then R6 through R8 together, because the event path is one mechanism and implementing it piecewise produces a hang you cannot attribute. Do not start with R6.</p>
+
+<h2>H1 &mdash; Report the Effective Configuration (R1)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Write this first. Every other requirement adds a field to it, and having the line print before you implement the thing it describes means you always know what is actually in force.</p>
+  <p>The distinction the requirement cares about is requested versus effective. Three of the five settings can differ from what you asked for &mdash; one is granted by the provider, one is clamped against a device limit, one may be refused entirely. Print what is true, not what was typed.</p>
+  <p>A small configuration struct populated once after the queue pair exists, then printed, keeps this from being scattered.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>struct EffectiveConfig {
+    bool     inline_on;
+    uint32_t inline_max;        /* GRANTED, from init.cap after create_qp */
+    unsigned signal_every;
+    unsigned pipeline;          /* clamped to granted max_send_wr        */
+    const char *reap;           /* "poll" or "event"                     */
+    const char *moderation;     /* "off", "unavailable", or "16:8"       */
+};
+
+std::printf("config: inline=%s(max=%u) signal_every=%u pipeline=%u "
+            "reap=%s moderation=%s\n",
+            cfg.inline_on ? "on" : "off", cfg.inline_max,
+            cfg.signal_every, cfg.pipeline, cfg.reap, cfg.moderation);</pre>
+  <p><code>--report-config</code> exits before connecting, so populate what you can without a peer &mdash; which means creating the context, protection domain, and queue pair, but not the connection. That is enough for the granted inline limit and the clamped depth.</p>
+</div>
+
+<h2>H2 &mdash; Inline Data (R2)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Two places. The capability is requested in the same structure TRD-02 used to size the queues, before creation; the flag is set per send.</p>
+  <p>The trap is assuming you got what you asked for. Some providers grant more, some grant zero unless the field is set, and some grant zero regardless. Read it back from the structure the creation call wrote into &mdash; the same write-back behaviour TRD-02 R2 made you report.</p>
+  <p>The fallback matters. A payload larger than the granted limit must send normally rather than fail, and the requirement says report it once rather than every iteration.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>init.cap.max_inline_data = 256;              /* request, before create_qp  */
+/* ... ibv_create_qp ... */
+cfg.inline_max = init.cap.max_inline_data;  /* GRANTED, may differ        */</pre>
+  <pre>bool use_inline = opt_inline &amp;&amp; len &lt;= cfg.inline_max;
+wr.send_flags = (signal ? IBV_SEND_SIGNALED : 0)
+              | (use_inline ? IBV_SEND_INLINE : 0);
+
+if (opt_inline &amp;&amp; !use_inline &amp;&amp; !warned_inline) {
+    std::fprintf(stderr, "inline requested but payload %zu exceeds granted %u "
+                         "— falling back to normal sends\n", len, cfg.inline_max);
+    warned_inline = true;
+}</pre>
+  <p>Note what inline does to R4: the buffer is free the instant <code>ibv_post_send</code> returns, because the payload was copied into the descriptor.<span class="cite">[1]</span> Your reuse tracking should skip the covered-sequence check entirely for inline sends, and getting that wrong costs you nothing in correctness but forfeits the benefit.</p>
+</div>
+
+<h2>H3 &mdash; Periodic Signalling (R3)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>One modulus, one flag. The mechanical part takes five minutes.</p>
+  <p>Two details are not mechanical. The last send of a run must be signalled regardless of where it falls in the period, or the run ends with work outstanding that nothing will ever report. And the period must be validated against the send queue depth at parse time &mdash; the warning in R3 explains why, and discovering it at runtime means an <code>ENOMEM</code> from a call whose every prior invocation succeeded.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>bool signal = (i % cfg.signal_every == 0) || (i == iterations - 1);</pre>
+  <p>Validation, after the queue pair exists so the granted depth is known:</p>
+  <pre>if (cfg.signal_every &gt;= granted_max_send_wr) {
+    std::fprintf(stderr,
+        "signal-every %u must be less than the send queue depth %u\n"
+        "  completions are what free send queue entries; a longer period\n"
+        "  fills the queue and ibv_post_send returns ENOMEM\n",
+        cfg.signal_every, granted_max_send_wr);
+    return 1;
+}</pre>
+  <p>A period of at most a quarter of the depth is a comfortable rule. At 16 over 1000 iterations expect about 63 send completions, and reporting that count is how the suite confirms the flag did anything.</p>
+</div>
+
+<h2>H4 &mdash; Buffer Reuse Under Periodic Signalling (R4)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>This is where the correctness risk lives. With signalling suppressed you know less than before, and the question is what a completion still tells you.</p>
+  <p>The property to lean on is in &sect;4 of the Prior Knowledge document: send-queue requests complete in order. Work out what a completion for request <em>k</em> establishes about requests before <em>k</em>, and the tracking falls out as a single integer.</p>
+  <p>Buffers: you need at least as many as the signalling period, because that is how many can be uncovered at once. A fixed array indexed by sequence number modulo its size is sufficient and is what the requirement asks for.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>uint64_t posted  = 0;     /* next sequence number to post          */
+uint64_t covered = 0;     /* highest sequence a completion covers   */
+const size_t NSLOT = cfg.signal_every * 2;   /* headroom            */
+
+/* before posting sequence `posted`, ensure its slot is free */
+while (posted &gt;= covered + NSLOT) {
+    ibv_wc wc;
+    if (ibv_poll_cq(cq, 1, &amp;wc) &gt; 0) {
+        if (wc.status != IBV_WC_SUCCESS) { /* R10 error path */ }
+        covered = wc.wr_id;      /* wr_id carries the sequence number */
+    }
+}
+void *buf = slot(posted % NSLOT);
+/* ... fill and post with wr_id = posted ... */
+++posted;</pre>
+  <p>Encode the sequence number directly in <code>wr_id</code>. That is what makes <code>covered = wc.wr_id</code> correct in one line, and it is the payoff for the identifier scheme TRD-03 H2 made you design deliberately.</p>
+  <p>For inline sends, skip the wait entirely &mdash; the buffer is already free:</p>
+  <pre>if (!use_inline) { /* the while loop above */ }</pre>
+  <p>Verify at several periods before trusting it. A reuse bug produces corruption only when the ring wraps before a completion arrives, which needs both a long run and a high rate. Run a thousand iterations at period 16 and depth 8 and confirm <code>mismatches=0</code>; a bug here that survives testing is the same profile as TRD-06&rsquo;s last-byte trap.</p>
+</div>
+
+<h2>H5 &mdash; Pipelining (R5)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>If R4 is correct, this is nearly free &mdash; the covered-sequence tracking already permits several outstanding requests. Pipelining is choosing to let it.</p>
+  <p>Two bounds, and they are not the same number. One you have known since TRD-02; the other you met in TRD-06 &sect;5 and it is far smaller. Clamp and report both if the program supports both operation types.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>cfg.pipeline = std::min&lt;unsigned&gt;(opt_pipeline, granted_max_send_wr);
+unsigned read_depth = std::min&lt;unsigned&gt;(cfg.pipeline, negotiated_max_rd_atomic);</pre>
+  <p>Then bound the posting loop by outstanding count rather than by slot availability:</p>
+  <pre>while (posted - covered &gt;= cfg.pipeline) { /* reap one */ }</pre>
+  <p>Writes and sends pipeline to the send-queue depth &mdash; potentially hundreds. Reads are capped at the negotiated atomic depth, often 16 and 1 in this ladder&rsquo;s configuration. Using the write bound for reads produces a transport error and a dead queue pair, and the error names neither limit.</p>
+</div>
+
+<h2>H6 &mdash; Event-Driven Reaping (R6)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Read &sect;6 of the Prior Knowledge document completely before writing anything, then read the worked example in <code>ibv_get_cq_event(3)</code><span class="cite">[3]</span> line by line. That example is the shape; &sect;6 is an annotation explaining why each line is where it is.</p>
+  <p>Four rules, and each corrects a distinct failure. Getting three of four right produces a program that works for a while and then stops, which is the hardest possible thing to debug. Write all four before running it once.</p>
+  <p>The channel is passed to the completion-queue creation call, in the parameter TRD-02 filled with a null pointer. That means the channel must exist before the completion queue, and must outlive it &mdash; a declaration-order question your TRD-04 layer already knows how to answer.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>comp_ch_ = ibv_create_comp_channel(ctx.get());
+cq_      = ibv_create_cq(ctx.get(), depth, nullptr, comp_ch_, 0);
+ibv_req_notify_cq(cq_, 0);        /* arm BEFORE anything can complete */</pre>
+  <p>The loop, with R8&rsquo;s guard already in place because adding it later means writing the bug first:</p>
+  <pre>static int reap_event(ibv_cq *cq, ibv_comp_channel *ch,
+                      ibv_wc *wc, int n, Stats &amp;st, int timeout_sec)
+{
+    int got = ibv_poll_cq(cq, n, wc);
+    if (got != 0) return got;                    /* fast path */
+
+    if (ibv_req_notify_cq(cq, 0)) return -1;     /* arm */
+
+    got = ibv_poll_cq(cq, n, wc);                /* THE RACE-CLOSING POLL */
+    if (got != 0) { ++st.race_polls_hit; return got; }
+
+    pollfd p{ ch-&gt;fd, POLLIN, 0 };
+    if (poll(&amp;p, 1, timeout_sec * 1000) &lt;= 0) return -2;   /* exit 8 */
+
+    ibv_cq *ev_cq; void *ev_ctx;
+    if (ibv_get_cq_event(ch, &amp;ev_cq, &amp;ev_ctx)) return -1;
+    ++st.events_received;
+    ++st.unacked;
+
+    if (ibv_req_notify_cq(cq, 0)) return -1;     /* RE-ARM: it is disarmed */
+
+    got = ibv_poll_cq(cq, n, wc);                /* DRAIN */
+    if (got == 0) ++st.empty_events;             /* legal, not an error */
+    return got;
+}</pre>
+  <p>Make the channel descriptor non-blocking if you want <code>poll</code> to be the only thing that blocks; otherwise <code>ibv_get_cq_event</code> blocks and the timeout has no effect. Setting <code>O_NONBLOCK</code> on <code>ch-&gt;fd</code> and gating the call behind <code>poll</code> gives you the timeout R6 requires.</p>
+  <p>The caller must keep draining after this returns &mdash; one call may yield several completions and more may remain. Loop until it returns zero before waiting again.</p>
+</div>
+
+<h2>H7 &mdash; Batched Acknowledgement (R7)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>A counter and a threshold. The interesting part is teardown: whatever is outstanding must be acknowledged before the completion queue is destroyed, or destruction blocks.</p>
+  <p>That failure has a shape you have seen. TRD-05 &sect;6 rule 2 described the same thing for connection-manager events, and the fix is the same &mdash; make the acknowledgement happen on every exit path rather than at the end of the happy one.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>if (st.unacked &gt;= 64) {
+    ibv_ack_cq_events(cq, st.unacked);
+    st.events_acked += st.unacked;
+    st.unacked = 0;
+}</pre>
+  <p>And before destroying the completion queue:</p>
+  <pre>if (st.unacked) {
+    ibv_ack_cq_events(cq, st.unacked);
+    st.events_acked += st.unacked;
+    st.unacked = 0;
+}</pre>
+  <p>Putting that flush in the destructor of whatever owns the completion queue gets it on every path including exceptions, which is the TRD-04 pattern applied to a resource TRD-04 did not know about.</p>
+  <p>A threshold of 64 is arbitrary and fine. The point is that the call takes a mutex and is expensive on the data path,<span class="cite">[2][3]</span> so amortising it matters; the exact number does not until TRD-08 measures it.</p>
+</div>
+
+<h2>H8 &mdash; Close the Arming Race, and Prove You Did (R8)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The guard is one extra poll and it is already in H6&rsquo;s code, deliberately &mdash; adding it afterwards means writing the bug first and then trying to reproduce it, which you will not manage on this fabric.</p>
+  <p>The counter is the requirement. Increment it when the post-arming poll returns something, and report it. Think about what a non-zero value proves and what a zero value proves before writing the notes, because they are not symmetric.</p>
+  <p>For the broken variant, remove exactly one thing and leave everything else identical, so the difference is attributable.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>if (!opt_broken_arming) {
+    got = ibv_poll_cq(cq, n, wc);
+    if (got != 0) { ++st.race_polls_hit; return got; }
+}</pre>
+  <p>Run the broken version at high concurrency and see what happens:</p>
+  <pre>./build/limen_pingpong -d rxe0 --reap event --pipeline 32 \
+    --signal-every 1 -n 100000 --broken-arming 10.0.0.1</pre>
+  <p>For the notes, something of this shape &mdash; and write what you actually saw:</p>
+  <pre>race_polls_hit = 4 over 100,000 iterations at pipeline depth 32.
+
+Non-zero means the race occurred four times and the guard caught it
+four times. Each of those would have been a permanent hang without it.
+
+--broken-arming did NOT hang in 100,000 iterations. That does not
+show the guard is unnecessary. The window is a few instructions wide
+and soft-RoCE's kernel-thread completion path makes it narrower than
+hardware would; race_polls_hit being non-zero on the guarded run is
+direct evidence the window is real on this fabric. The unguarded
+version is one scheduling accident away from blocking forever.</pre>
+  <p>If <code>race_polls_hit</code> is zero across a long run, record that instead and say what it establishes: that the window was not hit here, which is not that it cannot be. That is the same distinction TRD-06 R7 made about last-byte polling, and meeting it twice in two rungs is the point.</p>
+</div>
+
+<h2>H9 &mdash; Moderation, Gracefully (R9)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>One call with a small structure. The whole requirement is what you do when it fails, and the answer is not &ldquo;exit.&rdquo;</p>
+  <p>Distinguish three states in the config line rather than two: off because it was not requested, unavailable because the provider refused, and active with the values in force. Collapsing the middle one into either of the others loses information a reader needs.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>if (opt_moderate) {
+    ibv_modify_cq_attr attr{};
+    attr.attr_mask         = IBV_CQ_ATTR_MODERATE;
+    attr.moderate.cq_count  = (uint16_t)mod_count;
+    attr.moderate.cq_period = (uint16_t)mod_usec;   /* microseconds */
+
+    int rc = ibv_modify_cq(cq, &amp;attr);
+    if (rc == 0) {
+        std::snprintf(modbuf, sizeof modbuf, "%u:%u", mod_count, mod_usec);
+        cfg.moderation = modbuf;
+    } else {
+        cfg.moderation = "unavailable";
+        std::fprintf(stderr, "note: cq moderation not supported by this "
+                             "provider (%s) — continuing\n", std::strerror(rc));
+    }
+}</pre>
+  <p>Expect it to be unavailable on the software provider. That is the expected result and reporting it correctly satisfies the requirement in full.</p>
+  <p>If your headers lack <code>ibv_modify_cq</code>, guard it with a feature test and report <code>unavailable</code> the same way &mdash; that is also a correct outcome.</p>
+</div>
+
+<h2>H10 &mdash; Matrix, Regressions, Leaks (R10)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Run the matrix yourself before running the suite. Sixteen cells at a few seconds each, and every failure localises to one option combination.</p>
+  <p>Defaults are the part people break. Every option must default to exactly TRD-06&rsquo;s behaviour, so the two earlier suites pass untouched. If either fails, a default changed.</p>
+  <p>Teardown gains one resource with an ordering constraint that is not obvious from creation order &mdash; work out which of the completion queue and the channel must go first, and why.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>for inl in "" "--inline"; do
+  for sig in 1 16; do
+    for pipe in 1 8; do
+      for reap in poll event; do
+        ./build/limen_pingpong -d rxe0 -n 500 $inl \
+            --signal-every $sig --pipeline $pipe --reap $reap 10.0.0.1 \
+          | grep -q 'mismatches=0' || echo "FAILED: $inl sig=$sig pipe=$pipe $reap"
+      done
+    done
+  done
+done</pre>
+  <p>The completion queue references the channel, so the queue is destroyed first and the channel after &mdash; which means the channel is declared <em>before</em> the queue, since TRD-04 destroys members in reverse declaration order.</p>
+  <pre>class CompletionChannel { /* five special members, noexcept dtor, as TRD-04 */ };
+
+class Endpoint {
+    Context           ctx_;
+    EventChannel      cm_ch_;
+    ProtectionDomain  pd_;
+    CompletionChannel comp_ch_;   /* destroyed AFTER cq_ */
+    CompletionQueue   cq_;        /* destroyed before comp_ch_ */
+    /* ... */
+};</pre>
+  <p>Leak-check the poll path, the event path, and a deliberate timeout &mdash; the third exits through R6&rsquo;s error return and is the least exercised path in the program.</p>
+</div>
+
+<h2>Debugging This TRD</h2>
+
+<table>
+  <tr><th style="width:235px;">Question</th><th>Instrument</th></tr>
+  <tr><td>Event mode hangs</td><td>Check the four rules in order: armed before posting, re-armed after each event, drained completely, race-poll present. Three of four produces exactly this.</td></tr>
+  <tr><td>One event then silence</td><td>Not re-armed. A notification disarms the queue.</td></tr>
+  <tr><td>Completions present, no events</td><td>Not drained &mdash; leftovers do not notify, only new arrivals do.</td></tr>
+  <tr><td>Destroying the CQ hangs</td><td>Unacknowledged events. Same shape as TRD-05&rsquo;s CM event hang; <code>gdb -p</code> and read the backtrace.</td></tr>
+  <tr><td>Corruption only at high rates</td><td>R4 buffer reuse. Reduce <code>signal_every</code> to 1 &mdash; if it clears, the covered-sequence tracking is wrong.</td></tr>
+  <tr><td><code>ENOMEM</code> from <code>ibv_post_send</code></td><td>Send queue full. Signalling period too long relative to depth.</td></tr>
+  <tr><td>Inline silently doing nothing</td><td>Print the granted limit. Providers grant zero unless asked, and some grant zero regardless.</td></tr>
+  <tr><td>Is the event path even being used?</td><td><code>strace -e trace=poll,read</code> &mdash; the event path syscalls, the poll path does not. Quickest possible confirmation.</td></tr>
+</table>
+
+<div class="callout">
+  <div class="callout-label">The most useful habit on this rung</div>
+  <p>Change one option at a time and rerun the correctness check. Five independent switches produce thirty-two combinations, and a bug found after changing three of them costs more to localise than the change was worth.</p>
+</div>
+
+<h2>The Tool Boundary</h2>
+
+<p>The event path is the one place in this ladder where reading the manual page&rsquo;s worked example carefully is worth more than any debugging tool. The race in R8 cannot be found by stepping through code &mdash; it is a window between two lines that are both correct &mdash; and the only reliable defences are the specification&rsquo;s prescribed extra poll and the counter that proves it fired.</p>
+
+<p>An AI assistant is appropriate for reviewing code once it works, clarifying a concept a document left unclear, and grading comprehension answers. It is not appropriate for writing or debugging the implementation.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_post_send(3).</em> Linux manual page, section 3. Inline and signalled flag semantics used in H2 and H3. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+
+  <li>[2] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual</em>, &ldquo;Active Queue Pair Operations.&rdquo; The arm/disarm cycle behind H6 and the acknowledgement batching rationale in H7. https://docs.nvidia.com/networking/display/rdmaawareprogrammingv17/active+queue+pair+operations</li>
+
+  <li>[3] <em>ibv_get_cq_event(3)</em> and <em>ibv_ack_cq_events(3).</em> Linux manual pages, section 3. The worked example H6 follows, and the mutex cost H7 amortises. https://man7.org/linux/man-pages/man3/ibv_ack_cq_events.3.html</li>
+
+  <li>[4] Dreier, Roland. <em>IB: Return &ldquo;maybe missed event&rdquo; hint from ib_req_notify_cq().</em> The specification&rsquo;s prescribed extra poll implemented in H6 and counted in H8. Accessed 2026-07. https://lkml.rescloud.iu.edu/0704.3/1689.html</li>
+
+  <li>[5] <em>ibv_modify_cq(3).</em> Linux manual page, section 3. The moderation interface and attribute mask used in H9.</li>
+
+  <li>[6] Barak, Dotan. <em>RDMAmojo &mdash; ibv_req_notify_cq().</em> Arming semantics underlying H6&rsquo;s drain requirement. Accessed 2026-07. https://www.rdmamojo.com/2013/02/22/ibv_req_notify_cq/</li>
+</ol>
+
+<div class="footer">
+  TRD-07: Completion Efficiency &nbsp;|&nbsp; Hints &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

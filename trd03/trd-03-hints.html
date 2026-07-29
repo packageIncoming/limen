@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-03: Two-Sided Transfer — Hints</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.level-box { border: 2px solid #000; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
+.level-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .level-box, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-03: Two-Sided Transfer</h1>
+  <div class="subtitle">Hints — Limen RDMA Transport Project</div>
+  <div class="meta">Level 1 = nudge &nbsp;|&nbsp; Level 2 = stronger push &nbsp;|&nbsp; Try Level 1 for 15+ minutes before escalating</div>
+</div>
+
+<p>Level 1 points at the right place. Level 2 names the mechanism.</p>
+
+<p>The failure character of this rung differs from TRD-02 again. There, everything failed at one call with one uninformative error. Here, the characteristic failure is a program that <em>hangs</em> — and a hang gives you nothing at all unless you built the instrumentation that distinguishes "waiting" from "stuck." Build R4's timeout early; it is what makes the rest of this rung debuggable.</p>
+
+<h2>H1 — Separate Send and Receive Buffers (R1)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>You need one buffer to send from and <code>rx_depth</code> places to receive into. The simplest arrangement that satisfies R1 is a single allocation sized for all of them, registered once, with slot <em>i</em> at a computed offset — one registration, several addresses.</p>
+  <p>Two registrations also work and are arguably clearer. Either is defensible; what is not defensible is one buffer used for both directions, because the send and the receive are concurrent from the adapter's point of view even when your loop treats them as sequential.</p>
+  <p>Whichever you choose, hold onto the base address and the local key. Every scatter-gather entry you build for the rest of the ladder needs both.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>size_t slot   = msg_size;
+size_t rx_len = slot * rx_depth;
+
+void *tx_buf = aligned_alloc(4096, slot);
+void *rx_buf = aligned_alloc(4096, rx_len);
+memset(tx_buf, 0, slot);
+memset(rx_buf, 0, rx_len);
+
+int acc = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE;
+struct ibv_mr *tx_mr = ibv_reg_mr(pd, tx_buf, slot,   acc);
+struct ibv_mr *rx_mr = ibv_reg_mr(pd, rx_buf, rx_len, acc);</pre>
+  <p>The receive region must carry <code>IBV_ACCESS_LOCAL_WRITE</code> — the adapter writes into it locally when a message lands, and without that flag the receive fails with a local protection error. TRD-01's section 7 covers why remote write additionally requires it.</p>
+  <p>Slot <em>i</em> lives at <code>(char *)rx_buf + i * slot</code>. Page-aligning the allocation is not required but makes the registration cheaper and the addresses easier to read in a debugger.</p>
+</div>
+
+<h2>H2 — Post Receives Before Any Send (R2)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>A receive work request is three fields plus a scatter-gather list. Build one per slot and either post them in a loop or chain them through the <code>next</code> pointer and post once — both are correct, and the chained form is what a real transport does.</p>
+  <p>The <code>wr_id</code> is yours to define. Choose a scheme now that will still make sense in R5 when a completion arrives carrying nothing but that value: it must tell you which slot, and it must be distinguishable from a send's identifier at a glance.</p>
+  <p>For the synchronisation the warning in R2 demands: you already have a TCP socket open from TRD-02's exchange. Do not open another. One byte each way after posting is sufficient and is the same write-then-read pattern you used there.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>#define WRID_RECV(slot)  (0x100u + (slot))     /* receives: 0x100, 0x101, ... */
+#define WRID_SEND        (0x001u)               /* sends:    0x001            */
+#define IS_RECV(id)      ((id) &gt;= 0x100u)
+
+static int post_recv(struct ibv_qp *qp, struct ibv_mr *mr,
+                     void *base, size_t slot_size, unsigned slot)
+{
+    struct ibv_sge sge = {
+        .addr   = (uintptr_t)((char *)base + slot * slot_size),
+        .length = (uint32_t)slot_size,
+        .lkey   = mr-&gt;lkey,
+    };
+    struct ibv_recv_wr wr = {
+        .wr_id   = WRID_RECV(slot),
+        .next    = NULL,
+        .sg_list = &amp;sge,
+        .num_sge = 1,
+    };
+    struct ibv_recv_wr *bad = NULL;
+    return ibv_post_recv(qp, &amp;wr, &amp;bad);        /* 0, or an errno value */
+}</pre>
+  <p>Post <code>rx_depth</code> of these before the ready exchange. Then:</p>
+  <pre>char ready = 'R';
+write_all(sock, &amp;ready, 1);
+read_all(sock, &amp;ready, 1);        /* both sides have posted once this returns */</pre>
+  <p>Note the return convention: <code>ibv_post_recv</code> returns 0 or an errno value, like <code>ibv_modify_qp</code>. Test <code>!= 0</code>.</p>
+</div>
+
+<h2>H3 — Post a Send (R3)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The send work request is the receive form plus two fields: what operation, and what flags. The opcode you want moves a message into the peer's next posted receive.</p>
+  <p>The flags field is where this rung's most instructive trap lives. Reread the warning in section 5 of the Prior Knowledge document and check what TRD-02's queue pair creation set. If you post a send with no flags and then wait for a completion, you will wait forever, and nothing will indicate why.</p>
+  <p>Zero the work request structure before filling it. It contains a union for opcode-specific fields that this rung does not use, and leaving it holding stack contents is a failure that appears only sometimes.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>static int post_send(struct ibv_qp *qp, struct ibv_mr *mr,
+                     void *buf, size_t len, int signaled)
+{
+    struct ibv_sge sge = {
+        .addr   = (uintptr_t)buf,
+        .length = (uint32_t)len,
+        .lkey   = mr-&gt;lkey,
+    };
+    struct ibv_send_wr wr;
+    memset(&amp;wr, 0, sizeof wr);
+    wr.wr_id      = WRID_SEND;
+    wr.next       = NULL;
+    wr.sg_list    = &amp;sge;
+    wr.num_sge    = 1;
+    wr.opcode     = IBV_WR_SEND;
+    wr.send_flags = signaled ? IBV_SEND_SIGNALED : 0;
+
+    struct ibv_send_wr *bad = NULL;
+    return ibv_post_send(qp, &amp;wr, &amp;bad);        /* 0, or an errno value */
+}</pre>
+  <p>If this returns <code>ENOMEM</code>, the send queue is full — you have more requests outstanding than <code>max_send_wr</code> and are not reaping completions fast enough. With unsignalled sends that is easy to reach, because nothing drains the queue.</p>
+</div>
+
+<h2>H4 — Poll for Completions (R4)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The call is non-blocking and returns a count. Zero means the queue was empty, which will be the answer the overwhelming majority of the time — treat it as the normal case, not as a condition.</p>
+  <p>Two things a first attempt usually gets wrong. Read only as many array entries as the return value says; the rest were not written and contain whatever was there before. And a negative return is the error case, not zero.<span class="cite">[2]</span></p>
+  <p>The timeout matters more than it looks. Without one, the R8 experiments produce a program you have to kill from another terminal, with no output distinguishing "the peer never replied" from "I deadlocked myself." Take a timestamp before the loop and check elapsed time each iteration.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>/* Wait for one completion, or time out. Returns 1, 0 on timeout, -1 on error. */
+static int wait_completion(struct ibv_cq *cq, struct ibv_wc *wc, int timeout_sec)
+{
+    struct timespec t0, now;
+    clock_gettime(CLOCK_MONOTONIC, &amp;t0);
+
+    for (;;) {
+        int n = ibv_poll_cq(cq, 1, wc);
+        if (n &lt; 0)  return -1;                  /* poll itself failed  */
+        if (n &gt; 0)  return 1;                   /* got one             */
+
+        clock_gettime(CLOCK_MONOTONIC, &amp;now);
+        if (now.tv_sec - t0.tv_sec &gt;= timeout_sec) return 0;
+    }
+}</pre>
+  <p>A tight spin is correct here — it is what polling means, and TRD-07 introduces the event-driven alternative and the reason to want it. Do not add a sleep; it would mask the latency this design exists to avoid and would distort TRD-08's numbers.</p>
+  <p>Polling more than one completion per call is more efficient and worth doing once the single-entry version works. Remember that each completion returned is removed from the queue permanently — if you poll four and handle two, the other two are gone.<span class="cite">[2]</span></p>
+</div>
+
+<h2>H5 — Interpret Completions (R5)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The structure has thirteen fields and, on an error, four of them mean anything. Read the callout in section 6 of the Prior Knowledge document before writing the printing code, because the natural implementation — one format string covering every case — is wrong in exactly the situation where you most need the output to be true.</p>
+  <p>Structure the function as a branch on status first, with two entirely separate printing paths. It feels like duplication and it is not.</p>
+  <p>There is a library function for the status string. There is not one for the opcode; write a switch.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>static void report_completion(const struct ibv_wc *wc)
+{
+    if (wc-&gt;status != IBV_WC_SUCCESS) {
+        printf("completion: wr_id=0x%016" PRIx64 " status=%s "
+               "vendor_err=0x%08x qp_num=0x%08x\n",
+               wc-&gt;wr_id, ibv_wc_status_str(wc-&gt;status),
+               wc-&gt;vendor_err, wc-&gt;qp_num);
+        printf("  note: opcode and byte_len are not valid on an error completion\n");
+        return;                       /* nothing else in wc is trustworthy */
+    }
+
+    if (IS_RECV(wc-&gt;wr_id))
+        printf("completion: wr_id=0x%016" PRIx64 " opcode=%s status=SUCCESS "
+               "byte_len=%u\n", wc-&gt;wr_id, opcode_name(wc-&gt;opcode), wc-&gt;byte_len);
+    else
+        printf("completion: wr_id=0x%016" PRIx64 " opcode=%s status=SUCCESS\n",
+               wc-&gt;wr_id, opcode_name(wc-&gt;opcode));
+}</pre>
+  <p><code>opcode_name()</code> is a switch over <code>IBV_WC_SEND</code>, <code>IBV_WC_RECV</code>, <code>IBV_WC_RDMA_WRITE</code>, and <code>IBV_WC_RDMA_READ</code>. The last two are unused until TRD-06; include them now so the function does not need revisiting.</p>
+  <p>Note that <code>byte_len</code> is only printed for receives. On a send completion it carries nothing the request did not already state.</p>
+</div>
+
+<h2>H6 — Ping-Pong Loop (R6)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The two roles differ only in who sends first. Write one loop with a single conditional at the top rather than two loops — they will diverge otherwise, and a bug in one role that is absent in the other is very hard to see.</p>
+  <p>Per round, each side reaps two completions: one receive and one send. Decide deliberately whether you reap the send completion immediately or let it accumulate, and note that the send buffer is not yours to refill until you have.</p>
+  <p>The ordering constraint in R6's callout is the one thing here that is not obvious and does not fail immediately. Getting it backwards works at low iteration counts and fails at high ones, which is the worst way for a bug to behave.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>unsigned slot = 0;
+if (is_client) {
+    fill_pattern(tx_buf, msg_size, 0);
+    post_send(qp, tx_mr, tx_buf, msg_size, signaled);
+    sent++;
+}
+
+for (unsigned i = 0; i &lt; iterations; i++) {
+    struct ibv_wc wc;
+
+    /* 1. wait for the peer's message */
+    int r = wait_completion(cq, &amp;wc, 10);
+    if (r == 0) { /* timeout — R8's infinite-retry case */ }
+    if (r &lt; 0 || wc.status != IBV_WC_SUCCESS) { /* R10 path */ }
+
+    if (IS_RECV(wc.wr_id)) {
+        recvd++;
+        slot = (unsigned)(wc.wr_id - 0x100u);
+        verify_pattern(rx_slot(slot), wc.byte_len, i);   /* R7 */
+
+        post_recv(qp, rx_mr, rx_buf, msg_size, slot);    /* 2. replenish FIRST */
+
+        if (i + 1 &lt; iterations || !is_client) {
+            fill_pattern(tx_buf, msg_size, i + 1);
+            post_send(qp, tx_mr, tx_buf, msg_size, signaled);  /* 3. then reply */
+            sent++;
+        }
+    }
+
+    /* 4. drain any send completion that has arrived */
+    if (signaled) { /* poll and account for it */ }
+}</pre>
+  <p>Steps 2 and 3 in that order are R6's callout. The replenished receive is in place before anything you do can cause the peer to send.</p>
+  <p>The send completion and the receive completion arrive on the same queue in an order you do not control. Branch on <code>wr_id</code> rather than assuming which comes first — that assumption holds on a slow fabric and stops holding when you speed it up.</p>
+</div>
+
+<h2>H7 — Payload Verification (R7)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>A constant fill proves nothing beyond "some bytes arrived." What you want is a pattern from which a wrong <em>message</em> is detectable, not just a wrong byte — so encode the round number into it and make the rest position-dependent.</p>
+  <p>Verify against the length the completion reported rather than the length you expected. They should agree; confirming that is free and is the only way you would notice if they ever did not.</p>
+  <p>On a mismatch, print the offset, the expected byte, and the byte found. A bare "mismatch" tells you nothing, and the offset in particular distinguishes a wholly wrong message from a partially written one — which are different faults with different causes.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>static void fill_pattern(void *buf, size_t len, unsigned iter)
+{
+    unsigned char *p = buf;
+    for (size_t i = 0; i &lt; len; i++)
+        p[i] = (unsigned char)((i * 31u + iter * 131u) &amp; 0xff);
+}
+
+static size_t verify_pattern(const void *buf, size_t len, unsigned iter)
+{
+    const unsigned char *p = buf;
+    for (size_t i = 0; i &lt; len; i++) {
+        unsigned char want = (unsigned char)((i * 31u + iter * 131u) &amp; 0xff);
+        if (p[i] != want) {
+            fprintf(stderr, "mismatch at offset %zu: expected 0x%02x got 0x%02x "
+                            "(iteration %u)\n", i, want, p[i], iter);
+            return i + 1;                 /* non-zero = mismatch, and where */
+        }
+    }
+    return 0;
+}</pre>
+  <p>The multipliers matter slightly: both odd, and different, so that neither a shifted buffer nor an off-by-one iteration produces a pattern that happens to match. A checksum would also work; a byte pattern is preferable here because a mismatch localises itself.</p>
+</div>
+
+<h2>H8 — Provoke Receiver Not Ready (R8)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Two flags, and the interesting part is that they demonstrate the <em>same</em> fault producing two entirely different symptoms.</p>
+  <p><code>--no-recv</code> alone: skip the posting loop. The peer sends into a queue pair with nothing posted. With the retry count TRD-02 gave you, the sender keeps trying and your side simply never sees anything — so what you observe is R4's timeout firing. If your timeout is not built, what you observe is a program you have to kill.</p>
+  <p><code>--rnr-retry</code> needs to reach the RTS transition, which means threading a value from argument parsing down into the bringup code you factored out of TRD-02. That plumbing is the only real work in this requirement.</p>
+  <p>Run the flag on the <em>server</em> and the unmodified program on the client. It is the side that fails to post whose peer suffers.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <p>In bringup, replace the constant from TRD-02's H7:</p>
+  <pre>attr.rnr_retry = (uint8_t)opt_rnr_retry;      /* default 7 = infinite */</pre>
+  <p>Then skip the posting loop under the flag, and report it prominently — a silent skip produces a mysterious hang, which defeats the purpose:</p>
+  <pre>if (opt_no_recv) {
+    printf("recv: posted=0 depth=%u size=%zu  (--no-recv: RNR will be provoked)\n",
+           rx_depth, msg_size);
+} else {
+    for (unsigned i = 0; i &lt; rx_depth; i++) post_recv(...);
+}</pre>
+  <p>The two experiments:</p>
+  <pre># infinite retry — the client times out with no completion at all
+server:  limen_pingpong -d rxe0 -g 3 --no-recv
+client:  limen_pingpong -d rxe0 -g 3 10.0.0.1
+
+# finite retry — the client gets a named error completion
+server:  limen_pingpong -d rxe0 -g 3 --no-recv --rnr-retry 1
+client:  limen_pingpong -d rxe0 -g 3 --rnr-retry 1 10.0.0.1</pre>
+  <p>Set the retry value on both sides. It governs the sender's behaviour, so the side that must observe the error is the side whose value matters — but keeping them equal removes a variable while you are learning what the difference does.</p>
+  <p>Capture both outputs for <code>docs/transfer-log.md</code>. The pair is the most valuable artefact this rung produces, because it is the same defect wearing two faces.</p>
+</div>
+
+<h2>H9 — Unsignalled Send (R9)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The flag plumbing already exists from H3. The work is in the loop: it must not wait for a completion that is never coming.</p>
+  <p>Think about what still arrives. Receives are always signalled — there is no way to suppress a receive completion — so the peer's messages still generate completions on your side. It is only your own sends that go silent.</p>
+  <p>The reporting requirement is the point. Print the counts so that the asymmetry is visible in the output rather than something you have to take on trust.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <p>Track the two completion kinds separately and report both:</p>
+  <pre>printf("result: iterations=%u sent=%u received=%u send_completions=%u "
+       "mismatches=%zu\n", iterations, sent, recvd, send_comps, mismatches);</pre>
+  <p>With <code>--unsignaled</code>, <code>sent</code> equals the iteration count and <code>send_completions</code> is zero, while the peer's <code>received</code> also equals the iteration count. That is the whole demonstration: the data moved, and nothing told you.</p>
+  <p>Guard the send-completion wait on the flag rather than trying to poll for something that will not appear:</p>
+  <pre>if (signaled) { /* reap the send completion before refilling tx_buf */ }
+else          { /* the buffer is NOT safe yet — see below */ }</pre>
+  <div class="warning">Without a completion there is no signal that the adapter has finished reading the send buffer, so refilling it is technically unsafe even though a strict ping-pong makes a collision unlikely. Real code handles this by signalling periodically — every <em>n</em>th send — so completions still arrive and still bound buffer reuse, just less often. That is TRD-07's technique, and noticing the problem here is what makes it land there.</div>
+</div>
+
+<h2>H10 — Error Consequences (R10)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Two things to record, and one thing not to do.</p>
+  <p>Record the first non-success status in a variable initialised to success, and write it only if it is still success. That single guard is what makes R10's requirement work, because the flush errors that follow a real failure will otherwise overwrite it.</p>
+  <p>Record the queue pair's state after the failure, using the same readback call as TRD-02's R8. It will be the error state; confirming it in output is what distinguishes a failed transfer from a dead connection.</p>
+  <p>Do not attempt to recover. Section 9 of the Prior Knowledge document explains why there is nothing to attempt.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>enum ibv_wc_status first_error = IBV_WC_SUCCESS;
+
+/* ... in the completion handler ... */
+if (wc.status != IBV_WC_SUCCESS) {
+    if (first_error == IBV_WC_SUCCESS)      /* first one only */
+        first_error = wc.status;
+    report_completion(&amp;wc);
+
+    struct ibv_qp_attr      a;
+    struct ibv_qp_init_attr ia;
+    memset(&amp;a, 0, sizeof a); memset(&amp;ia, 0, sizeof ia);
+    if (ibv_query_qp(qp, &amp;a, IBV_QP_STATE, &amp;ia) == 0)
+        printf("qp_state_after_error: %s\n", qp_state_name(a.qp_state));
+
+    rc = 5;
+    goto cleanup;                            /* teardown still runs */
+}</pre>
+  <p>Reuse <code>qp_state_name()</code> from TRD-02's H8. The value you are about to see printed for the first time is <code>ERR</code>, which is precisely the case that switch's default branch would have hidden behind an integer.</p>
+  <p>If you want to observe the flush burst rather than exiting on the first error, drain the completion queue before leaving — you will see one meaningful status followed by <code>IBV_WC_WR_FLUSH_ERR</code> for everything that was outstanding.<span class="cite">[6]</span> Worth doing once, for the picture.</p>
+</div>
+
+<h2>H11 — Buffer Ownership and Teardown (R11)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Teardown is TRD-02's block with one more memory region. Mechanical.</p>
+  <p>The ownership rule is not mechanical and has no compiler support. The discipline that works is to make the unsafe action impossible to reach rather than remembering not to take it: refill the send buffer only at the point in the loop where the completion has just been reaped, so the two are adjacent and the ordering is visible in one screenful.</p>
+  <p>If you find yourself adding a comment that says "do not touch this until the completion arrives," that comment is doing the work a type should be doing. Note the feeling; it is the second half of TRD-04's argument and you will be asked about it in the comprehension questions.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>cleanup: {
+    const char *qp_s="n/a", *cq_s="n/a", *rx_s="n/a",
+               *tx_s="n/a", *pd_s="n/a", *ctx_s="n/a";
+    int e;
+    if (qp)    { e = ibv_destroy_qp(qp);    qp_s = e ? errno_name(e) : "ok"; }
+    if (cq)    { e = ibv_destroy_cq(cq);    cq_s = e ? errno_name(e) : "ok"; }
+    if (rx_mr) { e = ibv_dereg_mr(rx_mr);   rx_s = e ? errno_name(e) : "ok"; }
+    if (tx_mr) { e = ibv_dereg_mr(tx_mr);   tx_s = e ? errno_name(e) : "ok"; }
+    free(rx_buf); free(tx_buf);
+    if (pd)    { e = ibv_dealloc_pd(pd);    pd_s = e ? errno_name(e) : "ok"; }
+    if (ctx)   { ctx_s = ibv_close_device(ctx) ? "failed" : "ok"; }
+    if (list)  ibv_free_device_list(list);
+    if (sock &gt;= 0)      close(sock);
+    if (listen_fd &gt;= 0) close(listen_fd);
+
+    printf("teardown: qp=%s cq=%s rx_mr=%s tx_mr=%s pd=%s context=%s\n",
+           qp_s, cq_s, rx_s, tx_s, pd_s, ctx_s);
+    return rc;
+}</pre>
+  <p>Three leak checks, not one — the failure paths are where cleanup is usually wrong:</p>
+  <pre>valgrind --leak-check=full ./build/limen_pingpong -d rxe0 -g 3 -n 20 10.0.0.1
+valgrind --leak-check=full ./build/limen_pingpong -d rxe0 -g 3 --rnr-retry 1 10.0.0.1
+valgrind --leak-check=full ./build/limen_pingpong -d rxe0 -g 3 -s 64 10.0.0.1</pre>
+</div>
+
+<h2>Debugging This TRD</h2>
+
+<table>
+  <tr><th style="width:235px;">Question</th><th>Instrument</th></tr>
+  <tr><td>Is it hung or is it waiting?</td><td>R4's timeout. Build it first; without it every failure on this rung looks identical.</td></tr>
+  <tr><td>Hung with no completion at all</td><td>Almost always an unposted receive with infinite retry. Rerun with <code>--rnr-retry 1</code> and the fabric will name the problem for you.</td></tr>
+  <tr><td>Send seemed to work but nothing completed</td><td>Check <code>IBV_SEND_SIGNALED</code>. The transfer was happening the whole time.</td></tr>
+  <tr><td>First transfer fails with retry-exceeded</td><td>A TRD-02 defect — crossed sequence numbers. Compare the two nodes' printed <code>local:</code> and <code>remote:</code> lines.</td></tr>
+  <tr><td>Is anything on the wire?</td><td><code>sudo tcpdump -i any -n udp port 4791 -c 20</code>. Traffic with no completions is a posting or polling bug; no traffic is a bringup bug.</td></tr>
+  <tr><td>Local protection error</td><td>Print the region base, length, and key next to the request's address and key. One of them will not belong to the other.</td></tr>
+  <tr><td>Payload wrong only sometimes</td><td>A buffer touched while the adapter owned it. Look for a write to <code>tx_buf</code> that is not immediately after reaping its completion.</td></tr>
+  <tr><td>Does the reference tool still work?</td><td><code>ibv_rc_pingpong -d rxe0 -g &lt;idx&gt;</code>. Establishes the fabric before you debug your own program. Always do this first.</td></tr>
+  <tr><td>What state is the queue pair in?</td><td>R10's readback, called after every completion while debugging rather than only on error.</td></tr>
+</table>
+
+<div class="callout">
+  <div class="callout-label">The most useful single technique on this rung</div>
+  <p>When something hangs, rerun with <code>--rnr-retry 1</code>. Infinite retry is the default and it converts a self-describing error into silence. One flag turns the most confusing failure in RDMA into a completion status that names itself.</p>
+</div>
+
+<h2>The Tool Boundary</h2>
+
+<p>A hang tells you nothing, so the productive move is always to make the program capable of reporting that it is stuck — R4's timeout — and then to make the fabric capable of reporting why — the finite retry count. Both are instrumentation you build before you need it, and both are requirements rather than advice for that reason.</p>
+
+<p>An AI assistant is appropriate for reviewing code once it works, clarifying a concept a document left unclear, and grading comprehension answers. It is not appropriate for writing or debugging the implementation.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_post_send(3)</em> and <em>ibv_post_recv(3).</em> Linux manual pages, section 3. Work request structures used in H2 and H3, the send flag semantics behind H3 and H9, and the buffer reuse rule enforced in H11. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+
+  <li>[2] <em>ibv_poll_cq(3).</em> Linux manual page, section 3. The return convention and permanent-removal semantics used in H4, and the field validity rule that H5's two-branch printing exists to honour. https://man7.org/linux/man-pages/man3/ibv_poll_cq.3.html</li>
+
+  <li>[3] <em>ibv_query_qp(3).</em> Linux manual page, section 3. State readback reused in H10.</li>
+
+  <li>[4] <em>ibv_reg_mr(3).</em> Linux manual page, section 3. Access flag requirements for receive buffers noted in H1.</li>
+
+  <li>[5] Barak, Dotan. <em>RDMAmojo — ibv_post_send().</em> Source for <code>rnr_retry = 7</code> meaning infinite retries, the behaviour H8 exists to expose. Accessed 2026-07. https://www.rdmamojo.com/2013/01/26/ibv_post_send/</li>
+
+  <li>[6] <em>ibv_wc completion status reference.</em> Definition of <code>IBV_WC_WR_FLUSH_ERR</code>, the flush burst described in H10. Accessed 2026-07. https://docs.rs/ibverbs/0.3.0/ibverbs/ffi/struct.ibv_wc.html</li>
+
+  <li>[7] linux-rdma. <em>rdma-core.</em> <code>libibverbs/examples/rc_pingpong.c</code> — reference posting and polling loop, including the replenishment ordering in H6. Accessed 2026-07. https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/examples/rc_pingpong.c</li>
+</ol>
+
+<div class="footer">
+  TRD-03: Two-Sided Transfer &nbsp;|&nbsp; Hints &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

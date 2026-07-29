@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-01: Context, Protection Domain, Memory Registration — Hints</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; }
+em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; }
+li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.level-box { border: 2px solid #000; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
+.level-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .level-box, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-01: Context, Protection Domain, Memory Registration</h1>
+  <div class="subtitle">Hints — Limen RDMA Transport Project</div>
+  <div class="meta">Level 1 = nudge &nbsp;|&nbsp; Level 2 = stronger push &nbsp;|&nbsp; Try Level 1 for 15+ minutes before escalating</div>
+</div>
+
+<p>Level 1 points at the right place. Level 2 names the mechanism. Give Level 1 fifteen minutes of real attempts on a specific blocker before opening Level 2.</p>
+
+<p>Unlike TRD-00, this is a code rung, and the hints are calibrated accordingly: Level 2 gives you function names, signatures, and the shape of the solution, but never a working implementation. Where a snippet appears it demonstrates an API's usage pattern, not the requirement's answer.</p>
+
+<h2>H1 — Build Target and Argument Handling (R1)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>TRD-00's CMake file located the library and stored the path in a variable. A target needs three things from you: which sources compile into it, which libraries it links, and which warning flags apply. The variable holding the library path is already there.</p>
+  <p>For parsing, the standard library has a function for exactly this. Its main quirk is that it distinguishes flags that take a value from flags that do not by a character in a format string, and it communicates the value through a global. Do not hand-roll a loop over <code>argv</code> until you have looked at it — but note that it does not handle long options like <code>--check-access</code>, so decide early whether to use the GNU extension that does, or to special-case that one string before the loop.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>add_executable(limen_devinfo src/limen_devinfo.c)
+target_compile_options(limen_devinfo PRIVATE -Wall -Wextra)
+target_link_libraries(limen_devinfo PRIVATE ${IBVERBS_LIB})
+target_include_directories(limen_devinfo PRIVATE ${IBVERBS_INCLUDE_DIR} include)</pre>
+  <p>For arguments, <code>getopt_long()</code> from <code>&lt;getopt.h&gt;</code> handles both forms. Build a <code>struct option[]</code> with an entry for <code>check-access</code> taking <code>no_argument</code>, and a short option string of <code>"d:p:s:h"</code>. The trailing colon marks an option that requires a value, which arrives in the global <code>optarg</code>.</p>
+  <p>Parse numbers with <code>strtoull()</code> and check the end pointer — <code>atoi()</code> cannot distinguish zero from garbage, and R1 requires you to reject garbage:</p>
+  <pre>char *end = NULL;
+errno = 0;
+unsigned long long v = strtoull(optarg, &amp;end, 10);
+if (errno || end == optarg || *end != '\0' || v == 0) { /* usage error, exit 1 */ }</pre>
+</div>
+
+<h2>H2 — Device Enumeration (R2)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>One function returns the list and takes a pointer through which it reports the count. Read its manual page for what a null return means versus a successful return with a count of zero — R2 requires you to treat those differently, and the page states the distinction plainly.</p>
+  <p>Two accessor functions turn an opaque device pointer into a name and into a GUID. The GUID comes back in network byte order, so printing it directly on a little-endian machine gives you a byte-reversed value. There is a standard function for the 64-bit conversion.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>int num = 0;
+struct ibv_device **list = ibv_get_device_list(&amp;num);
+if (!list) { /* verbs failure — errno is set — exit 3 */ }
+if (num == 0) { /* no devices — exit 2 with the rdma_rxe hint */ }
+
+for (int i = 0; i &lt; num; i++) {
+    const char *name = ibv_get_device_name(list[i]);
+    uint64_t guid = be64toh(ibv_get_device_guid(list[i]));
+    printf("device: %s guid: 0x%016" PRIx64 "\n", name, guid);
+}</pre>
+  <p><code>be64toh()</code> is in <code>&lt;endian.h&gt;</code>; <code>PRIx64</code> is in <code>&lt;inttypes.h&gt;</code>. Call <code>ibv_free_device_list(list)</code> on every path out, including the two error exits — R2 says it must not leak on the paths that exit early, and those are exactly the paths people forget.</p>
+</div>
+
+<h2>H3 — Open a Named Device (R3)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Matching is a loop and a string comparison. The interesting requirement is the error message: when the name matches nothing, R3 wants the available names listed. You already wrote the code that prints them in R2 — consider whether that should be a function rather than an inline loop.</p>
+  <p>On the lifetime question: section 3 of the Prior Knowledge document tells you whether the list may be freed once the context exists. If you are unsure, the manual page settles it, and the reference implementation demonstrates it.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>struct ibv_device *dev = NULL;
+for (int i = 0; i &lt; num; i++)
+    if (strcmp(ibv_get_device_name(list[i]), want) == 0) { dev = list[i]; break; }
+
+if (!dev) { /* print available names to stderr, free list, exit 2 */ }
+
+struct ibv_context *ctx = ibv_open_device(dev);
+ibv_free_device_list(list);            /* safe: ctx holds its own reference */
+list = NULL;
+if (!ctx) { /* errno is set — exit 3 */ }</pre>
+  <p>Setting <code>list</code> to <code>NULL</code> after freeing lets a single cleanup block at the end of the function free it conditionally without double-freeing. That pattern will carry you through R10.</p>
+  <p>If <code>ibv_open_device</code> fails with <code>EACCES</code>, the fault is permissions on <code>/dev/infiniband/uverbs0</code>, not your code.</p>
+</div>
+
+<h2>H4 — Report Device Attributes (R4)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>One call fills one structure. The structure is larger than the eleven fields R4 asks for; read the header or the manual page to see the whole thing, because TRD-02 will send you back for more of it.</p>
+  <p>Watch the return convention. This function does <em>not</em> follow the pointer-and-errno pattern you used in H2 and H3 — section 10 of the Prior Knowledge document has the table. Writing the check the familiar way produces code that compiles and never detects a failure.</p>
+  <p>Two fields need thought about their type before you print them: the GUID, which has the same byte-order issue as H2, and the maximum region size, which is large enough that the wrong format specifier truncates it.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>struct ibv_device_attr da;
+int rc = ibv_query_device(ctx, &amp;da);
+if (rc != 0) {                            /* NOT rc &lt; 0 — the failure return is positive */
+    fprintf(stderr, "ibv_query_device: %s (%d)\n", strerror(rc), rc);
+    /* exit 3 via the cleanup path */
+}</pre>
+  <p>The return value <em>is</em> the errno code, so pass it straight to <code>strerror()</code> and do not read the global <code>errno</code>.</p>
+  <p><code>max_mr_size</code> is a <code>uint64_t</code> — print with <code>PRIu64</code>. <code>fw_ver</code> is a fixed-size character array, not a pointer, and is often empty on the software provider; print it as-is rather than substituting a placeholder. <code>node_guid</code> needs the same <code>be64toh()</code> treatment as H2.</p>
+</div>
+
+<h2>H5 — Report Port Attributes (R5)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Same return convention as H4. The port number is an argument, and there is a numbering convention stated in a callout in section 5 of the Prior Knowledge document that catches nearly everyone once.</p>
+  <p>Three of the five fields are enumerations and R5 requires symbolic output. Two of the three have conversion helpers provided by the library — search the header for functions whose names suggest turning a state or a width into a string. The third, the MTU, does not have one, and the mapping from its enum values to byte counts is not linear in the way you might guess. Look at the enum definition rather than assuming.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>if (port &lt; 1 || port &gt; da.phys_port_cnt) { /* usage error, exit 1 */ }
+
+struct ibv_port_attr pa;
+rc = ibv_query_port(ctx, (uint8_t)port, &amp;pa);
+if (rc != 0) { /* strerror(rc), exit 3 */ }</pre>
+  <p><code>ibv_port_state_str(pa.state)</code> gives you <code>"ACTIVE"</code> and similar — note it omits the <code>PORT_</code> prefix that R5's output contract requires, so prepend it or map the enum yourself.</p>
+  <p>For the link layer, switch on <code>pa.link_layer</code> against <code>IBV_LINK_LAYER_ETHERNET</code>, <code>IBV_LINK_LAYER_INFINIBAND</code>, and <code>IBV_LINK_LAYER_UNSPECIFIED</code>.</p>
+  <p>For the MTU, write a small switch. The enumerators are <code>IBV_MTU_256</code>, <code>IBV_MTU_512</code>, <code>IBV_MTU_1024</code>, <code>IBV_MTU_2048</code>, and <code>IBV_MTU_4096</code>, and their underlying integer values are 1 through 5 — which is exactly why printing the enum directly gives you a number that looks like nonsense.</p>
+</div>
+
+<h2>H6 — Allocate a Protection Domain (R6)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>This is the shortest requirement in the TRD. One call, one argument, a pointer back. It has no attributes and nothing to configure. If you are looking for what to pass, you have already found it.</p>
+  <p>The only thing to be careful about is what happens to it later — it must be released before the context closes, and R10 checks that.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>struct ibv_pd *pd = ibv_alloc_pd(ctx);
+if (!pd) { /* errno is set — exit 3 via cleanup */ }
+printf("pd: allocated\n");</pre>
+</div>
+
+<h2>H7 — Register a Memory Region (R7)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Four arguments: the domain, where the buffer is, how big it is, and what is permitted. The flags are a bitmask you combine with <code>|</code>, and their names are in the manual page.</p>
+  <p>Allocate the buffer before registering it, and consider touching it — writing zeros across it — before the call. On some providers registration of untouched pages behaves differently from registration of faulted-in pages, and starting from a known state removes a variable.</p>
+  <p>For rendering the flags symbolically, you need to go the other direction: from a bitmask back to names. A table of flag-and-name pairs walked in a loop is the usual approach and is worth writing as a helper, because R8 prints flags too.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>void *buf = calloc(1, size);           /* calloc also faults the pages in */
+if (!buf) { /* exit 3 via cleanup */ }
+
+int access = IBV_ACCESS_LOCAL_WRITE
+           | IBV_ACCESS_REMOTE_READ
+           | IBV_ACCESS_REMOTE_WRITE;
+
+struct ibv_mr *mr = ibv_reg_mr(pd, buf, size, access);
+if (!mr) { /* errno is set — this is R9's path */ }
+
+printf("mr: addr=%p length=%zu lkey=0x%08x rkey=0x%08x access=%s\n",
+       mr-&gt;addr, mr-&gt;length, mr-&gt;lkey, mr-&gt;rkey, flags_to_string(access));</pre>
+  <p>Print <code>mr-&gt;addr</code> and <code>mr-&gt;length</code> from the returned structure, not the variables you passed. R7 asks for this deliberately — the values agree here, and knowing that they are <em>reported</em> rather than echoed is what lets you notice a provider that adjusts them.</p>
+  <p>For the helper, a static array of <code>{ int flag; const char *name; }</code> walked with a separator variable is enough. It is roughly fifteen lines and both R7 and R8 use it.</p>
+</div>
+
+<h2>H8 — Access Flag Constraint (R8)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Register a second, small buffer with exactly one flag set — the remote-write one — and nothing else. The call is required to fail. Your job is to report <em>which</em> failure, symbolically.</p>
+  <p>Going from an integer errno to its symbolic name is not something the standard library does; <code>strerror()</code> gives you the human description, not the identifier. R8's output contract wants both. A small lookup table over the handful of codes you can plausibly see is the pragmatic answer.</p>
+  <p>Think about the success case too. R8 says an unexpected success is a finding rather than a pass, which means that branch needs to clean up after itself before exiting.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>char probe[4096] = {0};
+errno = 0;
+struct ibv_mr *bad = ibv_reg_mr(pd, probe, sizeof probe, IBV_ACCESS_REMOTE_WRITE);
+
+if (!bad) {
+    int e = errno;
+    printf("access-check: REMOTE_WRITE without LOCAL_WRITE rejected: %s (%s)\n",
+           errno_name(e), strerror(e));
+} else {
+    fprintf(stderr, "access-check: registration unexpectedly succeeded\n");
+    ibv_dereg_mr(bad);
+    /* exit 3 via cleanup */
+}</pre>
+  <p>Set <code>errno = 0</code> before the call. It is only meaningful after a failure, and a stale value from an earlier call will otherwise be reported as this call's cause.</p>
+  <p><code>errno_name()</code> is your own three-line lookup: <code>EINVAL</code>, <code>ENOMEM</code>, <code>EACCES</code>, <code>EBUSY</code>, and a default returning the number as a string covers everything this TRD can produce.</p>
+</div>
+
+<h2>H9 — Graceful Registration Failure (R9)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Most of this requirement is already satisfied if R7's failure branch is written properly — the addition is reporting the locked-memory limit alongside the error.</p>
+  <p>There is a syscall wrapper for reading resource limits. It fills a structure with a soft and a hard value, and the constant naming the locked-memory resource is the one you want. Unlimited is represented by a specific sentinel constant rather than by a large number, so compare against the constant instead of picking a threshold.</p>
+  <p>To provoke the failure for testing, ask for more than the limit allows. If your limit is unlimited, you cannot provoke it, and that is a property of your host rather than a defect — the test suite handles that case.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>#include &lt;sys/resource.h&gt;
+
+struct rlimit rl;
+if (getrlimit(RLIMIT_MEMLOCK, &amp;rl) == 0) {
+    if (rl.rlim_cur == RLIM_INFINITY)
+        fprintf(stderr, "  RLIMIT_MEMLOCK soft: unlimited\n");
+    else
+        fprintf(stderr, "  RLIMIT_MEMLOCK soft: %llu bytes\n",
+                (unsigned long long)rl.rlim_cur);
+}</pre>
+  <p>Check your own limit with <code>ulimit -l</code>. If it reports a number, request roughly double it to provoke the failure; if it reports <code>unlimited</code>, this path cannot be exercised on your host.</p>
+  <p>The failure branch must still reach teardown. If it exits directly it will leak the protection domain and the context, and R10's leak check will catch it.</p>
+</div>
+
+<h2>H10 — Teardown and Error Discipline (R10)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The problem R10 poses is that there are now six things that might need releasing — the device list, the buffer, the memory region, the protection domain, the context — and eight or nine places the program can decide to stop. Writing cleanup at each exit point produces nine copies of nearly the same code and one of them will be wrong.</p>
+  <p>The classic C answer is a single cleanup block at the end, reached by jumping to it, with every handle initialized to a value that means "not created" so the block can test each one. Initialize once at the top, jump on failure, release conditionally in reverse order at the bottom.</p>
+  <p>Note that three different verbs functions in your teardown use three different return conventions. Section 10 of the Prior Knowledge document has the table. The <code>teardown:</code> line reports each one, so you have to read all three correctly.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>int rc = 0;
+struct ibv_device **list = NULL;
+struct ibv_context *ctx  = NULL;
+struct ibv_pd      *pd   = NULL;
+struct ibv_mr      *mr   = NULL;
+void               *buf  = NULL;
+
+/* ... on any failure: rc = 3; goto cleanup; ... */
+
+cleanup: {
+    const char *mr_s = "n/a", *pd_s = "n/a", *ctx_s = "n/a";
+    int e;
+
+    if (mr)  { e = ibv_dereg_mr(mr);    mr_s  = e ? errno_name(e) : "ok"; }
+    free(buf);
+    if (pd)  { e = ibv_dealloc_pd(pd);  pd_s  = e ? errno_name(e) : "ok"; }
+    if (ctx) { ctx_s = ibv_close_device(ctx) ? "failed" : "ok"; }
+    if (list) ibv_free_device_list(list);
+
+    printf("teardown: mr=%s pd=%s context=%s\n", mr_s, pd_s, ctx_s);
+    return rc;
+}</pre>
+  <p>Three conventions in five lines: <code>ibv_dereg_mr</code> and <code>ibv_dealloc_pd</code> <em>return</em> an errno value, <code>ibv_close_device</code> returns <code>-1</code>, and <code>ibv_free_device_list</code> returns nothing. Getting any of them wrong compiles cleanly.</p>
+  <p>If <code>ibv_dealloc_pd</code> reports <code>EBUSY</code>, a child of the domain is still alive — you deallocated before deregistering. That is the destruction-order fault from section 9, and the <code>teardown:</code> line exists so you see it rather than exiting silently.</p>
+  <p>Verify with:</p>
+  <pre>valgrind --leak-check=full --error-exitcode=42 \
+  ./build/limen_devinfo -d rxe0 -s 1048576</pre>
+  <p>Expect zero bytes definitely lost. Some providers report a small fixed amount as still reachable at exit; that is not a leak and R10 does not count it.</p>
+</div>
+
+<h2>Debugging This TRD</h2>
+
+<table>
+  <tr><th style="width:230px;">Question</th><th>Instrument</th></tr>
+  <tr><td>Is the device even there?</td><td><code>ibv_devinfo -d rxe0</code>. If the reference tool cannot see it, your program will not either — that is a TRD-00 regression, not a bug here.</td></tr>
+  <tr><td>Does my output match the reference?</td><td>Run <code>ibv_devinfo -v -d rxe0</code> beside your program and compare fields. Disagreement on a value means you read the wrong struct member.</td></tr>
+  <tr><td>Which syscall failed?</td><td><code>strace -f -e trace=openat,ioctl,write ./build/limen_devinfo -d rxe0</code>. Verbs setup calls reach the kernel through an ioctl on <code>/dev/infiniband/uverbs0</code>, so the failing one is visible.</td></tr>
+  <tr><td>Did the kernel object?</td><td><code>sudo dmesg -T | tail -30</code> immediately after a failure. Provider errors frequently appear there with more detail than errno carries.</td></tr>
+  <tr><td>What is my locked-memory limit?</td><td><code>ulimit -l</code>, and <code>cat /proc/self/limits</code> for both soft and hard.</td></tr>
+  <tr><td>Am I leaking?</td><td><code>valgrind --leak-check=full --show-leak-kinds=definite</code></td></tr>
+  <tr><td>Is a handle null when I use it?</td><td><code>gdb --args ./build/limen_devinfo -d rxe0 -s 4096</code>, break on the verbs call, inspect the arguments.</td></tr>
+</table>
+
+<p>The highest-value habit at this rung is running the reference tool alongside your own and diffing the fields. Nearly every wrong value here is a struct member read incorrectly rather than a call made incorrectly, and the reference output makes that obvious in seconds.</p>
+
+<h2>The Tool Boundary</h2>
+
+<p>Debugger, <code>strace</code>, <code>dmesg</code>, <code>valgrind</code>, and the manual pages before a chat window. This rung has three separate error conventions and a handful of struct members whose types matter, and every one of those is settled by reading the manual page for the function in front of you. Building the habit of reaching for <code>man 3 ibv_reg_mr</code> rather than asking is the difference between a TRD-06 you can debug and one you cannot.</p>
+
+<p>An AI assistant is appropriate for reviewing code once it works, clarifying a concept a document left unclear, and grading comprehension answers. It is not appropriate for writing or debugging the implementation.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_get_device_list(3)</em>, <em>ibv_open_device(3)</em>, <em>ibv_close_device(3).</em> Linux manual pages, section 3. Return conventions and list lifetime used in H2, H3, and H10.</li>
+
+  <li>[2] <em>ibv_query_device(3)</em> and <em>ibv_query_port(3).</em> Linux manual pages, section 3. Attribute structures and the port numbering convention referenced in H4 and H5.</li>
+
+  <li>[3] <em>ibv_reg_mr(3).</em> Linux manual page, section 3. Access flag names and the local-write prerequisite verified in H8.</li>
+
+  <li>[4] <em>getrlimit(2).</em> Linux manual page, section 2. The <code>RLIMIT_MEMLOCK</code> resource and the <code>RLIM_INFINITY</code> sentinel used in H9.</li>
+
+  <li>[5] <em>getopt(3).</em> Linux manual page, section 3. Option parsing and the <code>getopt_long</code> extension used in H1.</li>
+
+  <li>[6] linux-rdma. <em>rdma-core.</em> <code>libibverbs/examples/rc_pingpong.c</code>, and the <code>ibverbs-utils</code> source for <code>ibv_devinfo</code> — the reference this rung's output is compared against. Accessed 2026-07. https://github.com/linux-rdma/rdma-core</li>
+</ol>
+
+<div class="footer">
+  TRD-01: Context, Protection Domain, Memory Registration &nbsp;|&nbsp; Hints &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

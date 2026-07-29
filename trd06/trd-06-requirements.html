@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-06: One-Sided Operations — Requirements</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+.hint-ref { border: 1px solid #000; padding: 3px 8px; margin: 6px 0 2px 0; font-size: 9pt; font-style: italic; display: inline-block; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-06: One-Sided Operations</h1>
+  <div class="subtitle">Requirements &mdash; Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-05 &nbsp;|&nbsp; Difficulty: Medium &nbsp;|&nbsp; Estimated: 3&ndash;4 sessions</div>
+</div>
+
+<h2>Objective</h2>
+
+<p>Build <code>limen_onesided</code>: a two-node program that writes directly into a peer&rsquo;s memory and reads directly out of it, using the address and remote key exchanged by TRD-05&rsquo;s handshake. It must demonstrate that the peer&rsquo;s software is not involved, implement two correct completion-detection mechanisms, and demonstrate that the obvious third one is broken.</p>
+
+<h2>What This Is Not</h2>
+
+<p>No atomics. Compare-and-swap and fetch-and-add complete the one-sided family and are not needed here.</p>
+
+<p>No changes to connection establishment. TRD-05&rsquo;s connection manager path is reused unchanged, and its <code>ConnInfo</code> already carries everything this rung needs.</p>
+
+<p>No measurement. One-sided operations should be dramatically cheaper than two-sided ones on real hardware and are not on the software provider. TRD-08 is where that becomes visible; drawing performance conclusions from this rung is drawing them from the wrong fabric.</p>
+
+<p>No flow control beyond what TRD-03 already had. R6 reintroduces the receiver-not-ready condition and handles it the same way: post enough receives.</p>
+
+<h2>Interface</h2>
+
+<pre>./build/limen_onesided -d &lt;device&gt; [-p &lt;port&gt;] [-t &lt;tcp_port&gt;] [-s &lt;bytes&gt;]
+                       [-n &lt;iterations&gt;] [--mode &lt;write|read|imm|flag|lastbyte&gt;]
+                       [--bad-rkey] [--verbose] [&lt;peer&gt;]</pre>
+
+<table>
+  <tr><th style="width:160px;">Argument</th><th>Effect</th></tr>
+  <tr><td><code>--mode write</code></td><td>Plain <code>RDMA_WRITE</code>. Default. R2 and R3.</td></tr>
+  <tr><td><code>--mode read</code></td><td><code>RDMA_READ</code>. R4.</td></tr>
+  <tr><td><code>--mode imm</code></td><td><code>RDMA_WRITE_WITH_IMM</code>. R6.</td></tr>
+  <tr><td><code>--mode flag</code></td><td>Payload write followed by a separate flag write; peer polls the flag. R5.</td></tr>
+  <tr><td><code>--mode lastbyte</code></td><td>Payload write; peer polls the final byte. R7 &mdash; deliberately incorrect.</td></tr>
+  <tr><td><code>--bad-rkey</code></td><td>Corrupt the peer&rsquo;s rkey before posting. R8.</td></tr>
+  <tr><td><code>-s</code>, <code>-n</code>, <code>-d</code>, <code>-p</code>, <code>-t</code></td><td>As TRD-03 and TRD-05.</td></tr>
+</table>
+
+<p>Exit codes: 0 success, 1 usage, 2 device not found, 3 verbs failure, 5 completion error, 6 verification failure, 7 connection-manager failure.</p>
+
+<h2>Output Contract</h2>
+
+<pre>role: client
+peer: addr=0x00007f3c1a2b4000 rkey=0x00000105 length=1048576
+onesided: mode=write iterations=100 size=4096
+completion: wr_id=0x0000000000000201 opcode=RDMA_WRITE status=SUCCESS
+remote-completions: 0
+result: mode=write iterations=100 posted=100 mismatches=0
+teardown: qp=ok cq=ok rx_mr=ok tx_mr=ok pd=ok id=ok channel=ok context=ok</pre>
+
+<p>Server side, plain write mode:</p>
+
+<pre>role: server
+onesided: passive (mode=write) &mdash; posting no receives, polling no completions
+remote-completions: 0
+verify: buffer contents match expected pattern for 100 iterations
+</pre>
+
+<h2>Technical Requirements</h2>
+
+<h3>R1 &mdash; Consume the Handshake Descriptor</h3>
+<p>Use the <code>ConnInfo</code> delivered by TRD-05&rsquo;s handshake &mdash; the peer&rsquo;s buffer address, remote key, and length &mdash; as the target of every one-sided operation in this rung.</p>
+<p>Before posting anything, validate it: a zero address, a zero key, or a length shorter than the message size is a fatal configuration error, reported and exiting 3. Those values crossed a network and were byte-order converted; a silent failure here surfaces as a remote access error that implicates the wrong thing.</p>
+<p>Print the <code>peer:</code> line as TRD-05 did. It is now load-bearing rather than informational.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H1</span>
+
+<h3>R2 &mdash; RDMA_WRITE</h3>
+<p>Post an <code>IBV_WR_RDMA_WRITE</code> naming your local buffer through a scatter-gather entry and the peer&rsquo;s address and key through <code>wr.rdma</code>. Signal it, reap the completion, and report it.</p>
+<p>Bound the target: the write must not exceed the peer&rsquo;s advertised length. Nothing in the API checks this for you, and exceeding it produces a remote access error rather than a bounds message.</p>
+<p>Fill the payload with the iteration-encoded pattern from TRD-03 R7, so the server can verify content rather than merely presence.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H2</span>
+
+<h3>R3 &mdash; Prove the Receiver Was Passive</h3>
+<p>In <code>--mode write</code> the server must post <strong>no</strong> receive work requests and poll <strong>no</strong> completions during the transfer. It announces this, waits for the client to finish, then verifies its buffer contents.</p>
+<p>Both sides print <code>remote-completions: 0</code>. The server&rsquo;s zero is the requirement: its completion queue was empty throughout while its memory was being written.</p>
+<p>This is the rung&rsquo;s central demonstration. Two-sided transfer required the receiver to post, poll, and process. Here the receiver&rsquo;s software executed nothing on behalf of the transfer and was never informed it occurred &mdash; and its memory changed anyway.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H3</span>
+
+<h3>R4 &mdash; RDMA_READ</h3>
+<p>In <code>--mode read</code>, post an <code>IBV_WR_RDMA_READ</code> that fetches the peer&rsquo;s buffer into your local one. Verify the retrieved contents against a pattern the server wrote locally before the transfer.</p>
+<p>Note the reversal: the scatter-gather list is now where data is <em>deposited</em>. Your local region requires <code>IBV_ACCESS_LOCAL_WRITE</code>, since your own adapter writes into it. Your completion means the data has arrived and is readable.</p>
+<p>The server remains passive here too, and reports it.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H4</span>
+
+<h3>R5 &mdash; Correct Notification: the Separate Flag Write</h3>
+<p>In <code>--mode flag</code>, post two requests per iteration: the payload write, then a second small <code>RDMA_WRITE</code> to a distinct flag location carrying the iteration number. The server polls the flag, and on seeing it verifies the payload.</p>
+<p>The flag must live in a region of the peer&rsquo;s buffer that does not overlap the payload. Advertise its offset as a fixed convention &mdash; the last eight bytes of the advertised region is sufficient &mdash; and document it.</p>
+<p>This is correct because write-class work requests within a send queue are totally ordered against one another,<span class="cite">[5]</span> so the flag cannot land before the payload it follows. Record in <code>docs/onesided-notes.md</code> why that guarantee makes the pattern safe, in your own words.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H5</span>
+
+<h3>R6 &mdash; Correct Notification: Write With Immediate</h3>
+<p>In <code>--mode imm</code>, post <code>IBV_WR_RDMA_WRITE_WITH_IMM</code> carrying the iteration number as immediate data. The server polls its completion queue and finds an <code>IBV_WC_RECV_RDMA_WITH_IMM</code> carrying that value.</p>
+<div class="warning">This opcode <strong>consumes a receive work request</strong> on the peer.<span class="cite">[2][3]</span> The server must post receives before the client begins, and replenish them, exactly as in TRD-03. Failing to do so produces a receiver-not-ready condition &mdash; and TRD-05 R8 recorded that the connection manager fixed the minimum RNR timer at 655&nbsp;ms, so the resulting stall is far longer than it was in TRD-03.</div>
+<p>Both sides now report non-zero <code>remote-completions</code>. Contrast that with R3 and record the comparison: this mode is a two-sided operation wearing a one-sided opcode.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H6</span>
+
+<h3>R7 &mdash; Demonstrate That Last-Byte Polling Is Wrong</h3>
+<p>In <code>--mode lastbyte</code>, the server polls the <em>final byte</em> of the payload region and treats a change as arrival, then verifies the whole buffer. The client writes with no flag and no immediate.</p>
+<p>Run it at a small message size and at the largest size your region allows, and record both results in <code>docs/onesided-notes.md</code>.</p>
+<p><strong>It may well pass.</strong> On a short message that fits a single packet, and on an idle software fabric, the bytes will usually arrive in order. That is precisely the danger, and reporting it honestly is the requirement: record what you observed, then record why the pattern is unsound regardless. Byte placement order <em>within</em> a single message is not guaranteed,<span class="cite">[1]</span> so a passing test here demonstrates only that you did not provoke the failure.</p>
+<p>Write two to four sentences on why a technique that passes your test is nonetheless wrong to ship, and what the failure would look like when it eventually occurs.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H7</span>
+
+<h3>R8 &mdash; Access Control Failure</h3>
+<p>With <code>--bad-rkey</code>, corrupt the peer&rsquo;s remote key before posting. The operation must fail with <code>IBV_WC_REM_ACCESS_ERR</code>, reported through TRD-03 R5&rsquo;s restricted error path and TRD-03 R10&rsquo;s queue-pair state check.</p>
+<p>The error does not distinguish between the two access gates &mdash; queue-pair flags and memory-region flags &mdash; so the diagnostic must print what it can: the key used, the remote address, the length, and a reminder of both gates from section 4 of the Prior Knowledge document.</p>
+<p>Exit 5. The queue pair will be in the error state and the connection is finished; do not attempt recovery.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H8</span>
+
+<h3>R9 &mdash; Bounded Outstanding Reads</h3>
+<p>Do not post more concurrent <code>RDMA_READ</code> operations than the negotiated depth permits. That depth is <code>max_rd_atomic</code>, set at the RTS transition in TRD-02 or supplied as <code>initiator_depth</code> through the connection manager in TRD-05, and bounded by <code>max_qp_init_rd_atom</code> from the device attributes recorded in TRD-00 R7.</p>
+<p>Print the effective limit alongside the mode line. If your implementation posts one read at a time, say so and state the limit anyway &mdash; knowing the constraint exists is the requirement, and TRD-07 will pipeline against it.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H9</span>
+
+<h3>R10 &mdash; Teardown, Regressions, Leaks</h3>
+<p>Teardown is TRD-05&rsquo;s, unchanged &mdash; the RAII layer already covers every resource this rung uses.</p>
+<p>Regressions: the <strong>TRD-03 suite must pass</strong> against <code>limen_pingpong</code>, and the <strong>TRD-05 suite must pass</strong> against it too. This rung adds a program rather than modifying one, so both should pass untouched; if either fails, something shared was changed that should not have been.</p>
+<p>Leak checks: zero bytes definitely lost on the write path, the read path, and the <code>--bad-rkey</code> failure path.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H10</span>
+
+<h2>Acceptance Criteria</h2>
+
+<table>
+  <tr><th style="width:40px;">ID</th><th>Criterion</th><th style="width:225px;">Verified by</th></tr>
+  <tr><td>R1</td><td>Everything builds clean under <code>-Wall -Wextra</code></td><td><code>test_builds</code></td></tr>
+  <tr><td>R1</td><td>A zero address or key is rejected before posting</td><td><code>test_descriptor_validated</code></td></tr>
+  <tr><td>R2</td><td><code>RDMA_WRITE</code> completes and the server&rsquo;s buffer matches</td><td><code>test_rdma_write</code></td></tr>
+  <tr><td>R3</td><td>The server reports zero completions during a plain write</td><td><code>test_receiver_passive</code></td></tr>
+  <tr><td>R4</td><td><code>RDMA_READ</code> retrieves the peer&rsquo;s contents correctly</td><td><code>test_rdma_read</code></td></tr>
+  <tr><td>R5</td><td>Flag-write mode completes with zero mismatches</td><td><code>test_flag_notification</code></td></tr>
+  <tr><td>R5</td><td><code>docs/onesided-notes.md</code> explains why the flag pattern is safe</td><td><code>test_flag_ordering_explained</code></td></tr>
+  <tr><td>R6</td><td>Immediate mode delivers the iteration number to the peer</td><td><code>test_write_with_imm</code></td></tr>
+  <tr><td>R6</td><td>Immediate mode produces non-zero remote completions</td><td><code>test_imm_is_two_sided</code></td></tr>
+  <tr><td>R7</td><td>Last-byte mode runs at two sizes and both results are recorded</td><td><code>test_lastbyte_recorded</code></td></tr>
+  <tr><td>R7</td><td>The notes explain why the pattern is unsound even if it passed</td><td><code>test_lastbyte_explained</code></td></tr>
+  <tr><td>R8</td><td><code>--bad-rkey</code> yields <code>REM_ACCESS_ERR</code> and exits 5</td><td><code>test_bad_rkey_rejected</code></td></tr>
+  <tr><td>R9</td><td>The effective outstanding-read limit is reported</td><td><code>test_read_depth_reported</code></td></tr>
+  <tr><td>R10</td><td>The TRD-03 suite still passes</td><td><code>test_trd03_regression</code></td></tr>
+  <tr><td>R10</td><td>The TRD-05 suite still passes</td><td><code>test_trd05_regression</code></td></tr>
+  <tr><td>R10</td><td><code>valgrind</code> reports zero bytes definitely lost on three paths</td><td><code>test_no_leaks</code></td></tr>
+</table>
+
+<h2>Deliverables</h2>
+
+<ul>
+  <li><code>src/limen_onesided.cpp</code>, reusing the connection setup from TRD-05 rather than duplicating it.</li>
+  <li>An updated <code>CMakeLists.txt</code> building all four programs.</li>
+  <li><code>scripts/trd-06-tests.sh</code>, executable, passing.</li>
+  <li><code>docs/onesided-notes.md</code> recording: the R5 explanation of why flag ordering is safe; the R7 results at both sizes with the explanation of why the technique is unsound regardless; and a short comparison of the three notification mechanisms naming which you would choose for a transport and why.</li>
+  <li>Written answers to the comprehension questions.</li>
+</ul>
+
+<h2>What Comes Next</h2>
+
+<p>TRD-07 makes these operations efficient: inline data for small payloads, unsignaled completions with periodic signalling, completion-queue moderation, and event-driven reaping. Every one of those trades something, and the trades are clearest on one-sided operations because there is no remote processing to hide behind.</p>
+
+<p>The outstanding-read limit reported in R9 becomes a pipelining bound there, and the three notification mechanisms compared in this rung&rsquo;s notes become a measured comparison in TRD-08.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] Barak, Dotan. <em>RDMAmojo &mdash; Fence.</em> Source for R7&rsquo;s claim that observing the last byte of a message does not establish the whole message is present, and that work completions are the recommended mechanism. Accessed 2026-07. https://www.rdmamojo.com/2013/12/06/fence/</li>
+
+  <li>[2] Barak, Dotan. <em>RDMAmojo &mdash; ibv_post_send().</em> States that an RDMA write with immediate data consumes a work request from the remote queue pair&rsquo;s receive queue &mdash; the constraint R6 depends on. Accessed 2026-07. https://www.rdmamojo.com/2013/01/26/ibv_post_send/</li>
+
+  <li>[3] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual.</em> States that a receiver-not-ready error results when no receive buffers are posted and a transmitter attempts a send or an RDMA write with immediate &mdash; the failure R6&rsquo;s warning concerns. https://docs.nvidia.com/rdma-aware-networks-programming-user-manual-1-7.pdf</li>
+
+  <li>[4] <em>ibv_post_send(3)</em> and <em>ibv_reg_mr(3).</em> Linux manual pages, section 3. The <code>wr.rdma</code> union used by R2 and R4, and the access flags whose violation R8 provokes. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+
+  <li>[5] Reda, Waleed, et al. <em>RDMA is Turing complete, we just did not know it yet.</em> arXiv. Source for R5&rsquo;s correctness argument: write-class work requests within a single work queue are totally ordered. Accessed 2026-07. https://arxiv.org/pdf/2103.13351</li>
+
+  <li>[6] Barthels, Claude, et al. <em>Design and Evaluation of an RDMA-aware Data Shuffling Operator for Parallel Database Systems.</em> ACM. The passive-versus-active receiver distinction R3 and R6 demonstrate. Accessed 2026-07. https://dl.acm.org/doi/fullHtml/10.1145/3360900</li>
+</ol>
+
+<div class="footer">
+  TRD-06: One-Sided Operations &nbsp;|&nbsp; Requirements &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

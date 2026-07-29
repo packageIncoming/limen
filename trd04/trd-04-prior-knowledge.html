@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-04: The RAII Layer — Prior Knowledge</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-04: The RAII Layer</h1>
+  <div class="subtitle">Prior Knowledge — Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-03 &nbsp;|&nbsp; Difficulty: Medium &nbsp;|&nbsp; Estimated: 3–5 sessions</div>
+</div>
+
+<h2>1 &nbsp; Where This Fits</h2>
+
+<p>TRD-03 left you with a working transfer and a cleanup block containing six conditional destructions in a fixed order, reached by a jump from nine places, with correctness resting entirely on the sequence of lines. It also left you with a comment somewhere near the send buffer saying not to touch it until the completion arrives.</p>
+
+<p>Both of those are rules the compiler is not enforcing. This rung makes it enforce them.</p>
+
+<p>You will build C++ types that own verbs resources, release them in their destructors, refuse to be copied, move correctly, and cannot throw while destructing. Then you will refactor all three existing programs onto them and confirm that each still passes its own gate unchanged.</p>
+
+<p>Nothing about RDMA changes here. Not one new verb, not one new concept about the fabric. What changes is that a class of bug you have been avoiding by remembering becomes a class of bug that will not compile.</p>
+
+<p>This is also the rung that makes the rest of the ladder tractable. TRD-05 adds an event channel and a connection identifier with unusual lifetime rules. TRD-06 adds remote keys that must not outlive their regions. TRD-07 adds buffer pools. Every one of those is a resource, and hand-written cleanup does not survive that many.</p>
+
+<h2>2 &nbsp; The Problem, Stated Precisely</h2>
+
+<p>Verbs resources have three properties that together make manual management unreliable:</p>
+
+<ol>
+  <li><strong>Ordered destruction.</strong> A queue pair must be destroyed before the completion queue it references; both before the protection domain; the protection domain before the context. Violating the order produces <code>EBUSY</code> from a function whose return value nobody checks.</li>
+  <li><strong>Exclusive ownership.</strong> A handle is a pointer to a kernel object. Copying it produces two names for one resource and therefore two destructions of it. The second is a use-after-free inside a driver.</li>
+  <li><strong>Fallible release.</strong> <code>ibv_destroy_qp()</code>, <code>ibv_destroy_cq()</code>, <code>ibv_dereg_mr()</code>, and <code>ibv_dealloc_pd()</code> all return an error code.<span class="cite">[5]</span> Something can go wrong while you are cleaning up, and you may want to know.</li>
+</ol>
+
+<p>C++ has an exact answer for the first two and an awkward one for the third. Sections 4 and 5 cover the exact answers; section 6 covers the awkwardness honestly, because pretending it is not there produces the most common defect in wrapper types.</p>
+
+<h2>3 &nbsp; What RAII Actually Guarantees</h2>
+
+<p>Resource acquisition is initialization: a resource's lifetime is tied to an object's lifetime, so that the resource is released whenever the object goes out of scope — normally, by early return, or by an exception unwinding the stack.</p>
+
+<p>The last of those three is the one hand-written cleanup gets wrong most often, and the one that matters most as the program grows. A <code>goto cleanup</code> block handles normal exit and early return. It does not run if an exception passes through, and the moment any part of the program throws — a <code>std::vector</code> reallocation, a <code>std::string</code> construction, anything — the cleanup is skipped and the resources leak. In a C program that risk does not exist. In the C++ program this rung produces, it does.</p>
+
+<p>What RAII buys, precisely:</p>
+
+<table>
+  <tr><th style="width:210px;">Guarantee</th><th>Mechanism</th></tr>
+  <tr><td>Release happens on every exit path</td><td>Destructors run during stack unwinding as well as normal scope exit</td></tr>
+  <tr><td>Release happens exactly once</td><td>One owner; copying is forbidden and moving transfers</td></tr>
+  <tr><td>Release happens in the right order</td><td>Members are destroyed in reverse declaration order — section 4</td></tr>
+  <tr><td>Forgetting is impossible</td><td>There is no call to omit</td></tr>
+</table>
+
+<h2>4 &nbsp; The Ordering Guarantee</h2>
+
+<p>This is the fact the whole rung is built on, and it is worth stating in the language of the standard rather than as a rule of thumb.</p>
+
+<div class="callout">
+  <div class="callout-label">Reverse declaration order</div>
+  <p>After a destructor body executes, the compiler calls the destructors of all non-static data members <strong>in reverse order of declaration</strong>, then the destructors of direct non-virtual base classes in reverse order of construction.<span class="cite">[1]</span> This is a guarantee of the language, not a convention or an optimisation.</p>
+</div>
+
+<p>So if a class declares its members in the order the resources must be created, the language destroys them in exactly the order they must be released. The ordering stops being something you maintain in a cleanup block and becomes something you express once, in a declaration list, that the compiler then honours on every exit path including ones you did not write.</p>
+
+<pre>class Endpoint {
+    Context          ctx_;   /* created 1st  → destroyed 5th */
+    ProtectionDomain pd_;    /* created 2nd  → destroyed 4th */
+    MemoryRegion     mr_;    /* created 3rd  → destroyed 3rd */
+    CompletionQueue  cq_;    /* created 4th  → destroyed 2nd */
+    QueuePair        qp_;    /* created 5th  → destroyed 1st */
+};</pre>
+
+<p>That produces queue pair, completion queue, memory region, protection domain, context — the exact order TRD-01 through TRD-03 required you to write by hand. Getting it wrong now requires reordering declarations, which is a visible structural edit rather than a line quietly moved inside a cleanup block during an unrelated change.</p>
+
+<div class="diagram">
+  <svg viewBox="0 0 680 210" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif" font-size="8.5">
+    <defs><marker id="a7" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0, 7 2.5, 0 5" fill="#000"/></marker></defs>
+    <text x="150" y="16" text-anchor="middle" font-weight="bold" font-size="10">CONSTRUCTION</text>
+    <text x="530" y="16" text-anchor="middle" font-weight="bold" font-size="10">DESTRUCTION</text>
+    <text x="340" y="16" text-anchor="middle" font-size="8" font-style="italic">automatic</text>
+
+    <rect x="70" y="28" width="160" height="24" fill="none" stroke="#000" stroke-width="1.2"/><text x="150" y="44" text-anchor="middle">Context</text>
+    <rect x="70" y="60" width="160" height="24" fill="none" stroke="#000" stroke-width="1.2"/><text x="150" y="76" text-anchor="middle">ProtectionDomain</text>
+    <rect x="70" y="92" width="160" height="24" fill="none" stroke="#000" stroke-width="1.2"/><text x="150" y="108" text-anchor="middle">MemoryRegion</text>
+    <rect x="70" y="124" width="160" height="24" fill="none" stroke="#000" stroke-width="1.2"/><text x="150" y="140" text-anchor="middle">CompletionQueue</text>
+    <rect x="70" y="156" width="160" height="24" fill="none" stroke="#000" stroke-width="2.5"/><text x="150" y="172" text-anchor="middle" font-weight="bold">QueuePair</text>
+
+    <rect x="450" y="28" width="160" height="24" fill="none" stroke="#000" stroke-width="2.5"/><text x="530" y="44" text-anchor="middle" font-weight="bold">QueuePair</text>
+    <rect x="450" y="60" width="160" height="24" fill="none" stroke="#000" stroke-width="1.2"/><text x="530" y="76" text-anchor="middle">CompletionQueue</text>
+    <rect x="450" y="92" width="160" height="24" fill="none" stroke="#000" stroke-width="1.2"/><text x="530" y="108" text-anchor="middle">MemoryRegion</text>
+    <rect x="450" y="124" width="160" height="24" fill="none" stroke="#000" stroke-width="1.2"/><text x="530" y="140" text-anchor="middle">ProtectionDomain</text>
+    <rect x="450" y="156" width="160" height="24" fill="none" stroke="#000" stroke-width="1.2"/><text x="530" y="172" text-anchor="middle">Context</text>
+
+    <path d="M 234,40 Q 340,40 340,96 Q 340,168 446,168" fill="none" stroke="#000" stroke-width="1" marker-end="url(#a7)"/>
+    <path d="M 234,168 Q 340,168 340,96 Q 340,40 446,40" fill="none" stroke="#000" stroke-width="1" marker-end="url(#a7)"/>
+
+    <text x="340" y="200" text-anchor="middle" font-size="8" font-style="italic">You write the left column once. The right column is the language's obligation.</text>
+  </svg>
+  <div class="diagram-caption">Figure 1 — Declaration order in, destruction order out. No cleanup block participates.</div>
+</div>
+
+<h2>5 &nbsp; Move-Only Ownership</h2>
+
+<p>A verbs handle is a pointer to a kernel object. Two objects holding the same pointer will both destroy it, and the second destruction passes a dangling pointer into a driver. The type must therefore make copying impossible and moving correct.</p>
+
+<h3>The five special members</h3>
+
+<p>Declaring a destructor suppresses the implicit move operations, so a class with a user-declared destructor gets copy operations it should not have and loses move operations it needs. Every wrapper must therefore declare all five explicitly — this is the rule of five, and the correct form for a resource handle is:</p>
+
+<pre>class ProtectionDomain {
+public:
+    ProtectionDomain() = default;                                  /* empty state */
+    explicit ProtectionDomain(ibv_context *ctx);                   /* acquires    */
+
+    ~ProtectionDomain() noexcept;                                  /* releases    */
+
+    ProtectionDomain(const ProtectionDomain&amp;)            = delete; /* no sharing  */
+    ProtectionDomain&amp; operator=(const ProtectionDomain&amp;) = delete;
+
+    ProtectionDomain(ProtectionDomain&amp;&amp;) noexcept;                 /* transfers   */
+    ProtectionDomain&amp; operator=(ProtectionDomain&amp;&amp;) noexcept;
+
+private:
+    ibv_pd *pd_ = nullptr;
+};</pre>
+
+<h3>What a move must do</h3>
+
+<p>Three obligations, and the third is the one people forget:</p>
+
+<ol>
+  <li>Take the source's handle.</li>
+  <li><strong>Leave the source holding null</strong>, so its eventual destructor releases nothing.</li>
+  <li>In move <em>assignment</em>, release whatever the destination was already holding — otherwise assigning over a live object leaks it.</li>
+</ol>
+
+<p><code>std::exchange</code> expresses the first two in one line:<span class="cite">[7]</span></p>
+
+<pre>ProtectionDomain::ProtectionDomain(ProtectionDomain &amp;&amp;o) noexcept
+    : pd_(std::exchange(o.pd_, nullptr)) {}
+
+ProtectionDomain &amp;ProtectionDomain::operator=(ProtectionDomain &amp;&amp;o) noexcept {
+    if (this != &amp;o) {              /* self-assignment would release then adopt null */
+        reset();                   /* obligation 3 */
+        pd_ = std::exchange(o.pd_, nullptr);
+    }
+    return *this;
+}</pre>
+
+<div class="callout">
+  <div class="callout-label">The moved-from state must be valid</div>
+  <p>A moved-from object is still destroyed. It must therefore be in a state where destruction is well defined — which for a handle means null, and means the destructor must check. An "empty" wrapper holding null is a legitimate state of the type, not an error, and every operation must behave sensibly in it.</p>
+</div>
+
+<h3>Why the moves must be <code>noexcept</code></h3>
+
+<p>Beyond being true, it is load-bearing: standard containers only use a type's move operations during reallocation if they are declared <code>noexcept</code>, falling back to copying otherwise. For a move-only type there is no copy to fall back to, so a non-<code>noexcept</code> move makes the type awkward to store in a <code>std::vector</code> — which TRD-07's buffer pool will want to do.</p>
+
+<h2>6 &nbsp; Destructors That Cannot Throw</h2>
+
+<p>Here is the awkward part, stated honestly.</p>
+
+<p>A destructor with no exception specification is implicitly <code>noexcept(true)</code>.<span class="cite">[2]</span> If an exception escapes one during stack unwinding, <code>std::terminate()</code> is called, which by default calls <code>std::abort()</code>; no further objects are destroyed and the program is in an indeterminate state.<span class="cite">[1][2]</span></p>
+
+<p>But <code>ibv_destroy_qp()</code> can fail. So a destructor has a failure it cannot report through the normal channel.</p>
+
+<h3>What not to do</h3>
+
+<table>
+  <tr><th style="width:230px;">Approach</th><th>Why it is wrong</th></tr>
+  <tr><td>Throw from the destructor</td><td>Terminates the program if anything else was already unwinding. The CERT rule is explicit: do not terminate a destructor by throwing.<span class="cite">[2]</span></td></tr>
+  <tr><td>Declare it <code>noexcept(false)</code> and throw</td><td>Same outcome during unwinding, plus it poisons every containing type's implicit destructor.<span class="cite">[2]</span></td></tr>
+  <tr><td>Check <code>std::uncaught_exceptions()</code> and throw only when safe</td><td>Named as noncompliant. Circumventing normal destructor processing this way can leave the destructor failing to release the resource at all<span class="cite">[2]</span> — the workaround is worse than the problem.</td></tr>
+  <tr><td>Ignore the return value silently</td><td>Compiles, never terminates, and discards the one signal that would have told you the ordering was wrong. This is the common defect.</td></tr>
+</table>
+
+<h3>What to do</h3>
+
+<p>Separate the two concerns. Provide an explicit release function that <em>returns</em> the status for callers who want it, and have the destructor call that function and report failure to a diagnostic sink without throwing.</p>
+
+<pre>class QueuePair {
+public:
+    /* Explicit release. Returns 0, or the errno value from ibv_destroy_qp.
+       Safe to call more than once; a second call is a no-op returning 0. */
+    int close() noexcept;
+
+    ~QueuePair() noexcept {
+        if (int e = close(); e != 0)
+            limen::report_release_failure("ibv_destroy_qp", e);
+    }
+};</pre>
+
+<p>This gives callers who care a checkable error, gives everyone else automatic release, and never throws. <code>report_release_failure</code> writes to <code>stderr</code> — a real library would take a configurable sink, and this ladder does not need one.</p>
+
+<p>The information is genuinely valuable. An <code>EBUSY</code> from a destructor means an ordering violation, and that is precisely the bug this layer exists to prevent. Printing it is how you find out the layer has a hole.</p>
+
+<h2>7 &nbsp; What Each Wrapper Owns</h2>
+
+<table>
+  <tr><th style="width:150px;">Type</th><th style="width:150px;">Owns</th><th>Releases with</th></tr>
+  <tr><td><code>Context</code></td><td><code>ibv_context *</code></td><td><code>ibv_close_device</code> — returns 0 or <code>-1</code></td></tr>
+  <tr><td><code>ProtectionDomain</code></td><td><code>ibv_pd *</code></td><td><code>ibv_dealloc_pd</code> — returns 0 or an errno value</td></tr>
+  <tr><td><code>MemoryRegion</code></td><td><code>ibv_mr *</code> <em>and its buffer</em></td><td><code>ibv_dereg_mr</code>, then free the buffer</td></tr>
+  <tr><td><code>CompletionQueue</code></td><td><code>ibv_cq *</code></td><td><code>ibv_destroy_cq</code> — returns 0 or an errno value</td></tr>
+  <tr><td><code>QueuePair</code></td><td><code>ibv_qp *</code></td><td><code>ibv_destroy_qp</code> — returns 0 or an errno value</td></tr>
+</table>
+
+<p>Note that three different release conventions appear in one table, exactly as they did in TRD-01. Wrapping them is also how you stop having to remember which is which: each wrapper normalises its own, once, and no caller ever asks again. That is a second benefit of this layer and a reason to write the wrappers even for resources whose ordering is not delicate.</p>
+
+<h3>Why the memory region owns its buffer</h3>
+
+<p>A registration and the memory it registers have exactly the same required lifetime: the buffer must outlive the registration, and keeping it alive longer serves no purpose. Two objects with identical lifetimes and a mandatory ordering between them are better as one object.</p>
+
+<p>It also closes a real hole. In TRD-03 the buffer was a separate <code>free()</code> in the cleanup block, and freeing it before deregistering — a two-line reordering — would hand the adapter a pointer into freed memory. Making the region own the buffer makes that ordering internal and unreachable from outside.</p>
+
+<h2>8 &nbsp; Construction and Failure</h2>
+
+<p>A constructor that cannot produce a valid object must throw; there is no return value. So a wrapper that acquires in its constructor throws when acquisition fails.</p>
+
+<pre>explicit ProtectionDomain(ibv_context *ctx) {
+    pd_ = ibv_alloc_pd(ctx);
+    if (!pd_) throw VerbsError("ibv_alloc_pd", errno);
+}</pre>
+
+<p>This is a real change from the previous three rungs, where every failure was a return code and a jump. Two things follow and both matter.</p>
+
+<p>First, the calling code gets simpler: failures propagate on their own and there is no cleanup to write, because any wrapper already constructed will be destroyed by unwinding. This is the payoff, and it is larger than it looks.</p>
+
+<p>Second, the program can now throw, which means the <code>goto cleanup</code> blocks in the three existing programs are no longer merely verbose — they are <em>incorrect</em>, because an exception would skip them entirely. R10's refactor is therefore not optional tidying; leaving the old cleanup in place alongside throwing constructors is worse than either alone.</p>
+
+<p>A single exception type carrying the operation name and the errno value is enough:</p>
+
+<pre>class VerbsError : public std::runtime_error {
+public:
+    VerbsError(const char *op, int err);
+    int error() const noexcept { return err_; }
+private:
+    int err_;
+};</pre>
+
+<p>The alternative — a factory function returning <code>std::optional</code> or <code>std::expected</code> and a private constructor — is defensible, avoids exceptions entirely, and is what some systems codebases require. It costs more boilerplate per type and is worth choosing deliberately rather than by default.</p>
+
+<h2>9 &nbsp; What This Layer Does Not Solve</h2>
+
+<p>Ownership of the buffer <em>during a transfer</em> is a different problem from ownership of the buffer's memory, and this layer does not address it.</p>
+
+<p>Between posting a work request and reaping its completion, the adapter is reading or writing the buffer.<span class="cite">[6]</span> No destructor can help: the object is alive, the memory is valid, and the hazard is concurrent access rather than lifetime. Expressing it in the type system requires a different mechanism — a handle type returned by <code>post()</code> that must be consumed by <code>wait()</code> before the buffer is reachable again, so that the unsafe access has no expression rather than merely being discouraged.</p>
+
+<p>That is a real design and this rung does not require it. What it does require, in the comprehension questions, is that you can describe why the two problems are different and what shape the second solution takes. Recognising which hazards RAII addresses and which it does not is the actual skill; applying RAII to everything is a way of believing you are safe.</p>
+
+<h2>10 &nbsp; Failure Modes</h2>
+
+<table>
+  <tr><th style="width:225px;">Symptom</th><th style="width:215px;">Cause</th><th>Resolution</th></tr>
+  <tr><td>Crash in a driver on exit, or a double free</td><td>A wrapper was copied. Copy operations were not deleted, or a function takes the type by value.</td><td>Delete both copy operations; the compiler then finds every accidental copy for you.</td></tr>
+  <tr><td>Compiles, but resources leak</td><td>A destructor was declared, which suppressed the implicit moves, so a "move" silently copied — or the object was never moved at all.</td><td>Declare all five special members explicitly.</td></tr>
+  <tr><td>Second destruction of a moved-from object</td><td>The move did not null the source.</td><td><code>std::exchange</code>, and a destructor that checks for null.</td></tr>
+  <tr><td>Move assignment leaks</td><td>The destination's existing resource was not released before adopting the source's.</td><td>Release first, then adopt. Guard against self-assignment.</td></tr>
+  <tr><td><code>std::terminate</code> during unwinding</td><td>A destructor threw.<span class="cite">[1][2]</span></td><td>Destructors report, never throw. Section 6.</td></tr>
+  <tr><td><code>EBUSY</code> reported from a destructor</td><td>Destruction order violated — members declared in the wrong order.</td><td>Reorder the declarations to creation order. The report is the layer working.</td></tr>
+  <tr><td>Type will not go into a <code>std::vector</code></td><td>Move operations not declared <code>noexcept</code>, so the container tries to copy and finds copying deleted.</td><td>Mark both moves <code>noexcept</code>.</td></tr>
+  <tr><td>Refactored program leaks where the C version did not</td><td>A throwing constructor now bypasses a surviving <code>goto cleanup</code> block.</td><td>Remove the manual cleanup entirely. Half-refactored is worse than either state.</td></tr>
+  <tr><td>Everything works, then breaks when a member is added</td><td>The new member was appended rather than placed in creation order.</td><td>Declaration order is the ordering contract. Adding to it is a deliberate act.</td></tr>
+</table>
+
+<h2>11 &nbsp; What Is Deliberately Left Out</h2>
+
+<p>No reference counting. Verbs resources have exactly one owner in this design, and shared ownership would reintroduce the question of when release happens — which is the question this layer exists to answer definitively.</p>
+
+<p>No thread safety. The wrappers are as thread-safe as a raw pointer: safe to use from one thread, unsafe to move from two. Nothing in this ladder is multithreaded.</p>
+
+<p>No allocator customisation, no polymorphism, no virtual destructors. These are concrete types with no inheritance, which is why none of them needs a virtual destructor and why all of them can be trivially movable.</p>
+
+<p>And, per section 9, no expression of transfer-time buffer ownership. That hazard survives this rung intact.</p>
+
+<h2>12 &nbsp; Further Reading</h2>
+
+<p><strong>Read before starting:</strong></p>
+<ul>
+  <li><strong>cppreference, "Destructors"</strong><span class="cite">[1]</span> — specifically the paragraphs on reverse-declaration-order member destruction and on the implicit exception specification. Two paragraphs, and the whole rung rests on them.</li>
+  <li><strong>CERT DCL57-CPP</strong><span class="cite">[2]</span> — why destructors must not throw, and why the <code>std::uncaught_exceptions</code> workaround is rejected. Short and unusually well argued.</li>
+</ul>
+
+<p><strong>Read while implementing:</strong></p>
+<ul>
+  <li><strong><em>A Tour of C++</em>, ch. 5–6</strong><span class="cite">[4]</span> — resource management, the rule of five, and move semantics, at exactly the depth this rung needs.</li>
+  <li><strong>cppreference on <code>std::exchange</code></strong><span class="cite">[7]</span> — one page; it is the idiom the move operations are written in.</li>
+</ul>
+
+<p><strong>Reference as needed:</strong></p>
+<ul>
+  <li><strong>ISO C++ FAQ, destructors section</strong><span class="cite">[3]</span> — good on the edge cases, particularly explicit destructor invocation and why you should not.</li>
+  <li><strong>The verbs manual pages for the destroy functions</strong><span class="cite">[5]</span> — the three return conventions your wrappers are normalising.</li>
+</ul>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] cppreference.com. <em>Destructors.</em> Normative summary of member destruction in reverse declaration order, the implicit exception specification of a destructor, and the call to <code>std::terminate</code> when a destructor throws during stack unwinding. Accessed 2026-07. https://en.cppreference.com/w/cpp/language/destructor</li>
+
+  <li>[2] Software Engineering Institute, Carnegie Mellon University. <em>DCL57-CPP: Do not let exceptions escape from destructors or deallocation functions.</em> SEI CERT C++ Coding Standard. Cites [class.dtor] paragraph 3 and [except.spec] paragraph 14 for the implicit <code>noexcept(true)</code> specification, and rejects the <code>std::uncaught_exception</code> workaround on the grounds that it can prevent the destructor from releasing its resource. Accessed 2026-07. https://wiki.sei.cmu.edu/confluence/display/cplusplus/DCL57-CPP.+Do+not+let+exceptions+escape+from+destructors+or+deallocation+functions</li>
+
+  <li>[3] Standard C++ Foundation. <em>ISO C++ FAQ — Destructors.</em> Accessed 2026-07. https://isocpp.org/wiki/faq/dtors</li>
+
+  <li>[4] Stroustrup, Bjarne. <em>A Tour of C++.</em> 3rd ed., Addison-Wesley, 2022. Ch. 5–6 for resource management, the rule of five, and move semantics; ch. 13 for the standard library facilities used here.</li>
+
+  <li>[5] <em>ibv_destroy_qp(3)</em>, <em>ibv_destroy_cq(3)</em>, <em>ibv_dereg_mr(3)</em>, <em>ibv_dealloc_pd(3)</em>, <em>ibv_close_device(3).</em> Linux manual pages, section 3. The three distinct return conventions tabulated in section 7, and the <code>EBUSY</code> condition that signals a destruction-order violation.</li>
+
+  <li>[6] <em>ibv_post_send(3).</em> Linux manual page, section 3. The normative statement that a buffer may only be reused after its work completion has been retrieved — the hazard section 9 identifies as outside this layer's reach. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+
+  <li>[7] cppreference.com. <em>std::exchange.</em> Accessed 2026-07. https://en.cppreference.com/w/cpp/utility/exchange</li>
+
+  <li>[8] cppreference.com. <em>Move constructors</em> and <em>Move assignment operator.</em> Including the rule that declaring a destructor suppresses the implicit move operations. Accessed 2026-07. https://en.cppreference.com/w/cpp/language/move_constructor</li>
+</ol>
+
+<div class="footer">
+  TRD-04: The RAII Layer &nbsp;|&nbsp; Prior Knowledge &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

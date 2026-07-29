@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-06: One-Sided Operations — Hints</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+.level-box { border: 2px solid #000; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
+.level-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-06: One-Sided Operations</h1>
+  <div class="subtitle">Hints &mdash; Limen RDMA Transport Project</div>
+  <div class="meta">Level 1 = nudge &nbsp;|&nbsp; Level 2 = stronger push &nbsp;|&nbsp; Try Level 1 for 15+ minutes before escalating</div>
+</div>
+
+<p>Level 1 points at the right place. Level 2 names the mechanism.</p>
+
+<p>The failure character of this rung is <em>plausible wrongness</em>. Most defects here produce a program that runs, completes, and reports success while having done something subtly different from what you intended &mdash; a write to the wrong address that happened to be registered, a notification scheme that works today and not under load. The defence is printing all four address-and-key fields from section 3 and checking whose each is, every time something behaves oddly.</p>
+
+<h2>H1 &mdash; Consume the Handshake Descriptor (R1)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The values already arrive &mdash; TRD-05 R7 exchanged them and printed them. The work is validation, and it is worth more than it looks: these three numbers crossed a network and were byte-order converted, and a mistake in either step produces a remote access error in R2 that implicates access flags rather than the conversion.</p>
+  <p>Check three things before posting anything. Two are obviously invalid values. The third is a bounds relationship between what you intend to write and what the peer advertised, and nothing in the API will check it for you.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>if (peer.addr == 0 || peer.rkey == 0) {
+    std::fprintf(stderr,
+        "peer descriptor invalid: addr=0x%016" PRIx64 " rkey=0x%08x\n"
+        "  the handshake did not deliver a usable region "
+        "(check the byte-order conversion in TRD-05 R7)\n",
+        peer.addr, peer.rkey);
+    return 3;
+}
+if (msg_size &gt; peer.length) {
+    std::fprintf(stderr, "message size %zu exceeds the peer's advertised %u bytes\n",
+                 msg_size, peer.length);
+    return 3;
+}</pre>
+  <p>Verify the round trip once, by hand, before trusting it: print the peer&rsquo;s <code>ConnInfo</code> on the client and the server&rsquo;s own region address and key on the server, and confirm they match. Four numbers, thirty seconds, and it eliminates the most confusing possible cause of an R2 failure.</p>
+</div>
+
+<h2>H2 &mdash; RDMA_WRITE (R2)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Start from TRD-03&rsquo;s <code>post_send</code>. Change the opcode and populate the union that was zeroed and unused there.</p>
+  <p>The scatter-gather entry is unchanged &mdash; it still describes <em>your</em> buffer with <em>your</em> local key. Only the two new fields describe the peer. If you find yourself putting a remote key into the scatter-gather entry, reread section 3&rsquo;s table.</p>
+  <p>Zero the work request structure before filling it, as always. The union has other members and stack contents in them produce failures that appear intermittently.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>static int post_write(ibv_qp *qp, ibv_mr *mr, void *buf, size_t len,
+                      uint64_t remote_addr, uint32_t rkey, uint64_t id)
+{
+    ibv_sge sge{};
+    sge.addr   = (uintptr_t)buf;        /* YOUR buffer  */
+    sge.length = (uint32_t)len;
+    sge.lkey   = mr-&gt;lkey;              /* YOUR key     */
+
+    ibv_send_wr wr{};
+    wr.wr_id               = id;
+    wr.sg_list             = &amp;sge;
+    wr.num_sge             = 1;
+    wr.opcode              = IBV_WR_RDMA_WRITE;
+    wr.send_flags          = IBV_SEND_SIGNALED;
+    wr.wr.rdma.remote_addr = remote_addr;   /* THEIR address */
+    wr.wr.rdma.rkey        = rkey;          /* THEIR key     */
+
+    ibv_send_wr *bad = nullptr;
+    return ibv_post_send(qp, &amp;wr, &amp;bad);
+}</pre>
+  <p>Write into the peer&rsquo;s region at the base address for iteration 0, or at an offset if you want each iteration in its own slot. Either is fine; document which, because the server&rsquo;s verification has to agree.</p>
+  <p>Fill with TRD-03 R7&rsquo;s iteration-encoded pattern so the server can distinguish &ldquo;the right data arrived&rdquo; from &ldquo;some data arrived.&rdquo;</p>
+</div>
+
+<h2>H3 &mdash; Prove the Receiver Was Passive (R3)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>This requirement is mostly about what the server does <em>not</em> do. Its loop posts nothing and polls nothing during the transfer.</p>
+  <p>Which raises the practical question the requirement is really about: if the server is not polling, how does it know when to stop waiting and verify? There is no notification &mdash; that is the point. You need something outside the RDMA path.</p>
+  <p>You already have exactly that thing from TRD-05, still open, and used for one byte in TRD-03.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <p>The server waits on the connection manager&rsquo;s <code>DISCONNECTED</code> event, or on a single trailing two-sided <code>SEND</code> from the client after the writes finish. Either is honest, and both keep the completion queue empty during the transfer itself.</p>
+  <pre>/* server, mode=write */
+std::printf("onesided: passive (mode=write) &mdash; posting no receives, "
+            "polling no completions\n");
+
+/* ... wait for the client to signal completion out of band ... */
+
+int reaped = 0;
+ibv_wc wc;
+while (ibv_poll_cq(cq, 1, &amp;wc) &gt; 0) ++reaped;   /* drain: must be 0 */
+std::printf("remote-completions: %d\n", reaped);
+
+size_t bad = verify_pattern(rx_buf, msg_size, iterations - 1);
+std::printf("verify: buffer contents %s expected pattern for %u iterations\n",
+            bad ? "DO NOT match" : "match", iterations);</pre>
+  <p>Drain the completion queue <em>after</em> the transfer and assert the count is zero. That is stronger than not polling: it proves nothing was there to poll.</p>
+  <p>Worth pausing on when it works. The server&rsquo;s process did not execute a single instruction on behalf of a hundred transfers, its completion queue is empty, and its memory contains data it was never told about. That is the property this ladder has been building toward for six rungs.</p>
+</div>
+
+<h2>H4 &mdash; RDMA_READ (R4)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Structurally identical to H2 with one opcode changed. The conceptual reversal is the thing to hold onto: the scatter-gather list is now a <em>destination</em>.</p>
+  <p>That reversal has a consequence for your own memory region&rsquo;s access flags. Work out which flag your local region needs before running it, rather than after reading the error.</p>
+  <p>Your completion means something stronger here than on a write: the data is present in your buffer and readable. There is no separate notification problem for reads &mdash; which is worth noticing, because it is why reads are sometimes preferred despite costing a round trip.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>wr.opcode              = IBV_WR_RDMA_READ;
+wr.wr.rdma.remote_addr = peer.addr;     /* fetch FROM here */
+wr.wr.rdma.rkey        = peer.rkey;
+/* sge now describes where the data LANDS */</pre>
+  <p>Your local region needs <code>IBV_ACCESS_LOCAL_WRITE</code>, because your own adapter writes into it. It already has that flag if you followed TRD-03 H1; if you registered a send-only buffer without it, the read fails with <code>IBV_WC_LOC_PROT_ERR</code>.</p>
+  <p>For the server side, write a known pattern into its own buffer <em>before</em> the client connects, so there is something distinctive to retrieve. Verify on the client against that same pattern.</p>
+  <p>The server is passive here too. Report <code>remote-completions: 0</code> exactly as in R3.</p>
+</div>
+
+<h2>H5 &mdash; The Separate Flag Write (R5)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Two posts per iteration, in order: payload, then flag. The ordering guarantee that makes this correct is between the two <em>requests</em>, not within either of them &mdash; section 6 of the Prior Knowledge document is precise about the distinction and R5 asks you to restate it.</p>
+  <p>Decide where the flag lives. It must not overlap the payload, and both sides must agree on the offset without further negotiation, since the handshake is already over.</p>
+  <p>On the server, the polling loop reads a location the adapter is writing concurrently. Think about what the compiler is entitled to assume about a variable it cannot see being modified, and what that means for a naive <code>while</code> loop.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>/* Convention: the flag is the last 8 bytes of the advertised region. */
+const uint64_t flag_off  = peer.length - sizeof(uint64_t);
+const uint64_t flag_addr = peer.addr + flag_off;
+
+/* per iteration, in this order */
+post_write(qp, tx_mr, tx_buf, msg_size, peer.addr, peer.rkey, WRID_PAYLOAD);
+uint64_t token = iteration + 1;              /* never 0 */
+std::memcpy(flag_buf, &amp;token, sizeof token);
+post_write(qp, tx_mr, flag_buf, sizeof token, flag_addr, peer.rkey, WRID_FLAG);</pre>
+  <p>Server side:</p>
+  <pre>auto *flag = reinterpret_cast&lt;volatile uint64_t *&gt;(
+                 static_cast&lt;char *&gt;(rx_buf) + flag_off);
+
+for (unsigned i = 1; i &lt;= iterations; ++i) {
+    while (*flag != i) { /* spin */ }        /* volatile: reread every time */
+    std::atomic_thread_fence(std::memory_order_acquire);
+    verify_pattern(rx_buf, msg_size, i - 1);
+}</pre>
+  <p><code>volatile</code> stops the compiler hoisting the load out of the loop &mdash; without it the loop may read once and spin forever on a stale value. The acquire fence orders your subsequent payload reads after the flag read; the adapter&rsquo;s write ordering is guaranteed, but your own CPU&rsquo;s load ordering is not.</p>
+  <p>Start the token at 1 so a zeroed buffer is never mistaken for iteration 0 having arrived.</p>
+  <p>For the notes, the explanation R5 wants: write-class work requests within one send queue are totally ordered, so the flag write &mdash; a separate message posted after the payload write &mdash; cannot be placed before the payload write completes. Observing the flag therefore implies the payload is entirely present.</p>
+</div>
+
+<h2>H6 &mdash; Write With Immediate (R6)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>One opcode change from H2, plus a field. The field is four bytes and travels in network byte order like everything else that crosses machines.</p>
+  <p>The server side is not new work &mdash; it is TRD-03&rsquo;s receive-and-poll loop, unchanged, because this opcode consumes a receive and produces a completion exactly as a <code>SEND</code> does. If you deleted that code when writing R3&rsquo;s passive server, you need it back for this mode.</p>
+  <p>The completion&rsquo;s opcode will not be the one you posted. Look at what the receiving side actually reports and handle it explicitly.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>wr.opcode   = IBV_WR_RDMA_WRITE_WITH_IMM;
+wr.imm_data = htobe32(iteration);</pre>
+  <p>Server, having posted receives beforehand exactly as in TRD-03:</p>
+  <pre>ibv_wc wc;
+if (wait_completion(cq, &amp;wc, 10) == 1 &amp;&amp; wc.status == IBV_WC_SUCCESS) {
+    if (wc.opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
+        uint32_t iter = be32toh(wc.imm_data);
+        verify_pattern(rx_buf, msg_size, iter);
+        post_recv(...);                      /* replenish, as in TRD-03 R6 */
+        ++remote_completions;
+    }
+}</pre>
+  <p>The receiving opcode is <code>IBV_WC_RECV_RDMA_WITH_IMM</code>, not <code>IBV_WC_RDMA_WRITE</code>. Note also that <code>byte_len</code> on this completion reports the bytes written by the RDMA operation, which is useful and is not true of a plain write, because a plain write produces no remote completion at all.</p>
+  <p>Post receives <em>before</em> the client starts, and replenish before the peer can send again &mdash; TRD-03 R6&rsquo;s ordering rule applies unchanged. Getting it wrong here costs 655&nbsp;ms per retry rather than 0.64&nbsp;ms, because the connection manager fixed the timer.</p>
+</div>
+
+<h2>H7 &mdash; Demonstrate That Last-Byte Polling Is Wrong (R7)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Implement it as written &mdash; the server polls the final byte of the payload region and treats a change as arrival. Same <code>volatile</code> consideration as H5.</p>
+  <p>Then run it twice, at a small size and at the largest your region allows, and record both outcomes honestly. Expect it to pass. The requirement is not to make it fail; it is to understand why a passing test proves nothing.</p>
+  <p>To make the failure more likely if you want to try: use the largest size you can, run many iterations, and load the machine. You may still not see it, and that is the lesson rather than an obstacle to it.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>auto *last = reinterpret_cast&lt;volatile unsigned char *&gt;(
+                 static_cast&lt;char *&gt;(rx_buf) + msg_size - 1);
+unsigned char want = expected_last_byte(iteration);
+while (*last != want) { /* spin */ }
+size_t bad = verify_pattern(rx_buf, msg_size, iteration);   /* may be non-zero */</pre>
+  <p>Record something of this shape in <code>docs/onesided-notes.md</code>:</p>
+  <pre>mode=lastbyte, size=64:      100 iterations, 0 mismatches
+mode=lastbyte, size=1048576: 100 iterations, 0 mismatches
+
+Both passed. This does not make the technique correct. Byte placement
+order within a single RDMA write is not guaranteed &mdash; RC guarantees
+ordering between messages, not within one. A large write may be
+segmented and nothing requires the final segment to land last. My test
+did not provoke the reordering; on a hardware adapter with real
+segmentation, under load, it eventually will, and the symptom is a
+reader observing a torn buffer with no error reported anywhere.</pre>
+  <p>The general habit is the thing to take: a test that passes establishes that you did not provoke the failure, which is different from establishing that the failure cannot occur. Whether that difference matters depends on whether the correctness argument comes from the specification or from the observation &mdash; and here it comes from neither, because the specification says the opposite.</p>
+</div>
+
+<h2>H8 &mdash; Access Control Failure (R8)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Corrupting the key is one line. The requirement is the diagnostic, because the error you get back names nothing.</p>
+  <p>Reuse TRD-03&rsquo;s restricted error printing &mdash; only four completion fields are valid on a failure &mdash; and TRD-03&rsquo;s queue-pair state readback, which will show the connection is finished.</p>
+  <p>The message should name both access gates, because the error cannot distinguish them and a reader hitting this for real needs to check both.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>uint32_t rkey = peer.rkey;
+if (opt_bad_rkey) {
+    rkey ^= 0xdeadbeefu;
+    std::printf("bad-rkey: using 0x%08x instead of 0x%08x\n", rkey, peer.rkey);
+}</pre>
+  <p>On the failure, alongside TRD-03 R5&rsquo;s four-field error line:</p>
+  <pre>fprintf(stderr,
+  "  remote_addr=0x%016" PRIx64 " rkey=0x%08x length=%zu\n"
+  "  REM_ACCESS_ERR does not say which gate refused. Check both:\n"
+  "    1. the peer's qp_access_flags (set at INIT, or via rdma_conn_param)\n"
+  "    2. the peer's memory region flags (set at ibv_reg_mr)\n",
+  remote_addr, rkey, msg_size);</pre>
+  <p>Expect <code>IBV_WC_REM_ACCESS_ERR</code>. The queue pair will be in the error state afterwards &mdash; TRD-03 section 9 &mdash; so exit rather than attempting another operation.</p>
+</div>
+
+<h2>H9 &mdash; Bounded Outstanding Reads (R9)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>If you post one read at a time and wait for each completion, you cannot exceed the limit and the requirement is satisfied by reporting it. That is a legitimate implementation.</p>
+  <p>The value comes from two places depending on which path established the connection, and you set both at some point &mdash; one in TRD-02, one in TRD-05. They are the same constraint under different names.</p>
+  <p>Note which of the two device attributes bounds the initiating side; there are two and they are not interchangeable.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>uint32_t depth = std::min&lt;uint32_t&gt;(1, da.max_qp_init_rd_atom);
+std::printf("onesided: mode=%s iterations=%u size=%zu max_outstanding_reads=%u\n",
+            mode_name, iterations, msg_size, depth);</pre>
+  <p><code>max_qp_init_rd_atom</code> bounds reads you initiate; <code>max_qp_rd_atom</code> bounds reads you serve. Through the connection manager these are <code>initiator_depth</code> and <code>responder_resources</code> in <code>rdma_conn_param</code>, which TRD-05 H8 populated.</p>
+  <p>To confirm the limit is real, temporarily post two reads without reaping between them and watch the transport error. Then remove it &mdash; TRD-07 pipelines against this bound deliberately and it is worth having seen what exceeding it does first.</p>
+</div>
+
+<h2>H10 &mdash; Teardown, Regressions, Leaks (R10)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Teardown needs no new work. The RAII layer already owns every resource this rung uses, which is the return on TRD-04 becoming visible &mdash; a new program with new operations and no cleanup code at all.</p>
+  <p>Both regression suites should pass without being touched, because this rung adds a program rather than changing one. If either fails, look for something shared that you modified &mdash; a header, the connection setup you factored out, the pattern helpers.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>./scripts/trd-03-tests.sh --dev rxe0 --gid 3 --peer 10.0.0.1 --ssh you@10.0.0.1
+./scripts/trd-05-tests.sh --dev rxe0 --gid 3 --peer 10.0.0.1 --ssh you@10.0.0.1</pre>
+  <pre>valgrind --leak-check=full ./build/limen_onesided -d rxe0 --mode write -n 20 10.0.0.1
+valgrind --leak-check=full ./build/limen_onesided -d rxe0 --mode read  -n 20 10.0.0.1
+valgrind --leak-check=full ./build/limen_onesided -d rxe0 --bad-rkey -n 5 10.0.0.1</pre>
+  <p>The third is the one worth watching: it exits through an error path with a queue pair in the error state, and that path is the least exercised.</p>
+</div>
+
+<h2>Debugging This TRD</h2>
+
+<table>
+  <tr><th style="width:235px;">Question</th><th>Instrument</th></tr>
+  <tr><td><code>REM_ACCESS_ERR</code> and the flags look right</td><td>Print all four fields from section 3 and check whose each is. A local key in the rkey field is the most common cause and looks entirely normal in source.</td></tr>
+  <tr><td>Did the write actually land?</td><td>Have the server dump the first sixteen bytes of its buffer after the run. Bytes present with no completion anywhere is the demonstration working.</td></tr>
+  <tr><td>Server spins forever on the flag</td><td>Missing <code>volatile</code> &mdash; the compiler hoisted the load. Check the disassembly if unsure.</td></tr>
+  <tr><td>Immediate mode hangs</td><td>No receive posted. It consumes one. 655&nbsp;ms per retry now, so it looks like a hang rather than a stall.</td></tr>
+  <tr><td>Read returns zeros</td><td>Server never wrote its buffer, or you read from the wrong offset. Have the server print what it staged.</td></tr>
+  <tr><td>Wrong data, no error</td><td>Address arithmetic. Print <code>remote_addr</code> per iteration and check it against the advertised base and length.</td></tr>
+  <tr><td>Is anything on the wire?</td><td><code>sudo tcpdump -i &lt;iface&gt; -n udp port 4791 -c 20</code> &mdash; the same capture as TRD-00 R4, now showing one-sided traffic.</td></tr>
+  <tr><td>Does the reference still work?</td><td><code>ib_write_bw -d rxe0</code> and <code>ib_read_bw -d rxe0</code>. Same discipline as every rung: establish the fabric before debugging yourself.</td></tr>
+</table>
+
+<div class="callout">
+  <div class="callout-label">The most useful check on this rung</div>
+  <p>Print the four address-and-key fields &mdash; local address, local key, remote address, remote key &mdash; on every posted operation while developing. Nearly every defect here is one of them holding a value that belongs to the other machine, and that mistake is invisible in source because both are just integers.</p>
+</div>
+
+<h2>The Tool Boundary</h2>
+
+<p>This rung rewards suspicion of success. An operation that completes with <code>IBV_WC_SUCCESS</code> proves the adapter accepted it, not that it did what you meant &mdash; a write to a wrong-but-registered address succeeds. Verify contents, not completions.</p>
+
+<p>An AI assistant is appropriate for reviewing code once it works, clarifying a concept a document left unclear, and grading comprehension answers. It is not appropriate for writing or debugging the implementation.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_post_send(3).</em> Linux manual page, section 3. The <code>wr.rdma</code> union populated in H2 and H4, the immediate-data field in H6, and the fence flag referenced in H9. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+
+  <li>[2] Barak, Dotan. <em>RDMAmojo &mdash; Fence.</em> The byte-ordering claim behind H7&rsquo;s explanation. Accessed 2026-07. https://www.rdmamojo.com/2013/12/06/fence/</li>
+
+  <li>[3] Barak, Dotan. <em>RDMAmojo &mdash; ibv_post_send().</em> That immediate data consumes a receive request on the remote queue pair, as H6 depends on. Accessed 2026-07. https://www.rdmamojo.com/2013/01/26/ibv_post_send/</li>
+
+  <li>[4] <em>ibv_poll_cq(3).</em> Linux manual page, section 3. The completion opcodes and the field-validity rule reused in H3 and H6.</li>
+
+  <li>[5] <em>ibv_reg_mr(3).</em> Linux manual page, section 3. The local write requirement for read destinations noted in H4.</li>
+
+  <li>[6] Reda, Waleed, et al. <em>RDMA is Turing complete, we just did not know it yet.</em> arXiv. The total ordering of write-class work requests that H5&rsquo;s correctness argument rests on. Accessed 2026-07. https://arxiv.org/pdf/2103.13351</li>
+</ol>
+
+<div class="footer">
+  TRD-06: One-Sided Operations &nbsp;|&nbsp; Hints &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

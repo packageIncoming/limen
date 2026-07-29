@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-00: Fabric Up — Comprehension</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.hint-ref { border: 1px solid #000; padding: 3px 8px; margin: 6px 0 2px 0; font-size: 9pt; font-style: italic; display: inline-block; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+.answer-key { page-break-before: always; }
+.qa-block { border: 1.5px solid #000; padding: 12px 14px; margin: 14px 0; page-break-inside: avoid; }
+.qa-block .qa-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px; }
+.qa-miss { border-left: 4px solid #000; padding: 6px 12px; margin: 8px 0 0 0; font-size: 9.5pt; font-style: italic; }
+@media print { body { padding: 0; } table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-00: Fabric Up</h1>
+  <div class="subtitle">Comprehension — Limen RDMA Transport Project</div>
+  <div class="meta">8 questions &nbsp;|&nbsp; Answer in writing before the key &nbsp;|&nbsp; Est.: 45&ndash;70 minutes</div>
+</div>
+
+<h2>Questions</h2>
+
+<p><strong>Q1.</strong> What is <code>rxe0</code>, concretely? Name what sits between an <code>ibv_post_send</code> call and the physical wire on Soft-RoCE that would not be there on a hardware adapter, and say which of RDMA&rsquo;s three defining properties that layer eliminates.</p>
+
+<p><strong>Q2.</strong> RoCEv2 rides UDP port 4791. Reliable-connected queue pairs guarantee ordered, reliable, non-duplicated delivery. Why UDP rather than TCP, and where does the reliability actually come from?</p>
+
+<p><strong>Q3.</strong> What is a GID? Explain why a single RoCE port has more than one entry in its GID table, why you had to choose one in R1, and why <code>rping</code> in R3 did not ask you for it.</p>
+
+<p><strong>Q4.</strong> Your R4 packet capture succeeded. On a hardware RDMA adapter the same command typically shows nothing. Explain both facts with one mechanism, and say what that tells you about which of the three properties from Q1 this fabric actually has.</p>
+
+<p><strong>Q5.</strong> R6 compared RDMA against TCP over the same link. State which won on your fabric, then explain the result. Then say what the comparison would look like on a hardware adapter and why.</p>
+
+<p><strong>Q6.</strong> <code>ibv_devinfo</code> reports <code>transport: InfiniBand (0)</code> and <code>link_layer: Ethernet</code> on the same port. Explain why this is not a contradiction, and what each field is actually describing.</p>
+
+<p><strong>Q7.</strong> R2 and R3 both proved the fabric moves bytes, and both were required. What does a failure of exactly one tell you that a failure of both does not? Give the specific diagnosis implied by each single-failure case.</p>
+
+<p><strong>Q8.</strong> Two-sided and one-sided operations both move bytes between machines. Describe precisely what &ldquo;the remote CPU is not involved&rdquo; means for a one-sided operation &mdash; not merely that it is idle. Then name one problem this creates that has no equivalent in the sockets model.</p>
+
+<hr>
+
+<p><em>Answer all eight in writing before turning the page. Writing is the point &mdash; an answer that feels clear in your head and falls apart on paper was never clear. Then compare against the key. Where your answer is thinner than the key&rsquo;s, reread the Prior Knowledge section named at the end of that answer before starting TRD-01. Where you disagree with the key and can defend the disagreement, that is a good sign rather than a wrong answer.</em></p>
+
+<div class="answer-key">
+
+<h2>Answer Key</h2>
+
+<div class="qa-block">
+  <div class="qa-label">Q1 &mdash; Answer</div>
+  <p><code>rxe0</code> is not a device. It is a software provider registered with the kernel&rsquo;s RDMA subsystem that presents the same interface a hardware adapter would present, and implements the RoCEv2 transport in kernel code over an ordinary Ethernet interface.</p>
+  <p>What sits between a posted work request and the wire is <strong>the kernel itself</strong> &mdash; specifically <code>rdma_rxe</code>&rsquo;s processing threads, and then the entire ordinary Linux network stack. On a hardware adapter, posting a work request means writing a descriptor into a queue in mapped memory and ringing a doorbell; the adapter reads the descriptor, performs direct memory access against the registered buffer, and transmits. No kernel code executes. On <code>rxe</code>, the &ldquo;adapter&rdquo; is kernel threads reading the same descriptor, copying the payload through the network stack, and handing it to the netdev driver.</p>
+  <p>The property eliminated is <strong>kernel bypass</strong>. Zero copy goes with it as a consequence, since the software path copies. Remote CPU bypass is preserved at the API level &mdash; a one-sided write still requires no participation from the remote application &mdash; but not in reality, because the remote kernel does the work the remote adapter would otherwise do.</p>
+  <div class="qa-miss">Common miss: describing <code>rxe</code> as an emulator or simulator. It is neither. It is a complete, conformant implementation of the same specification, and its packets are indistinguishable on the wire from a hardware adapter&rsquo;s &mdash; which is exactly what your R4 capture showed. Only the performance differs. That distinction is why your code will transfer to hardware unchanged.</div>
+  <p><em>Covered in Prior Knowledge &sect;7 and &sect;9. Demonstrated by R4 and R6.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q2 &mdash; Answer</div>
+  <p>UDP is used purely as an encapsulation, not as a transport. It contributes exactly two things: a routable IP header, so RoCEv2 can cross subnets where RoCEv1&rsquo;s raw Ethernet framing could not, and a port number letting the receiving stack demultiplex RoCE traffic from everything else. Your R4 capture saw both.</p>
+  <p>The reliability comes from the InfiniBand transport headers carried <em>inside</em> the UDP payload &mdash; sequence numbers, acknowledgements, and retransmission, implemented by the adapter exactly as on native InfiniBand. UDP is not asked to provide any of it.</p>
+  <p>TCP would be wrong for two reasons. It would duplicate reliability the InfiniBand transport already provides, paying twice for one guarantee. And more fundamentally, TCP is a byte-stream abstraction with kernel-managed connection state &mdash; precisely the thing RDMA exists to bypass. Putting the transport in the adapter is the whole design; layering it on a kernel-managed stream protocol would reintroduce the CPU on the data path.</p>
+  <div class="qa-miss">Common miss: &ldquo;UDP is faster than TCP, so they used UDP.&rdquo; Speed is not the reason and the comparison is not meaningful &mdash; the InfiniBand transport does the reliability work either way. The real answer is about layering: UDP is the thinnest available wrapper supplying routing and demultiplexing, and nothing else was wanted from it.</div>
+  <p><em>Covered in Prior Knowledge &sect;8, and normatively in reference [1].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q3 &mdash; Answer</div>
+  <p>A GID is a Global Identifier: a 128-bit value identifying an RDMA port, inherited from InfiniBand&rsquo;s addressing scheme. In RoCE it is not independent &mdash; it is derived from the interface&rsquo;s IP address, with IPv4 addresses appearing as IPv4-mapped IPv6 addresses. That is why the correct entry ended in your dotted-quad in hex.</p>
+  <p>A port has multiple entries because the same IP address is representable under more than one RoCE version and address family. A typical <code>rxe</code> port carries a RoCEv1 entry and a RoCEv2 entry for the IPv4 address, plus entries for any IPv6 addresses. They are different indices naming the same interface under different encapsulation rules, so choosing wrongly produces a connection attempt that is well-formed and reaches nothing.</p>
+  <p><strong>Why R2 asked and R3 did not:</strong> <code>ibv_rc_pingpong</code> uses raw verbs, where the GID is a field you fill into an address vector during the transition to Ready-To-Receive. Nothing chooses it for you, so the tool exposes it as an argument. <code>rping</code> uses the connection manager, which resolves an IP address to a device, a port, and the correct GID index on your behalf. That resolution is the primary service the connection manager provides, and it is why TRD-05 deletes a substantial amount of code you will have written by then.</p>
+  <div class="qa-miss">Common miss: treating index 0 as a default that ought to work. Index 0 is RoCEv1 on many configurations, and RoCEv1 is not routable. If both ends happen to pick the same wrong index it can appear to work on a flat network and fail the moment a router is involved.</div>
+  <p><em>Covered in Prior Knowledge &sect;8. Exercised by R1 and R3.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q4 &mdash; Answer</div>
+  <p>One mechanism explains both: <strong>whether the packets pass through the host&rsquo;s network stack.</strong></p>
+  <p>On Soft-RoCE the provider is kernel code. It builds the RoCEv2 encapsulation in software and hands the result to the ordinary network stack for transmission, exactly as any other UDP datagram. A packet sniffer attaches to that stack, so it sees them. Your capture succeeded.</p>
+  <p>On a hardware adapter, the adapter builds and transmits those packets itself. The host stack is never involved on the data path &mdash; that is what kernel bypass <em>means</em> &mdash; so there is nothing for a sniffer attached to the host stack to observe. Practitioners resort to vendor tools such as <code>ibdump</code>, or to a switch mirror port capturing off the wire rather than off the host.</p>
+  <p><strong>What it tells you:</strong> this fabric does <em>not</em> have kernel bypass. The capture is a direct measurement of its absence. On hardware, the failure of the same command would be evidence of its presence &mdash; a rare case where a tool producing no output is the informative result.</p>
+  <p>It is worth noticing that this makes Soft-RoCE far more debuggable than hardware. Being able to read the wire format directly is a genuine advantage for learning, and it exists precisely because the performance property you eventually want is missing.</p>
+  <div class="qa-miss">Common miss: attributing the hardware case to encryption, or to the traffic &ldquo;not being real packets.&rdquo; The packets are ordinary UDP and identical in format on both fabrics. The difference is entirely about which component transmits them and therefore where they can be observed.</div>
+  <p><em>Covered in Prior Knowledge &sect;7 and &sect;9. Measured by R4.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q5 &mdash; Answer</div>
+  <p><strong>TCP almost certainly won,</strong> and frequently by a wide margin. If your measurement disagreed, say so and account for it &mdash; but the expected result on soft-RoCE is that ordinary sockets beat RDMA.</p>
+  <p>The reason: TCP over a virtual link is a mature, heavily optimised kernel path with segmentation offload and decades of tuning. Soft-RoCE runs the <em>entire</em> InfiniBand transport in software &mdash; queue-pair state machines, sequence numbering, acknowledgements, encapsulation &mdash; and then hands the result to that same kernel network stack. It performs strictly more work over the same wire, using the same CPU, to move the same bytes.</p>
+  <p>Which is precisely why the comparison was worth making. Measuring only the RDMA number invites the conclusion that the technology is slow. The comparison shows instead that <em>this implementation</em> is slow, and names exactly what is missing: RDMA&rsquo;s advantage comes from hardware performing the transport work and writing directly into memory. Remove the hardware and you retain all the protocol cost and none of the benefit.</p>
+  <p><strong>On hardware the comparison inverts, decisively.</strong> The adapter performs the transport in silicon and writes directly into registered memory, so the CPU cost per transfer approaches zero and latency drops from tens of microseconds to one or two &mdash; roughly an order of magnitude better than TCP on the same link, with a fraction of the CPU. The gap is largest exactly where soft-RoCE is worst: small messages at high rates, where per-message software cost dominates.</p>
+  <div class="qa-miss">Common miss: reporting the numbers without explaining them, or worse, assuming RDMA won and writing the explanation for a result you did not measure. R6 exists to make you confront a counter-intuitive measurement honestly, and an explanation that does not match your own data has skipped the exercise.</div>
+  <p><em>Covered in Prior Knowledge &sect;9 and &sect;13. Measured by R5 and R6.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q6 &mdash; Answer</div>
+  <p>The two fields describe different layers, and the apparent conflict comes from reading both as &ldquo;what kind of network is this.&rdquo;</p>
+  <p><code>link_layer</code> describes the physical and data-link technology carrying frames: Ethernet here, as opposed to InfiniBand&rsquo;s own link layer on a native fabric.</p>
+  <p><code>transport</code> describes which transport protocol&rsquo;s semantics the adapter implements above that link: queue pairs, work requests, completions, the reliable-connected service, memory keys. That protocol is defined by the InfiniBand architecture specification, and RoCE reuses it without modification.</p>
+  <p>So the port correctly reports that it speaks the InfiniBand transport over an Ethernet link, which is the definition of RoCE. This is not an <code>rxe</code> quirk &mdash; a hardware RoCE adapter reports the same pair. It is also why the API is called verbs rather than something Ethernet-flavoured, and why InfiniBand documentation applies almost entirely to RoCE programming.</p>
+  <div class="qa-miss">Common miss: concluding the device is misconfigured and trying to fix the transport field. There is nothing to fix. A related miss is assuming InfiniBand documentation is therefore inapplicable &mdash; the opposite is true, and it is why the specification and the vendor programming manual are primary references for a project that never touches InfiniBand hardware.</div>
+  <p><em>Covered in Prior Knowledge &sect;8 and &sect;11. Observed in S9.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q7 &mdash; Answer</div>
+  <p>Failure of both means the fault is below both tools: no device, port down, wrong interface bound, firewall dropping 4791, or no route between the nodes. Everything they share is suspect and nothing is eliminated. That is a setup problem, not a requirement problem.</p>
+  <p>Failure of exactly one eliminates the entire shared substrate and isolates the fault to what the two tools do differently &mdash; which is only connection establishment, since the data path is identical.</p>
+  <ul>
+    <li><strong>R2 fails, R3 passes.</strong> The fabric works and the connection manager can establish connections over it. The fault is in raw-verbs connection setup, and in practice it is almost always the GID index: the connection manager chose correctly and you did not. Diagnosis is to revisit R1 &mdash; and note that the failure tells you your <em>reasoning</em> was wrong, not merely your number.</li>
+    <li><strong>R3 fails, R2 passes.</strong> The fabric works and raw verbs can move data over it. The fault is in the connection-manager path specifically, which means <code>rdma_ucm</code> is not loaded or <code>/dev/infiniband/rdma_cm</code> does not exist. The data path is proven, so nothing about the device or the network is in question.</li>
+  </ul>
+  <p>This is the design principle behind the whole rung: each check that passes eliminates a class of cause for the next one&rsquo;s failure. It is also why the two are separate requirements rather than one &mdash; running only one converts an unhelpful &ldquo;it does not work&rdquo; into nothing at all.</p>
+  <div class="qa-miss">Common miss: treating the two tools as redundant because both move bytes. They share a data path and differ in connection setup. A learner who skips R3 will hit a connection-manager problem in TRD-05 with no evidence the fabric underneath was ever fine.</div>
+  <p><em>Covered in Prior Knowledge &sect;11 and &sect;12. Exercised by R2 and R3.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q8 &mdash; Answer</div>
+  <p>For a one-sided operation, &ldquo;not involved&rdquo; means the remote CPU executes no instructions on behalf of the transfer and receives no notification that it occurred. The initiating side&rsquo;s work request carries both the payload and the destination virtual address together with a remote key. The remote adapter validates the key against its registered regions and writes directly into that memory. It generates no completion on the remote completion queue, raises no interrupt, and schedules nothing. The remote application, watching its own completion queue, would see nothing at all.</p>
+  <p>Contrast two-sided, where the receiver must have posted a receive work request in advance, the receiving adapter consumes that posted buffer, and the receiver reaps a completion telling it data arrived and how much. The receiver chooses the destination address and learns of the event.</p>
+  <p><strong>The problem this creates:</strong> there is no notification, so the receiver cannot know its memory changed. Sockets never has this problem &mdash; data arriving is inherently an event the receiver observes, because observing it is how the data is obtained. With one-sided operations the application must construct its own signalling: polling a flag byte the sender writes last, using a subsequent small send as a doorbell, or using the immediate-data variant that does produce a remote completion. Every one of those is a protocol you design and can get wrong, and getting it wrong produces a reader observing a partially written buffer.</p>
+  <p>An equally valid answer is the trust boundary: handing a peer a remote key grants it unsupervised write access to a region of your address space for the connection&rsquo;s lifetime, with no per-operation check by your software. There is no sockets equivalent, because a sockets peer can only hand you bytes you chose to read.</p>
+  <div class="qa-miss">Common miss: &ldquo;the remote CPU is idle, so it can do other work.&rdquo; That describes a benefit and misses the mechanism &mdash; and it is not reliably true, since the remote CPU may be busy with anything. The point is not spare capacity; it is that the remote side is <em>unaware</em>, and unawareness is what forces you to build signalling on top.</div>
+  <p><em>Covered in Prior Knowledge &sect;7. Built in TRD-03 (two-sided) and TRD-06 (one-sided).</em></p>
+</div>
+
+<h2>References Cited in This Key</h2>
+
+<ol class="refs">
+  <li>[1] InfiniBand Trade Association. <em>InfiniBand Architecture Specification, Volume 1.</em> Annexes A16 and A17. https://www.infinibandta.org/ibta-specification/</li>
+  <li>[3] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual.</em> Chapters on GID addressing and queue-pair state transitions.</li>
+  <li>[4] <em>rxe(7).</em> Linux manual page, section 7.</li>
+</ol>
+
+<p style="font-size:9pt; font-style:italic;">Numbering matches the reference list in the TRD-00 Prior Knowledge document.</p>
+
+</div>
+
+<div class="footer">
+  TRD-00: Fabric Up &nbsp;|&nbsp; Comprehension &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

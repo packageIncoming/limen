@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-08: Benchmark Harness — Comprehension</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+.answer-key { page-break-before: always; }
+.qa-block { border: 1.5px solid #000; padding: 12px 14px; margin: 14px 0; page-break-inside: avoid; }
+.qa-block .qa-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px; }
+.qa-miss { border-left: 4px solid #000; padding: 6px 12px; margin: 8px 0 0 0; font-size: 9.5pt; font-style: italic; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-08: Benchmark Harness</h1>
+  <div class="subtitle">Comprehension &mdash; Limen RDMA Transport Project</div>
+  <div class="meta">8 questions &nbsp;|&nbsp; Answer in writing before the key &nbsp;|&nbsp; Est.: 60&ndash;85 minutes</div>
+</div>
+
+<h2>Questions</h2>
+
+<p><strong>Q1.</strong> Explain coordinated omission: the mechanism, a worked example with numbers showing how badly it distorts a high percentile, and the two defences. Say which defence you implemented and why the other was not sufficient alone.</p>
+
+<p><strong>Q2.</strong> Your harness reports both a median and a mean. Explain what each tells you, what their ratio tells you, and why a report giving only the mean is worse than useless rather than merely incomplete.</p>
+
+<p><strong>Q3.</strong> R8 required you to validate against a reference implementation before trusting any of your own numbers. Explain why that ordering matters, and describe what you would have concluded from your sweeps had your harness been wrong in a way you did not detect.</p>
+
+<p><strong>Q4.</strong> You determined empirically whether the reference reports a full round trip or one way. Describe the experiment, state your result, and explain what a report would have looked like had you assumed the wrong convention.</p>
+
+<p><strong>Q5.</strong> R7 required stating a noise floor before any comparison. Give a concrete example from your own data of a difference you would have reported as real without it, and explain the general principle about what a measurement can support.</p>
+
+<p><strong>Q6.</strong> Most of TRD-07&rsquo;s optimisations showed no measurable effect. Explain why, then explain why pipelining and event-driven reaping were the two exceptions &mdash; they are exceptions for different reasons.</p>
+
+<p><strong>Q7.</strong> Your report contains a &ldquo;what this does not show&rdquo; section. Name the three most important limits of your measurement, and for each explain what a reader would wrongly conclude without it.</p>
+
+<p><strong>Q8.</strong> The ladder is finished. Describe what you would measure first if you connected two hardware adapters tomorrow and re-ran this harness unchanged, what you expect each result to be, and which single result would most change your understanding of what you built.</p>
+
+<hr>
+
+<p><em>Answer all eight in writing before turning the page. Writing is the point &mdash; an answer that feels clear in your head and falls apart on paper was never clear. Then compare against the key. Where your answer is thinner than the key&rsquo;s, reread the Prior Knowledge section named at the end of that answer. Where you disagree with the key and can defend the disagreement, that is a good sign rather than a wrong answer.</em></p>
+
+<div class="answer-key">
+
+<h2>Answer Key</h2>
+
+<div class="qa-block">
+  <div class="qa-label">Q1 &mdash; Answer</div>
+  <p><strong>The mechanism:</strong> a closed-loop benchmark issues the next operation only after the previous one returns. When the system stalls, the benchmark stalls with it &mdash; so the operations that <em>should</em> have been issued during the stall are never issued, and the queueing delay each would have experienced is never recorded. The benchmark coordinates with the system under test, pausing precisely when the system is least able to serve, which is the opposite of what a real client does.</p>
+  <p><strong>Worked example.</strong> Target rate one operation every 2 &micro;s, one million operations, one 100 ms stall.</p>
+  <ul>
+    <li><em>Closed loop:</em> one sample of 100 ms, 999,999 samples near 2 &micro;s. The 99.9th percentile is computed over the top 1,000 samples &mdash; the stall is one of them, so the 99.9th reads roughly 2 &micro;s. The report says the system is healthy.</li>
+    <li><em>Reality:</em> during 100 ms, 50,000 operations were due. The first would have waited ~100 ms, the next ~99.998 ms, decreasing linearly to zero. That is 50,000 samples spread from 0 to 100 ms &mdash; 5% of the run. The true 99.9th percentile is on the order of tens of milliseconds.</li>
+  </ul>
+  <p>The understatement is roughly four orders of magnitude, and nothing in the output hints at it.</p>
+  <p><strong>The two defences:</strong> measure against a fixed schedule &mdash; latency from the <em>intended</em> send time, with no sleeping when already behind &mdash; or keep the closed loop and stop calling it latency, reporting it as service time under zero queueing.</p>
+  <p><strong>Why one is not sufficient alone:</strong> they measure different things and both are wanted. Service time is what the reference tools report, so it is the only figure comparable to them &mdash; abandoning it would forfeit R8&rsquo;s validation. Response time is what a client experiences under load, so it is the only figure that describes real behaviour. R4 required both, in separate modes, labelled distinctly, because a single number cannot be both.</p>
+  <div class="qa-miss">Common miss: describing it as &ldquo;the benchmark missed some samples.&rdquo; It missed exactly the samples that were going to be bad, systematically, and by a mechanism that makes worse systems look better &mdash; the more the system stalls, the more samples are omitted.</div>
+  <p><em>Covered in Prior Knowledge &sect;4, and in reference [1].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q2 &mdash; Answer</div>
+  <p><strong>The median</strong> is the typical case: half of operations were faster. It is robust &mdash; an outlier a thousand times larger moves it by one sample position.</p>
+  <p><strong>The mean</strong> is the arithmetic average, and it is not robust. One 100 ms sample in a million 2 &micro;s samples raises the mean by 50% while describing an experience essentially no operation had.</p>
+  <p><strong>Their ratio</strong> measures skew. Within about ten percent indicates a fairly flat distribution;<span class="cite">[4]</span> a larger gap means a tail is dragging the mean, and its size hints at the tail&rsquo;s weight. It is the cheapest possible diagnostic &mdash; two numbers you already have, and it tells you whether the distribution needs looking at.</p>
+  <p><strong>Why a mean-only report is worse than incomplete:</strong> because it is <em>actively misleading in both directions at once</em>. It is inflated by outliers, so it overstates the typical case. It is a single value, so it conceals the outliers that inflated it. A reader is told the system is slower than it typically is <em>and</em> that nothing unusual happens &mdash; both wrong, in opposite directions, from the same number.</p>
+  <p>Incomplete would be reporting only the median: an honest, narrow statement. The mean invites a specific false conclusion, which is why the reference implementation prints median and mean side by side rather than choosing.</p>
+  <div class="qa-miss">Common miss: treating the mean as simply less useful. It is worse than that &mdash; a mean of 3 &micro;s on a distribution whose median is 2 &micro;s and whose 99.9th is 40 ms describes no operation that ever occurred, while suggesting the spread is small.</div>
+  <p><em>Covered in Prior Knowledge &sect;3, and in reference [4].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q3 &mdash; Answer</div>
+  <p><strong>Why the ordering matters:</strong> your harness is code you wrote and has bugs. Every figure it produces is conditional on it being correct, and there is no internal check &mdash; a percentile index off by one, a warm-up applied after the timer started, a unit conversion done twice all produce clean, plausible, wrong output. The only external check available is another implementation of the same measurement.</p>
+  <p>Validating <em>after</em> sweeping means discovering the flaw with a table already built, which is both wasted work and a temptation: having spent an afternoon on a table, the pull toward explaining away a discrepancy rather than investigating it is real. Validating first makes that pressure impossible.</p>
+  <p><strong>What you would have concluded from bad data:</strong> the failure is not that conclusions would be wrong &mdash; it is that they would be <em>plausible</em>. The sweeps are comparisons, and a systematic harness error largely cancels between the arms, so the relative results would look sane. Pipelining would still appear to help, event mode would still look worse, and the flat rows would still be flat. You would produce a report whose relative findings were right and whose every absolute number was wrong by some factor, with nothing in it revealing that.</p>
+  <p>And the one figure that must be absolute &mdash; the headline latency, the number someone quotes &mdash; would be the one silently wrong. Which is why R8 declares a tolerance in advance and exits non-zero rather than merely printing a warning.</p>
+  <div class="qa-miss">Common miss: treating validation as a formality once the numbers look reasonable. &ldquo;Reasonable&rdquo; is not a check &mdash; a harness with a systematic error produces reasonable-looking numbers by construction, and the whole class of measurement bug is defined by producing plausible output.</div>
+  <p><em>Covered in Prior Knowledge &sect;2 and &sect;8, and Requirements R8.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q4 &mdash; Answer</div>
+  <p><strong>The experiment:</strong> measure a full round trip yourself at the same message size and iteration count, then compare against the reference&rsquo;s <code>t_typical</code>. A ratio near 1.0 means the reference reports the full round trip; near 2.0 means it reports one way and you are measuring twice what it does. Five minutes, and it settles the question with arithmetic rather than assumption.</p>
+  <p>Your own numbers go here. The reasoning is what is being assessed.</p>
+  <p><strong>What a wrong assumption would produce:</strong> a clean, consistent factor of two through every absolute figure in the report &mdash; and nothing anywhere that looks wrong.</p>
+  <p>That is what makes it dangerous. It is not noise; it is a scaling error that preserves every relationship. The size-sweep curve keeps its shape. The option sweep&rsquo;s percentage deltas are unaffected, because a constant factor cancels in a ratio. The distribution&rsquo;s skew is unchanged. Every internal consistency check the report could perform on itself passes.</p>
+  <p>The only place it surfaces is comparison with the outside world &mdash; the validation section, or the first person who compares your headline against a published figure and finds you a factor of two off. By then the report is written and circulated.</p>
+  <p>This is the same shape as TRD-06&rsquo;s last-byte trap and TRD-07&rsquo;s arming race, in a third domain: <strong>an assumption that is never tested because nothing depends on it locally.</strong> The defence is the same &mdash; test the assumption directly rather than relying on everything downstream looking fine.</p>
+  <div class="qa-miss">Common miss: resolving it by reading documentation rather than measuring. Documentation may be ambiguous, may describe a different version, or may be read wrongly. The measurement takes five minutes and cannot be misread.</div>
+  <p><em>Covered in Prior Knowledge &sect;8, and Requirements R8.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q5 &mdash; Answer</div>
+  <p>Your own example goes here. The typical case: a row in the option sweep showing a 2&ndash;3% improvement &mdash; inline data, or one-sided versus two-sided &mdash; against a run-to-run spread of 4&ndash;5%. Without the floor that reads as a small but real gain, and it is indistinguishable from noise.</p>
+  <p>It is worth noticing <em>which</em> rows those are: the ones you expected to help. That is the mechanism by which noise becomes a finding &mdash; not fabrication, but a small favourable number appearing exactly where a plausible story is waiting to receive it. The floor is what makes the story insufficient.</p>
+  <p><strong>The general principle:</strong> a measurement can only support conclusions larger than its own uncertainty. The uncertainty is not a caveat attached to the result &mdash; it is a threshold, below which the measurement is silent. Reporting a 3% difference measured with 5% variance is not an overstatement of a real effect; it is reporting something the experiment did not observe.</p>
+  <p>Which is why R7 requires the floor stated <em>before</em> any comparison. Presented afterwards it reads as a hedge on findings the reader has already accepted. Presented first it is a threshold they apply as they read.</p>
+  <p>The corollary matters too: to detect a smaller effect you need a lower floor, not more confidence. Quieter machine, more runs, longer runs, less variance &mdash; and if you cannot reduce it, the honest statement is that the effect is below your resolution, which is a real result about your experiment rather than a failure of it.</p>
+  <div class="qa-miss">Common miss: reporting the difference with a caveat &mdash; &ldquo;inline improved latency 2%, though within noise.&rdquo; That sentence tells the reader an effect was observed and then withdraws it, and the number is what they will remember. The honest form leads with the threshold: &ldquo;no effect distinguishable from the 4.1% floor.&rdquo;</div>
+  <p><em>Covered in Prior Knowledge &sect;2, and Requirements R7.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q6 &mdash; Answer</div>
+  <p><strong>Why most showed nothing:</strong> inline data, periodic signalling, moderation, and one-sided operations each remove a cost associated with <em>adapter interaction</em> &mdash; a DMA fetch, a completion write, an interrupt, remote CPU involvement. On soft-RoCE there is no adapter. The transport runs in kernel software, costs tens of microseconds per operation, and the costs these techniques remove are a small fraction of a microsecond. The signal is buried under noise several orders of magnitude larger.</p>
+  <p><strong>Pipelining is an exception because it optimises a different quantity.</strong> The others reduce cost per operation; pipelining removes <em>idle time</em>. With one operation outstanding the link sits unused for a full round trip per message, and throughput is bounded by latency rather than by capacity. That is true on any fabric, including a slow software one &mdash; the round trip is longer here, so there is <em>more</em> idle time to reclaim, not less. It shows an effect because it was never targeting adapter interaction at all.</p>
+  <p><strong>Event-driven reaping is an exception for the opposite reason: it is a cost the software provider does not hide.</strong> Waking a blocked thread costs an interrupt, a scheduler decision, and a context switch &mdash; several microseconds, executed by the same CPU that runs everything else. It is not adapter interaction; it is operating-system machinery, present identically on both fabrics. So it shows up here at full size, and it shows up as a regression.</p>
+  <p>The pair is instructive. One exception is a technique whose benefit is fabric-independent; the other is a cost that is fabric-independent. Everything in between &mdash; the techniques that trade against adapter behaviour &mdash; is exactly what soft-RoCE cannot tell you about.</p>
+  <p>Which gives the general rule: <strong>an optimisation is measurable when the cost it removes is a meaningful fraction of the cost that remains.</strong> The techniques did not change between fabrics; the denominator did.</p>
+  <div class="qa-miss">Common miss: grouping the two exceptions together as &ldquo;the ones that worked.&rdquo; One is a genuine improvement that would grow on hardware; the other is a genuine regression that would persist. Treating them alike misses that the harness told you two different kinds of truth.</div>
+  <p><em>Covered in Prior Knowledge &sect;9, TRD-07 &sect;1, and TRD-00 &sect;9.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q7 &mdash; Answer</div>
+  <p>Your own three. The strongest candidates:</p>
+  <p><strong>1. Nothing here describes hardware RDMA.</strong> Every figure is soft-RoCE, where the transport is kernel software. Absolute latency is roughly twenty times worse than a real adapter, and the optimisation results do not transfer &mdash; the flat rows would not be flat.</p>
+  <p><em>Without it a reader concludes:</em> that RDMA is slower than TCP and that its optimisations do not work. Both false, and both directly supported by the numbers if the fabric is not named.</p>
+  <p><strong>2. One connection, two nodes, no concurrency.</strong> Nothing about many connections, many queue pairs, contention, or shared completion queues.</p>
+  <p><em>Without it a reader concludes:</em> that the figures predict server behaviour. They do not &mdash; and specifically, the flag-polling versus immediate-data choice from TRD-06 inverts at scale, which this measurement cannot see.</p>
+  <p><strong>3. The 99.9th percentile rests on few observations.</strong> With 10<sup>5</sup> samples it is derived from about a hundred, so it is a noisy estimate of exactly the quantity most likely to be quoted.</p>
+  <p><em>Without it a reader concludes:</em> that the tail figure has the same authority as the median. It has roughly a thousandth of the supporting data.</p>
+  <p>Honourable mentions: response-time figures only at rates well below saturation, so the interesting region was not characterised; and a virtual machine, whose scheduler introduces variance no bare-metal deployment would have.</p>
+  <p><strong>Why this section matters more than the findings:</strong> a reader can check a finding against a table. They cannot check for a limit you did not state &mdash; they have to trust you found them. Which makes this the section that establishes whether the rest is trustworthy, and the reason to write it as carefully as the results.</p>
+  <div class="qa-miss">Common miss: writing it as a disclaimer to deflect criticism. Its function is informational &mdash; it tells a reader what questions this data can and cannot answer, which is what lets them use it correctly rather than not at all.</div>
+  <p><em>Covered in Prior Knowledge &sect;2 and &sect;11, and Requirements R10.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q8 &mdash; Answer</div>
+  <p><strong>What to measure first, in order:</strong></p>
+  <ol>
+    <li><strong>Validation.</strong> Same as here &mdash; <code>ib_send_lat</code> against your harness, matched configuration. Hardware introduces new ways to be wrong: locked-memory limits, a different GID index, firmware differences. Establish the harness is sound on the new fabric before believing anything.</li>
+    <li><strong>Baseline latency at 64 bytes.</strong> One number, and it tells you whether the fabric is healthy. Expect one to three microseconds; forty means something is misconfigured and you are still on software.</li>
+    <li><strong>The TCP comparison.</strong> Carried through the whole ladder from TRD-00 R6, and this is where it inverts.</li>
+    <li><strong>The option sweep, unchanged.</strong> Every flat row is a prediction this rung made; hardware is the test of it.</li>
+  </ol>
+  <p><strong>Expectations:</strong> latency dropping from tens of microseconds to one or two. TCP losing decisively, having won on every previous measurement. Inline data becoming significant at small sizes. Periodic signalling becoming significant at high rates. Pipelining still winning, by more. Event-driven reaping still losing, by a similar absolute amount &mdash; and therefore a much larger proportion.</p>
+  <p><strong>The single most informative result: the option sweep going from flat to differentiated.</strong> That is the one that would change your understanding, because it tests the explanation rather than the measurement.</p>
+  <p>Everything else confirms something already believed &mdash; hardware is faster, and nobody doubts it. But this report claims something stronger and more falsifiable: that the optimisations showed nothing <em>because</em> the denominator was too large, not because they do nothing. If the same code with the same switches produces a differentiated table on hardware, that explanation is confirmed by an experiment that could have refuted it. If it stays flat, the explanation was wrong and something more interesting is happening.</p>
+  <p>It also makes the honest null result here retroactively valuable. A report saying &ldquo;no effect, here is why, and here is what would falsify that&rdquo; followed by a hardware run confirming the prediction is a far stronger artifact than either alone &mdash; and it costs one evening once the cards exist, with no code changes at all.</p>
+  <div class="qa-miss">Common miss: naming raw latency as the most informative. It is the most <em>dramatic</em> &mdash; a twentyfold improvement &mdash; and the least informative, because it confirms something universally believed. The informative measurement is the one whose outcome you are genuinely uncertain about.</div>
+  <p><em>Covered in Prior Knowledge &sect;9, and Requirements R10&rsquo;s final section.</em></p>
+</div>
+
+<h2>References Cited in This Key</h2>
+
+<ol class="refs">
+  <li>[1] Tene, Gil. <em>How NOT to Measure Latency.</em></li>
+  <li>[4] Lawrey, Peter. <em>What is Latency, Throughput and Degree of Concurrency?</em> https://dzone.com/articles/what-latency-throughput-and</li>
+</ol>
+
+<p style="font-size:9pt; font-style:italic;">Numbering matches the reference list in the TRD-08 Prior Knowledge document.</p>
+
+</div>
+
+<div class="footer">
+  TRD-08: Benchmark Harness &nbsp;|&nbsp; Comprehension &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

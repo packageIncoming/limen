@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-04: The RAII Layer — Requirements</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.hint-ref { border: 1px solid #000; padding: 3px 8px; margin: 6px 0 2px 0; font-size: 9pt; font-style: italic; display: inline-block; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-04: The RAII Layer</h1>
+  <div class="subtitle">Requirements — Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-03 &nbsp;|&nbsp; Difficulty: Medium &nbsp;|&nbsp; Estimated: 3–5 sessions</div>
+</div>
+
+<h2>Objective</h2>
+
+<p>Build <code>limen::</code> wrapper types owning the device context, protection domain, memory region, completion queue, and queue pair. Each is move-only, releases in a non-throwing destructor, and exposes an explicit release returning the underlying status. Assemble them into a type whose member declaration order produces the required destruction order. Then refactor all three existing programs onto the layer and confirm every earlier gate still passes.</p>
+
+<h2>What This Is Not</h2>
+
+<p>No new RDMA. Not one new verb, not one new fabric concept. If you find yourself learning something about queue pairs during this rung, you have wandered.</p>
+
+<p>No new behaviour in the three programs. Their output must be identical and their test suites must pass unmodified. A refactor that changes what the programs do is not a refactor and cannot be verified.</p>
+
+<p>No reference counting, no thread safety, no virtual destructors, no allocator customisation. These are concrete, single-owner, non-polymorphic types.</p>
+
+<p>No solution to transfer-time buffer ownership. Section 9 of the Prior Knowledge document explains why that hazard is a different problem; it survives this rung and is addressed in TRD-07.</p>
+
+<h2>Interface</h2>
+
+<p>Headers under <code>include/limen/</code>. Namespace <code>limen</code>. The suite compiles against these declarations, so the names and signatures are part of the contract.</p>
+
+<pre>namespace limen {
+
+class VerbsError : public std::runtime_error {
+public:
+    VerbsError(const char *op, int err);
+    int error() const noexcept;
+};
+
+class Context {
+public:
+    Context() noexcept = default;
+    explicit Context(const char *device_name);        /* throws VerbsError */
+    ~Context() noexcept;
+    Context(const Context&amp;)            = delete;
+    Context&amp; operator=(const Context&amp;) = delete;
+    Context(Context&amp;&amp;) noexcept;
+    Context&amp; operator=(Context&amp;&amp;) noexcept;
+
+    ibv_context *get()   const noexcept;              /* nullptr when empty */
+    explicit operator bool() const noexcept;
+    int close() noexcept;                             /* idempotent */
+};
+
+class ProtectionDomain { /* same shape; ibv_pd *get() */ };
+class CompletionQueue  { /* same shape; ibv_cq *get() */ };
+class QueuePair        { /* same shape; ibv_qp *get() */ };
+
+class MemoryRegion {
+public:
+    MemoryRegion() noexcept = default;
+    MemoryRegion(ProtectionDomain&amp; pd, std::size_t bytes, int access);
+    /* ... five special members as above ... */
+    ibv_mr     *get()    const noexcept;
+    void       *data()   const noexcept;              /* the owned buffer */
+    std::size_t size()   const noexcept;
+    std::uint32_t lkey() const noexcept;
+    std::uint32_t rkey() const noexcept;
+};
+
+} /* namespace limen */</pre>
+
+<h2>Technical Requirements</h2>
+
+<h3>R1 — The Ownership Contract</h3>
+<p>Every wrapper type satisfies all of the following, verifiable at compile time:</p>
+<pre>static_assert(!std::is_copy_constructible_v&lt;T&gt;);
+static_assert(!std::is_copy_assignable_v&lt;T&gt;);
+static_assert(std::is_nothrow_move_constructible_v&lt;T&gt;);
+static_assert(std::is_nothrow_move_assignable_v&lt;T&gt;);
+static_assert(std::is_nothrow_destructible_v&lt;T&gt;);
+static_assert(std::is_nothrow_default_constructible_v&lt;T&gt;);</pre>
+<p>Place these assertions in <code>tests/static_contract.cpp</code>, instantiated for all five types. That file compiling <em>is</em> the verification; no runtime check is needed or sufficient.</p>
+<p>Whether you write five hand-rolled classes or one template instantiated five times is your decision. Both satisfy this requirement and the comprehension questions ask you to defend the choice.</p>
+<span class="hint-ref">Stuck? → Hints H1</span>
+
+<h3>R2 — Context</h3>
+<p>Acquires by device name: enumerate, match, open, and free the device list. Throws <code>VerbsError</code> if the device is absent or the open fails.</p>
+<p>Releases with <code>ibv_close_device</code>, whose convention is 0 or <code>-1</code> — normalise it so <code>close()</code> returns 0 on success and a non-zero value otherwise, matching every other wrapper.</p>
+<span class="hint-ref">Stuck? → Hints H2</span>
+
+<h3>R3 — ProtectionDomain</h3>
+<p>Constructed from a <code>Context</code>. Releases with <code>ibv_dealloc_pd</code>, which returns 0 or an errno value.</p>
+<p>An <code>EBUSY</code> from this release means a child outlived it. R8 requires that to be reported rather than swallowed, because it is the signal that the layer has a hole.</p>
+<span class="hint-ref">Stuck? → Hints H3</span>
+
+<h3>R4 — MemoryRegion</h3>
+<p>Allocates a buffer of the requested size, registers it with the given access flags, and owns both. Releases by deregistering first, then freeing the buffer — an ordering that must be internal and unreachable from outside the type.</p>
+<p>Exposes <code>data()</code>, <code>size()</code>, <code>lkey()</code>, and <code>rkey()</code>. On an empty or moved-from region these return null, zero, and zero respectively rather than dereferencing.</p>
+<p>Zero the buffer on construction. TRD-03 relied on that and the behaviour must not change.</p>
+<span class="hint-ref">Stuck? → Hints H4</span>
+
+<h3>R5 — CompletionQueue and QueuePair</h3>
+<p>The completion queue is constructed from a <code>Context</code> with a requested capacity; expose the granted <code>cqe</code>, which may exceed the request.</p>
+<p>The queue pair is constructed from a <code>ProtectionDomain</code> and an <code>ibv_qp_init_attr</code>; expose <code>qp_num</code> and the granted capabilities the call wrote back. Both must survive being moved without the queue pair losing its reference to the completion queue.</p>
+<div class="warning">The queue pair holds a raw <code>ibv_cq *</code> inside the provider, so the completion queue must outlive it. This wrapper cannot enforce that on its own; R7 is where it becomes structural.</div>
+<span class="hint-ref">Stuck? → Hints H5</span>
+
+<h3>R6 — Move Semantics</h3>
+<p>Move construction takes the source's handle and leaves the source empty. Move assignment releases the destination's existing resource before adopting, and is a no-op on self-assignment.</p>
+<p>A moved-from object must be destructible, and its accessors must return the empty values from R4 rather than dereferencing. Moved-from is a valid state of the type.</p>
+<p>Copy construction and copy assignment are deleted, not merely private or unimplemented — the suite compiles a program that attempts a copy and requires the compilation to <em>fail</em>.</p>
+<span class="hint-ref">Stuck? → Hints H6</span>
+
+<h3>R7 — Destruction Order by Declaration</h3>
+<p>Provide <code>limen::Endpoint</code> holding all five wrappers as members, declared in creation order so that reverse-declaration-order destruction yields queue pair, completion queue, memory region, protection domain, context.<span class="cite">[1]</span></p>
+<p><code>Endpoint</code> declares no destructor. Its implicit destructor is correct, and writing one would be a place for the order to be got wrong.</p>
+<p>Build with a diagnostic mode — a compile-time flag or an environment variable — under which each wrapper prints its type name as it releases. The suite runs an <code>Endpoint</code> under that mode and checks the order.</p>
+<span class="hint-ref">Stuck? → Hints H7</span>
+
+<h3>R8 — Non-Throwing Release With a Reportable Status</h3>
+<p>Every destructor is <code>noexcept</code> and never throws under any circumstance.<span class="cite">[2]</span> Every type also exposes <code>close()</code> returning the underlying status, callable explicitly by anyone who wants to check, and idempotent — a second call is a no-op returning 0.</p>
+<p>The destructor calls <code>close()</code> and, on a non-zero result, writes a diagnostic to <code>stderr</code> naming the verb and the symbolic errno. It does not throw, does not abort, and does not silently discard.</p>
+<div class="callout">
+  <div class="callout-label">Do not reach for uncaught_exceptions</div>
+  <p>The technique of inspecting <code>std::uncaught_exceptions()</code> to throw only when it is "safe" is explicitly rejected: circumventing normal destructor processing this way can leave the destructor failing to release the resource at all.<span class="cite">[2]</span> Report and continue.</p>
+</div>
+<span class="hint-ref">Stuck? → Hints H8</span>
+
+<h3>R9 — Constructors Throw, Callers Do Not Clean Up</h3>
+<p>A constructor that cannot produce a valid object throws <code>VerbsError</code> carrying the operation name and the errno value. There are no half-constructed wrappers and no two-phase initialisation.</p>
+<p>Correspondingly, calling code contains no cleanup for wrapper-owned resources on any path. Any wrapper already constructed when a later one throws is destroyed by unwinding.</p>
+<span class="hint-ref">Stuck? → Hints H9</span>
+
+<h3>R10 — Refactor All Three Programs</h3>
+<p><code>limen_devinfo</code>, <code>limen_connect</code>, and <code>limen_pingpong</code> are ported onto the layer. Every <code>goto cleanup</code> block, every manual destroy call, and every conditional teardown is removed from them.</p>
+<p>Observable behaviour is unchanged: identical output lines, identical exit codes. <strong>The TRD-01, TRD-02, and TRD-03 test suites must pass unmodified.</strong> The suite for this rung runs all three.</p>
+<div class="warning">Half-refactored is worse than either state. A surviving <code>goto cleanup</code> block alongside a throwing constructor is a leak on the exception path that neither the old code nor the new code would have had. Port each program completely or not at all.</div>
+<p>The <code>teardown:</code> line each program prints must survive. Its stages are now reported by <code>close()</code> called explicitly before the wrappers go out of scope, which is exactly the case that explicit release exists for.</p>
+<span class="hint-ref">Stuck? → Hints H10</span>
+
+<h3>R11 — No Raw Handles Outside the Layer</h3>
+<p>After R10, the only translation units that name <code>ibv_destroy_qp</code>, <code>ibv_destroy_cq</code>, <code>ibv_dereg_mr</code>, <code>ibv_dealloc_pd</code>, or <code>ibv_close_device</code> are the wrapper implementations themselves. The suite greps for this.</p>
+<p>Programs may still call <code>get()</code> to pass a raw handle to a verb that needs one — posting and polling both require it, and hiding those behind further abstraction is TRD-07's business, not this rung's. What must not survive is any release call outside the layer.</p>
+<p>Leak checks: <code>valgrind --leak-check=full</code> reports zero bytes definitely lost for all three refactored programs, on their success paths and on at least one failure path each.</p>
+<span class="hint-ref">Stuck? → Hints H11</span>
+
+<h2>Acceptance Criteria</h2>
+
+<table>
+  <tr><th style="width:40px;">ID</th><th>Criterion</th><th style="width:225px;">Verified by</th></tr>
+  <tr><td>R1</td><td>Everything builds clean under <code>-Wall -Wextra</code></td><td><code>test_builds</code></td></tr>
+  <tr><td>R1</td><td><code>tests/static_contract.cpp</code> compiles for all five types</td><td><code>test_static_contract</code></td></tr>
+  <tr><td>R2</td><td>An unknown device name throws <code>VerbsError</code></td><td><code>test_context_throws_on_bad_device</code></td></tr>
+  <tr><td>R4</td><td>A region reports non-zero <code>lkey</code>, <code>rkey</code>, and a usable buffer</td><td><code>test_region_exposes_keys</code></td></tr>
+  <tr><td>R5</td><td>Completion queue and queue pair report granted capacities</td><td><code>test_cq_qp_report_granted</code></td></tr>
+  <tr><td>R6</td><td>A program attempting to copy a wrapper fails to compile</td><td><code>test_copy_rejected_at_compile_time</code></td></tr>
+  <tr><td>R6</td><td>A moved-from wrapper is empty and destroys without fault</td><td><code>test_moved_from_is_empty</code></td></tr>
+  <tr><td>R6</td><td>Move assignment over a live object releases exactly once</td><td><code>test_move_assign_releases_once</code></td></tr>
+  <tr><td>R7</td><td>Diagnostic mode reports release order qp, cq, mr, pd, context</td><td><code>test_destruction_order</code></td></tr>
+  <tr><td>R8</td><td>Every wrapper's destructor is <code>noexcept</code></td><td><code>test_destructors_noexcept</code></td></tr>
+  <tr><td>R8</td><td><code>close()</code> is idempotent and returns a status</td><td><code>test_close_idempotent</code></td></tr>
+  <tr><td>R9</td><td>A failure part-way through construction leaks nothing</td><td><code>test_partial_construction_no_leak</code></td></tr>
+  <tr><td>R10</td><td>The TRD-01 suite passes against the refactored program</td><td><code>test_trd01_regression</code></td></tr>
+  <tr><td>R10</td><td>The TRD-02 suite passes against the refactored program</td><td><code>test_trd02_regression</code></td></tr>
+  <tr><td>R10</td><td>The TRD-03 suite passes against the refactored program</td><td><code>test_trd03_regression</code></td></tr>
+  <tr><td>R11</td><td>No release verb is named outside the wrapper implementations</td><td><code>test_no_raw_release_calls</code></td></tr>
+  <tr><td>R11</td><td>No <code>goto cleanup</code> survives in the three programs</td><td><code>test_no_manual_cleanup</code></td></tr>
+  <tr><td>R11</td><td><code>valgrind</code> reports zero bytes definitely lost across all three</td><td><code>test_no_leaks</code></td></tr>
+</table>
+
+<h2>Deliverables</h2>
+
+<ul>
+  <li><code>include/limen/verbs.hpp</code> and <code>src/verbs.cpp</code> — the five wrappers, <code>VerbsError</code>, and <code>Endpoint</code>.</li>
+  <li><code>tests/static_contract.cpp</code> — the R1 assertions for all five types.</li>
+  <li><code>tests/copy_must_not_compile.cpp</code> — a program that attempts a copy, excluded from the default build and compiled only by the suite, which requires it to fail.</li>
+  <li>The three programs, refactored, with no manual cleanup.</li>
+  <li><code>scripts/trd-04-tests.sh</code>, executable, passing.</li>
+  <li><code>docs/raii-notes.md</code> recording: whether you templated or hand-wrote, the reason, and the diagnostic-mode output showing the destruction order.</li>
+  <li>Written answers to the comprehension questions.</li>
+</ul>
+
+<h2>What Comes Next</h2>
+
+<p>TRD-05 replaces the hand-rolled TCP parameter exchange with the RDMA connection manager. Its identifier does not obey the ownership model you just built — it is created through an event channel, can be destroyed by events rather than by you, and has a lifetime relationship to the channel that is not simple containment. That is the real test of whether this layer generalises or merely fitted the five cases in front of it.</p>
+
+<p>Expect to change something here. A design that survives the sixth resource unmodified was either unusually good or not yet under pressure.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] cppreference.com. <em>Destructors.</em> The guarantee R7 depends on: after a destructor body executes, non-static data members are destroyed in reverse order of declaration. Accessed 2026-07. https://en.cppreference.com/w/cpp/language/destructor</li>
+
+  <li>[2] Software Engineering Institute, Carnegie Mellon University. <em>DCL57-CPP: Do not let exceptions escape from destructors or deallocation functions.</em> SEI CERT C++ Coding Standard. The implicit <code>noexcept(true)</code> specification R8 relies on, and the rejection of the <code>std::uncaught_exception</code> workaround. Accessed 2026-07. https://wiki.sei.cmu.edu/confluence/display/cplusplus/DCL57-CPP.+Do+not+let+exceptions+escape+from+destructors+or+deallocation+functions</li>
+
+  <li>[3] <em>ibv_destroy_qp(3)</em>, <em>ibv_destroy_cq(3)</em>, <em>ibv_dereg_mr(3)</em>, <em>ibv_dealloc_pd(3)</em>, <em>ibv_close_device(3).</em> Linux manual pages, section 3. The three return conventions R2 through R5 normalise, and the <code>EBUSY</code> condition R3 requires you to report.</li>
+
+  <li>[4] cppreference.com. <em>Move constructors</em> and <em>Move assignment operator.</em> Including the rule that a user-declared destructor suppresses the implicit move operations, which is why R1 requires all five special members to be declared. Accessed 2026-07. https://en.cppreference.com/w/cpp/language/move_constructor</li>
+
+  <li>[5] cppreference.com. <em>std::exchange.</em> The idiom R6's move operations are written in. Accessed 2026-07. https://en.cppreference.com/w/cpp/utility/exchange</li>
+</ol>
+
+<div class="footer">
+  TRD-04: The RAII Layer &nbsp;|&nbsp; Requirements &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

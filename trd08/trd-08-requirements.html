@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-08: Benchmark Harness — Requirements</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+.hint-ref { border: 1px solid #000; padding: 3px 8px; margin: 6px 0 2px 0; font-size: 9pt; font-style: italic; display: inline-block; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-08: Benchmark Harness</h1>
+  <div class="subtitle">Requirements &mdash; Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-07 &nbsp;|&nbsp; Difficulty: Medium &nbsp;|&nbsp; Estimated: 3&ndash;4 sessions</div>
+</div>
+
+<h2>Objective</h2>
+
+<p>Build <code>limen_bench</code>: a measurement harness producing defensible latency and bandwidth figures across payload sizes and across every option TRD-07 made selectable. It must avoid coordinated omission, report distributions rather than summaries, capture its own conditions, quantify its own variance, and validate against a reference implementation before any of its numbers are believed.</p>
+
+<p>Then write the report. That artifact is the deliverable this entire ladder was building toward.</p>
+
+<h2>What This Is Not</h2>
+
+<p>Not an optimisation rung. You are measuring what TRD-07 built, not improving it. A finding that suggests a change is a finding to record, not to act on.</p>
+
+<p>No CPU-cycle counters, cache-miss profiling, or flame graphs. Those answer <em>why</em> something is slow; this rung establishes <em>whether</em>.</p>
+
+<p>No statistical significance testing. Report variance across runs and refuse to conclude anything smaller than it.</p>
+
+<p>No multi-node scaling, no comparison against other RDMA libraries. Two nodes, one connection, validated against the reference micro-benchmarks.</p>
+
+<h2>Interface</h2>
+
+<pre>./build/limen_bench -d &lt;device&gt; [-t &lt;tcp_port&gt;]
+        --mode &lt;latency|response|bandwidth|sweep&gt;
+        [-s &lt;bytes&gt;] [-n &lt;iterations&gt;] [--warmup &lt;n&gt;] [--runs &lt;n&gt;]
+        [--rate &lt;ops_per_sec&gt;] [--op &lt;send|write|read&gt;]
+        [ ...all TRD-07 options... ] [--json &lt;path&gt;] [--clock-floor] &lt;peer&gt;</pre>
+
+<table>
+  <tr><th style="width:170px;">Mode</th><th>Measures</th></tr>
+  <tr><td><code>latency</code></td><td>Closed-loop service time, one operation outstanding. Comparable to the reference tools.</td></tr>
+  <tr><td><code>response</code></td><td>Open-loop response time against a schedule at <code>--rate</code>. Coordinated-omission-free.</td></tr>
+  <tr><td><code>bandwidth</code></td><td>Sustained throughput at one size with operations in flight.</td></tr>
+  <tr><td><code>sweep</code></td><td>Bandwidth and latency across a size sweep, and across the TRD-07 option matrix.</td></tr>
+</table>
+
+<p>Exit codes are TRD-07&rsquo;s, plus 9 for a validation discrepancy that exceeds the declared tolerance.</p>
+
+<h2>Technical Requirements</h2>
+
+<h3>R1 &mdash; Clock Discipline, and Measure the Floor</h3>
+<p>Use <code>clock_gettime(CLOCK_MONOTONIC)</code>. <code>CLOCK_REALTIME</code> can step and produce negative durations.</p>
+<p><code>--clock-floor</code> times ten thousand consecutive clock reads with no work between them and reports the median cost per call. Run it before anything else and record the figure in the report.</p>
+<p>If the floor exceeds two percent of the smallest latency you intend to measure, say so in the report rather than quietly proceeding &mdash; a measurement whose instrument costs a meaningful fraction of the quantity is a measurement with a stated error bar, not an invalid one.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H1</span>
+
+<h3>R2 &mdash; Warm-Up, and Justify the Number</h3>
+<p>Discard <code>--warmup</code> iterations before recording, defaulting to 1000. The reference tools do the same for the same reason.<span class="cite">[3]</span></p>
+<p>Justify the default empirically rather than by convention: run once with warm-up disabled, capture per-iteration latency for the first few thousand iterations, and identify where it flattens. Record that plot or table in the report and set the default from it.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H2</span>
+
+<h3>R3 &mdash; Keep Every Sample, Report the Distribution</h3>
+<p>Retain every latency sample and compute percentiles by sorting once at the end. Do not summarise incrementally.</p>
+<p>Report minimum, 50th, 90th, 99th, 99.9th, maximum, mean, and standard deviation &mdash; the reference tools&rsquo; column set plus the 90th.</p>
+<div class="callout">
+  <div class="callout-label">Report the median and the mean side by side, and comment on the gap</div>
+  <p><code>t_typical</code> in the reference output is the median, printed next to the mean deliberately: the comparison reveals distribution skew, and within roughly ten percent indicates a fairly flat distribution.<span class="cite">[4]</span> Your report must state the ratio and interpret it.</p>
+</div>
+<p>Also emit the raw samples to a file when <code>--json</code> is given, so the distribution can be re-analysed without re-running.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H3</span>
+
+<h3>R4 &mdash; Avoid Coordinated Omission</h3>
+<p>Implement both modes and label them differently, because they measure different quantities.</p>
+<ul>
+  <li><code>--mode latency</code>: closed loop, one operation outstanding, measured from issue. This is <em>service time</em> and it is what the reference tools measure.</li>
+  <li><code>--mode response</code>: open loop at <code>--rate</code>, with each operation&rsquo;s intended send time fixed in advance as <code>start + i &times; interval</code>, and latency measured <strong>from the intended time</strong>, not from when the send actually happened.</li>
+</ul>
+<p>In response mode, when the harness falls behind schedule it must not sleep &mdash; it is already late, and the lateness is the measurement.</p>
+<p>Run both at the same message size, report both, and explain the difference in the report. If the two are close, the system was keeping up; if the response figures are much worse at high percentiles, they are showing you queueing the closed loop concealed.</p>
+<p>The <code>report:</code> output must name which quantity each figure is. A number labelled &ldquo;latency&rdquo; without saying which is the error this requirement exists to prevent.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H4</span>
+
+<h3>R5 &mdash; Bandwidth</h3>
+<p>Measure sustained throughput with enough operations in flight to keep the adapter busy, over a duration long enough that start-up is negligible. Report average rather than peak.</p>
+<p>Report in both MB/s and Gbit/s with the units labelled, and report message rate in operations per second separately &mdash; at small sizes the rate is the limiting quantity rather than the byte count.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H5</span>
+
+<h3>R6 &mdash; The Sweeps</h3>
+<p><code>--mode sweep</code> runs two sweeps and emits a table for each.</p>
+<p><strong>Size sweep:</strong> powers of two from 64 bytes to 1 MB, reporting latency percentiles and bandwidth at each. The shape of the curve is the result; a single figure at one size is not.</p>
+<p><strong>Option sweep:</strong> for each TRD-07 switch, the same measurement with it on and off, everything else held constant. Inline on and off; signalling period 1 and 16; pipeline depth 1 and 8; reaping poll and event; and for the operation type, two-sided send against one-sided write.</p>
+<p>Each cell reports its median and 99th percentile, and the difference from the baseline as a percentage. Where the difference is smaller than the run-to-run variance from R7, the table must say so rather than reporting the percentage as though it meant something.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H6</span>
+
+<h3>R7 &mdash; Variance Across Runs</h3>
+<p><code>--runs n</code> repeats the entire measurement <em>n</em> times, defaulting to 5, and reports the spread of the median across runs.</p>
+<p>That spread is your noise floor. <strong>No conclusion smaller than it may be drawn</strong>, and the report must state the floor before stating any comparison. A three percent improvement measured against five percent run-to-run variance is not an improvement.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H7</span>
+
+<h3>R8 &mdash; Validate Against the Reference, and Establish Its Convention</h3>
+<p>Run <code>ib_send_lat</code> and <code>ib_send_bw</code> in a matched configuration &mdash; same message size, same iteration count, same transport type &mdash; and compare against your own figures.</p>
+<p>First establish whether the reference reports the full round trip or half of it. Determine this empirically by measuring a full round trip yourself at the same size and seeing whether their figure matches yours or half of it. <strong>Record which.</strong> Assuming wrongly produces a clean factor-of-two error across an entire report.</p>
+<p>Declare a tolerance in advance &mdash; 25% is reasonable on a software fabric &mdash; and exit 9 if the discrepancy exceeds it. A large discrepancy means one of you is wrong and the prior favours the reference implementation, so investigate your harness before concluding anything about your transport.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H8</span>
+
+<h3>R9 &mdash; Capture the Conditions</h3>
+<p>Every result carries the environment needed to reproduce or dispute it: distribution and kernel release, hypervisor and virtual CPU count, RDMA device and provider, the port&rsquo;s active MTU, the granted queue-pair capabilities and inline limit, the full effective configuration line from TRD-07 R1, the clock floor from R1, the warm-up count, iteration count, run count, and the date.</p>
+<p>Emit it at the head of every report and into the JSON output. A number without its conditions cannot be reproduced by anyone, including you, next month.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H9</span>
+
+<h3>R10 &mdash; The Report</h3>
+<p>Write <code>docs/benchmark-report.md</code>. This is the artifact the ladder exists to produce, and it is judged on honesty rather than on numbers.</p>
+<p>It must contain:</p>
+<ol>
+  <li><strong>Methodology</strong> &mdash; what was measured, how, which clock, warm-up, run count, and the service-time-versus-response-time distinction from R4 stated explicitly.</li>
+  <li><strong>Conditions</strong> &mdash; R9&rsquo;s block.</li>
+  <li><strong>Validation</strong> &mdash; the R8 comparison, the reference&rsquo;s reporting convention as you determined it, and the discrepancy.</li>
+  <li><strong>Noise floor</strong> &mdash; R7&rsquo;s spread, stated <em>before</em> any comparison.</li>
+  <li><strong>Results</strong> &mdash; both sweeps, with distributions rather than single figures.</li>
+  <li><strong>The TCP comparison</strong> &mdash; carried forward from TRD-00 R6, now with a real distribution beside it.</li>
+  <li><strong>Findings</strong> &mdash; what the numbers support, with every claim traceable to a table.</li>
+  <li><strong>What this does not show</strong> &mdash; the honest limits.</li>
+</ol>
+<div class="warning">
+  Most of TRD-07&rsquo;s optimisations will show no measurable effect on this fabric. <strong>Record that as the finding it is.</strong> Section 9 of the Prior Knowledge document explains why, and a report that states &ldquo;inline data showed no effect within a 4% noise floor, because the software provider&rsquo;s per-operation cost dominates the DMA fetch it removes&rdquo; is a stronger and more defensible document than one claiming improvements it did not measure.
+</div>
+<p>The final section must state what would change on hardware and why &mdash; not as speculation dressed as data, but as a clearly-labelled expectation with its reasoning.</p>
+<span class="hint-ref">Stuck? &rarr; Hints H10</span>
+
+<h2>Acceptance Criteria</h2>
+
+<table>
+  <tr><th style="width:40px;">ID</th><th>Criterion</th><th style="width:230px;">Verified by</th></tr>
+  <tr><td>R1</td><td>Everything builds clean under <code>-Wall -Wextra</code></td><td><code>test_builds</code></td></tr>
+  <tr><td>R1</td><td><code>--clock-floor</code> reports a per-call cost</td><td><code>test_clock_floor_reported</code></td></tr>
+  <tr><td>R2</td><td>Warm-up iterations are excluded and the count is reported</td><td><code>test_warmup_applied</code></td></tr>
+  <tr><td>R3</td><td>All eight distribution statistics are reported</td><td><code>test_distribution_reported</code></td></tr>
+  <tr><td>R3</td><td>Percentiles are ordered and internally consistent</td><td><code>test_percentiles_consistent</code></td></tr>
+  <tr><td>R3</td><td><code>--json</code> emits raw samples</td><td><code>test_json_samples_emitted</code></td></tr>
+  <tr><td>R4</td><td>Response mode measures from intended time, not issue time</td><td><code>test_response_mode_schedule</code></td></tr>
+  <tr><td>R4</td><td>Latency and response figures are labelled distinctly</td><td><code>test_modes_labelled</code></td></tr>
+  <tr><td>R5</td><td>Bandwidth is reported in both units with a message rate</td><td><code>test_bandwidth_units</code></td></tr>
+  <tr><td>R6</td><td>The size sweep covers at least 64 B to 1 MB</td><td><code>test_size_sweep</code></td></tr>
+  <tr><td>R6</td><td>The option sweep covers all five TRD-07 switches</td><td><code>test_option_sweep</code></td></tr>
+  <tr><td>R7</td><td><code>--runs</code> reports a spread across runs</td><td><code>test_variance_reported</code></td></tr>
+  <tr><td>R8</td><td>The reference&rsquo;s reporting convention is determined and recorded</td><td><code>test_reference_convention</code></td></tr>
+  <tr><td>R8</td><td>Validation against <code>ib_send_lat</code> is within the declared tolerance</td><td><code>test_validated_against_perftest</code></td></tr>
+  <tr><td>R9</td><td>Every result carries the full conditions block</td><td><code>test_conditions_captured</code></td></tr>
+  <tr><td>R10</td><td>The report contains all eight required sections</td><td><code>test_report_sections</code></td></tr>
+  <tr><td>R10</td><td>The report states the noise floor before any comparison</td><td><code>test_report_states_noise_floor</code></td></tr>
+  <tr><td>R10</td><td>The report contains a &ldquo;what this does not show&rdquo; section</td><td><code>test_report_states_limits</code></td></tr>
+  <tr><td>R10</td><td><code>valgrind</code> reports zero bytes definitely lost</td><td><code>test_no_leaks</code></td></tr>
+</table>
+
+<h2>Deliverables</h2>
+
+<ul>
+  <li><code>src/limen_bench.cpp</code>, reusing the transport unchanged.</li>
+  <li><code>scripts/trd-08-tests.sh</code>, executable, passing.</li>
+  <li><code>docs/benchmark-report.md</code> &mdash; the eight sections from R10.</li>
+  <li><code>docs/results/</code> containing the JSON output from every run the report cites, so its tables can be regenerated.</li>
+  <li>An updated <code>README.md</code> whose summary states what the project does and what was measured, with the honest headline figure and its conditions.</li>
+  <li>Written answers to the comprehension questions.</li>
+</ul>
+
+<h2>What Comes Next</h2>
+
+<p>Nothing &mdash; this is the last rung. The transport is complete: two-sided and one-sided operations, a connection manager, an ownership layer, five tunable mechanisms, and a harness that measures them defensibly.</p>
+
+<p>Two directions remain open. <strong>Hardware</strong> re-runs this harness against a real adapter with no code changes, and every flat line in your report becomes a curve &mdash; that comparison is the strongest artifact this project can produce, and it costs one evening once the cards exist. <strong>Atomics, memory windows, shared receive queues, and a multi-connection event loop</strong> extend the transport itself; each is a rung that could be written and none is needed for what this ladder set out to teach.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] Tene, Gil. <em>How NOT to Measure Latency.</em> The coordinated omission problem that R4 exists to avoid.</li>
+
+  <li>[2] <em>clock_gettime(2).</em> Linux manual page, section 2. The clock source R1 requires and the guarantees that make it the correct choice.</li>
+
+  <li>[3] <em>ib_send_lat(1)</em> and <em>ib_send_bw(1).</em> perftest manual pages. The warm-up option R2 mirrors, the output columns R3 matches, the size sweep R6 follows, and the reference implementation R8 validates against. https://manpages.debian.org/testing/perftest/ib_send_lat.1.en.html</li>
+
+  <li>[4] Lawrey, Peter. <em>What is Latency, Throughput and Degree of Concurrency?</em> That the reference&rsquo;s <code>t_typical</code> is the 50th percentile and that comparing it against the mean reveals distribution skew &mdash; the interpretation R3 requires. Accessed 2026-07. https://dzone.com/articles/what-latency-throughput-and</li>
+
+  <li>[5] linux-rdma. <em>perftest.</em> The benchmark suite and its methodology notes. Accessed 2026-07. https://github.com/linux-rdma/perftest</li>
+</ol>
+
+<div class="footer">
+  TRD-08: Benchmark Harness &nbsp;|&nbsp; Requirements &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

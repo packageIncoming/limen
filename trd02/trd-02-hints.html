@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-02: Queue Pairs and the State Machine — Hints</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.level-box { border: 2px solid #000; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
+.level-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .level-box, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-02: Queue Pairs and the State Machine</h1>
+  <div class="subtitle">Hints — Limen RDMA Transport Project</div>
+  <div class="meta">Level 1 = nudge &nbsp;|&nbsp; Level 2 = stronger push &nbsp;|&nbsp; Try Level 1 for 15+ minutes before escalating</div>
+</div>
+
+<p>Level 1 points at the right place. Level 2 names the mechanism and gives values where a value is a fact rather than a decision.</p>
+
+<p>This rung has a different failure character than the previous two. Most of what goes wrong here goes wrong at R6, produces <code>EINVAL</code>, and says nothing about which of eleven fields was at fault. The Level 1 hints for R5 through R7 therefore lean on <em>narrowing the search</em> rather than on the API, because the API call itself is not the hard part — knowing which field is wrong is.</p>
+
+<h2>H1 — Completion Queue (R1)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Five parameters. Three of them you pass a neutral value: the opaque user pointer, the completion channel used for event-driven reaping, and the completion vector for interrupt affinity. All three are covered in section 3 of the Prior Knowledge document with the value to use at this rung.</p>
+  <p>The capacity is the interesting one. Work out how many completions can be outstanding at once given the two queue depths you will choose in R2, then clamp against the device ceiling you captured in TRD-01. Then read the created object's own capacity field, because R1 asks you to report both numbers and they may differ.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>int want_cqe = send_wr + recv_wr;
+if (want_cqe &gt; da.max_cqe) want_cqe = da.max_cqe;
+
+struct ibv_cq *cq = ibv_create_cq(ctx, want_cqe, NULL, NULL, 0);
+if (!cq) { /* errno set — exit 3 via cleanup */ }
+
+printf("cq: cqe=%d (requested %d)\n", cq-&gt;cqe, want_cqe);</pre>
+  <p><code>NULL</code> for the user context, <code>NULL</code> for the channel — that selects polling rather than event-driven completion, which is what TRD-03 uses — and 0 for the completion vector.</p>
+</div>
+
+<h2>H2 — Queue Pair Creation (R2)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The creating call takes the protection domain, not the context. If you are reaching for the context, look again at section 4 of the Prior Knowledge document and at why the binding matters.</p>
+  <p>The initialization structure has a nested capability structure with four numbers. Clamp each against its device ceiling from TRD-01 — they are not all bounded by the same attribute, so check which bounds which.</p>
+  <p>The important subtlety: the call writes back into the structure you passed. Print from the structure after the call, not from the constants you chose. Also zero-initialize the whole structure before filling it — it contains fields this rung does not set, and leaving them holding stack garbage is a failure that appears intermittently.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>struct ibv_qp_init_attr init;
+memset(&amp;init, 0, sizeof init);          /* not optional */
+init.send_cq = cq;
+init.recv_cq = cq;
+init.qp_type = IBV_QPT_RC;
+init.cap.max_send_wr  = MIN(16, da.max_qp_wr);
+init.cap.max_recv_wr  = MIN(16, da.max_qp_wr);
+init.cap.max_send_sge = MIN(1,  da.max_sge);
+init.cap.max_recv_sge = MIN(1,  da.max_sge);
+
+struct ibv_qp *qp = ibv_create_qp(pd, &amp;init);
+if (!qp) { /* errno set — ENOMEM usually means a cap exceeded a limit */ }
+
+printf("qp: type=RC max_send_wr=%u max_recv_wr=%u max_send_sge=%u max_recv_sge=%u\n",
+       init.cap.max_send_wr, init.cap.max_recv_wr,
+       init.cap.max_send_sge, init.cap.max_recv_sge);</pre>
+  <p>The queue pair number you need for R3 is <code>qp-&gt;qp_num</code>, available immediately after creation.</p>
+</div>
+
+<h2>H3 — Local Endpoint Identity (R3)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Four values, from four different places: one is a field on the queue pair you just created, one you invent, one comes from a query call taking a port and an index, and one is a field of the port attributes you already fetched in TRD-01's code.</p>
+  <p>The sequence number is 24 bits. Mask whatever your random source produces down to that width rather than trusting it to be in range.</p>
+  <p>The GID is a union of a 128-bit raw form and a structured form. For printing, walk the raw bytes; for the zero check R3 requires, the structured form has a field that is non-zero on any valid GID and is exactly what the reference implementation tests.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>union ibv_gid gid;
+if (ibv_query_gid(ctx, port, gid_index, &amp;gid)) { /* exit 3 */ }
+
+if (!gid.global.interface_id &amp;&amp; !gid.global.subnet_prefix) {
+    fprintf(stderr, "gid index %d is empty — enumerate with show_gids\n", gid_index);
+    /* exit 3 via cleanup */
+}
+
+srand48(getpid() * time(NULL));
+uint32_t psn = lrand48() &amp; 0xffffff;      /* 24 bits */</pre>
+  <p>For printing in the conventional form, walk the sixteen raw bytes two at a time:</p>
+  <pre>char buf[40];
+for (int i = 0; i &lt; 8; i++)
+    sprintf(buf + i * 5, "%04x%s",
+            (gid.raw[i*2] &lt;&lt; 8) | gid.raw[i*2+1], i &lt; 7 ? ":" : "");</pre>
+  <p>Compare the result against <code>show_gids</code> output for the same index. If they disagree you have a byte-order bug, and finding it now is far cheaper than finding it at R6.</p>
+</div>
+
+<h2>H4 — Side-Channel Exchange (R4)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Ordinary sockets. Server binds, listens, accepts; client connects. Nothing about this is RDMA-specific and it should take under an hour.</p>
+  <p>The one real trap is ordering. If both sides read before either writes, both block forever and the program simply hangs with no error. Decide the order deliberately and write it down in a comment: one side writes first, or both write before either reads.</p>
+  <p>Set <code>SO_REUSEADDR</code> on the listening socket. You will restart this program dozens of times while debugging R6, and without it every restart within the socket's lingering interval fails to bind.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <p>One text line each way is sufficient:</p>
+  <pre>/* send: qpn:psn:gid:lid, newline-terminated */
+char out[128];
+snprintf(out, sizeof out, "%06x:%06x:%s:%04x\n",
+         qp-&gt;qp_num, psn, gid_str, port_attr.lid);
+write_all(fd, out, strlen(out));
+
+/* receive and parse the peer's */
+char in[128];
+read_line(fd, in, sizeof in);
+sscanf(in, "%x:%x:%39[^:]:%x", &amp;rem_qpn, &amp;rem_psn, rem_gid_str, &amp;rem_lid);</pre>
+  <p>Write yours first, then read theirs, on both sides. That works because TCP buffers the write — neither side blocks on writing a hundred bytes — so both writes complete before either read needs to satisfy.</p>
+  <p>Parse the peer's GID string back into a <code>union ibv_gid</code> by reading eight groups with <code>sscanf</code> and storing each as two bytes, exactly reversing the printing loop from H3. Verify the round trip locally before wiring up the peer: print a GID, parse it back, compare the sixteen bytes. A bug here manifests as <code>EINVAL</code> at R6 and looks nothing like a string bug.</p>
+  <p>Wrap <code>read()</code> and <code>write()</code> in loops. A short read on a hundred-byte line is unlikely but not impossible, and the resulting truncated GID would send you hunting through your verbs code.</p>
+</div>
+
+<h2>H5 — RESET → INIT (R5)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Four fields, four mask flags, and the table in section 5 of the Prior Knowledge document lists exactly which. Two of the four take a value that is essentially fixed at this rung, one is the port number, and one is a decision.</p>
+  <p>The decision is the access flags — and note that it is a <em>different</em> access-flag field from the one you passed to the registration call in TRD-01. The callout in section 6 explains the relationship. Choose for what TRD-06 will need, not for what this rung needs, because the field cannot be changed later without tearing the connection down.</p>
+  <p>Zero the attribute structure first. You are naming four fields in the mask, but the structure has forty, and the ones you did not set are read on some providers.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>struct ibv_qp_attr attr;
+memset(&amp;attr, 0, sizeof attr);
+attr.qp_state        = IBV_QPS_INIT;
+attr.pkey_index      = 0;
+attr.port_num        = port;
+attr.qp_access_flags = IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE;
+
+int rc = ibv_modify_qp(qp, &amp;attr,
+                       IBV_QP_STATE | IBV_QP_PKEY_INDEX |
+                       IBV_QP_PORT  | IBV_QP_ACCESS_FLAGS);
+if (rc != 0) { /* rc IS the errno value — see R10 */ }</pre>
+  <p><code>rc != 0</code>, not <code>rc &lt; 0</code>. The manual page specifies that the return value is the errno code on failure.<span class="cite">[1]</span> Widely circulated vendor documentation says otherwise;<span class="cite">[4]</span> for the library you are linking, the manual page is correct.</p>
+</div>
+
+<h2>H6 — INIT → RTR (R6)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>This is where you will lose time. Before writing anything, read section 8 of the Prior Knowledge document in full — the whole section, not the code fragment.</p>
+  <p>Three checks to run before you start debugging anything else, in this order:</p>
+  <ol>
+    <li>Is <code>is_global</code> set to 1? On RoCE it must be. The reasoning that says otherwise — "the peer is on the same subnet, so no global routing is needed" — is correct on InfiniBand and wrong here.<span class="cite">[3]</span></li>
+    <li>Are you assigning the <em>peer's</em> sequence number to the receive-side field, and an <em>index</em> rather than a value to the source GID field? Those two are asymmetric and both look reasonable when written the wrong way round.</li>
+    <li>Does every field you set appear in the mask, and does every flag in the mask correspond to a field you set? A field set but unnamed is silently discarded; a field named but unset is read as stack garbage.</li>
+  </ol>
+  <p>If all three are clean and it still fails, print every attribute you are passing — which is what R10 requires anyway, so write that first and let it tell you.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>struct ibv_qp_attr attr;
+memset(&amp;attr, 0, sizeof attr);
+attr.qp_state           = IBV_QPS_RTR;
+attr.path_mtu           = port_attr.active_mtu;   /* enum, must match both ends */
+attr.dest_qp_num        = rem_qpn;                /* PEER's queue pair number   */
+attr.rq_psn             = rem_psn;                /* PEER's sequence number     */
+attr.max_dest_rd_atomic = 1;
+attr.min_rnr_timer      = 12;                     /* encoded, ~0.64 ms          */
+
+attr.ah_attr.is_global     = 1;                   /* REQUIRED on RoCE           */
+attr.ah_attr.port_num      = port;
+attr.ah_attr.sl            = 0;
+attr.ah_attr.src_path_bits = 0;
+attr.ah_attr.dlid          = 0;                   /* ignored on Ethernet        */
+attr.ah_attr.grh.dgid        = rem_gid;           /* PEER's GID VALUE           */
+attr.ah_attr.grh.sgid_index  = gid_index;         /* index into YOUR OWN table  */
+attr.ah_attr.grh.hop_limit   = 1;
+attr.ah_attr.grh.traffic_class = 0;
+attr.ah_attr.grh.flow_label    = 0;
+
+int rc = ibv_modify_qp(qp, &amp;attr,
+                       IBV_QP_STATE              | IBV_QP_AV                 |
+                       IBV_QP_PATH_MTU           | IBV_QP_DEST_QPN           |
+                       IBV_QP_RQ_PSN             | IBV_QP_MAX_DEST_RD_ATOMIC |
+                       IBV_QP_MIN_RNR_TIMER);</pre>
+  <p>The two lines worth rereading are the destination GID and the source GID index. The first is 128 bits of the peer's identity that arrived over the side channel. The second is a small integer selecting an entry in your own table. They sit adjacent in the same structure and are entirely different kinds of thing.<span class="cite">[2]</span></p>
+  <p>The reference implementation guards the global-route block behind a test for a non-zero peer GID, which is worth copying even in a RoCE-only program because it documents why the fields are set.<span class="cite">[5]</span></p>
+</div>
+
+<h2>H7 — RTR → RTS (R7)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Six fields, and after R6 this one is straightforward — it needs nothing from the peer.</p>
+  <p>Four of the six are policy numbers whose conventional values are given in section 9 of the Prior Knowledge document with their meanings. Note that the timeout is exponentially encoded rather than a duration, and that zero means infinite rather than immediate — a queue pair with a zero timeout hangs instead of reporting an error.</p>
+  <p>The one thing to get right is which sequence number belongs here. R7's callout states it directly. If you set the same value in both R6 and R7 you have made the mistake.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>struct ibv_qp_attr attr;
+memset(&amp;attr, 0, sizeof attr);
+attr.qp_state      = IBV_QPS_RTS;
+attr.sq_psn        = my_psn;                       /* YOUR sequence number */
+attr.timeout       = 14;                           /* ~4.096us * 2^14      */
+attr.retry_cnt     = 7;
+attr.rnr_retry     = 7;                            /* 7 = retry forever    */
+attr.max_rd_atomic = MIN(1, da.max_qp_rd_atom);
+
+int rc = ibv_modify_qp(qp, &amp;attr,
+                       IBV_QP_STATE     | IBV_QP_SQ_PSN    |
+                       IBV_QP_TIMEOUT   | IBV_QP_RETRY_CNT |
+                       IBV_QP_RNR_RETRY | IBV_QP_MAX_QP_RD_ATOMIC);</pre>
+  <p><code>max_rd_atomic</code> here is the outgoing counterpart to <code>max_dest_rd_atomic</code> at R6. One bounds reads you issue, the other bounds reads you accept.</p>
+</div>
+
+<h2>H8 — Verify State (R8)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>The readback call takes four arguments rather than three: the queue pair, an attribute structure, a mask naming what you want back, and an initialization-attribute structure it also fills. The last one is required even if you do not use it.</p>
+  <p>Map the state enum to its symbolic name with a switch. There is no library helper for this one.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>struct ibv_qp_attr      qattr;
+struct ibv_qp_init_attr qinit;
+memset(&amp;qattr, 0, sizeof qattr);
+memset(&amp;qinit, 0, sizeof qinit);
+
+int rc = ibv_query_qp(qp, &amp;qattr, IBV_QP_STATE, &amp;qinit);
+if (rc != 0) { /* exit 3 */ }
+
+printf("verify: qp_state=%s\n", qp_state_name(qattr.qp_state));
+if (qattr.qp_state != IBV_QPS_RTS) { /* exit 3 */ }</pre>
+  <p><code>qp_state_name()</code> is a seven-case switch over <code>IBV_QPS_RESET</code>, <code>INIT</code>, <code>RTR</code>, <code>RTS</code>, <code>SQD</code>, <code>SQE</code>, and <code>ERR</code>. Include all seven — the value you most want to see named is <code>ERR</code>, and a default branch printing an integer is exactly the case where you need the name.</p>
+</div>
+
+<h2>H9 — GID Index Validation (R9)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Two checks, and both are cheap. The port attributes carry the table length, so an index at or above it is a usage error you can reject before touching the fabric. And a successfully retrieved GID that is entirely zero means the entry exists but is unpopulated, which is not a usage error but is also not something to proceed from.</p>
+  <p>Resist the temptation to default the index to 0. Section 8 of TRD-00's Prior Knowledge explains why index 0 is frequently RoCEv1 and therefore wrong, and a default that is wrong most of the time is worse than a required argument.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>if (gid_index &lt; 0 || gid_index &gt;= port_attr.gid_tbl_len) {
+    fprintf(stderr, "gid index %d out of range (table length %d)\n",
+            gid_index, port_attr.gid_tbl_len);
+    return 1;                                    /* usage error */
+}</pre>
+  <p>To find the right index on your fabric, from TRD-00:</p>
+  <pre>show_gids
+cat /sys/class/infiniband/rxe0/ports/1/gid_attrs/types/*</pre>
+  <p>Choose the entry whose type reads <code>RoCE v2</code> and whose GID ends in your dotted-quad address. Record it in the README — you will type it on every invocation for the rest of the ladder.</p>
+</div>
+
+<h2>H10 — Transition Failure Diagnosis (R10)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Write this before R6, not after. It is the instrument that makes R6 debuggable, and building it first converts a blind search over eleven fields into reading a printout.</p>
+  <p>You need two helpers: one turning an errno into its symbolic name, which you wrote in TRD-01 and can extend, and one turning an attribute mask into pipe-separated flag names. The second is the same table-walk pattern as the access-flag renderer from TRD-01 H7 — a static array of flag-and-name pairs.</p>
+  <p>Then a function taking the transition name, the return code, the mask, and the attribute structure, which prints everything the mask names. Call it from all three transitions so the diagnostic is identical wherever the failure occurs.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>static const struct { int flag; const char *name; } QP_MASKS[] = {
+    { IBV_QP_STATE,              "IBV_QP_STATE" },
+    { IBV_QP_PKEY_INDEX,         "IBV_QP_PKEY_INDEX" },
+    { IBV_QP_PORT,               "IBV_QP_PORT" },
+    { IBV_QP_ACCESS_FLAGS,       "IBV_QP_ACCESS_FLAGS" },
+    { IBV_QP_AV,                 "IBV_QP_AV" },
+    { IBV_QP_PATH_MTU,           "IBV_QP_PATH_MTU" },
+    { IBV_QP_DEST_QPN,           "IBV_QP_DEST_QPN" },
+    { IBV_QP_RQ_PSN,             "IBV_QP_RQ_PSN" },
+    { IBV_QP_MAX_DEST_RD_ATOMIC, "IBV_QP_MAX_DEST_RD_ATOMIC" },
+    { IBV_QP_MIN_RNR_TIMER,      "IBV_QP_MIN_RNR_TIMER" },
+    { IBV_QP_SQ_PSN,             "IBV_QP_SQ_PSN" },
+    { IBV_QP_MAX_QP_RD_ATOMIC,   "IBV_QP_MAX_QP_RD_ATOMIC" },
+    { IBV_QP_TIMEOUT,            "IBV_QP_TIMEOUT" },
+    { IBV_QP_RETRY_CNT,          "IBV_QP_RETRY_CNT" },
+    { IBV_QP_RNR_RETRY,          "IBV_QP_RNR_RETRY" },
+};</pre>
+  <p>Walk it, emitting a name for each set bit with <code>|</code> between. Then print the attributes conditionally on the mask, so the RTR failure shows the address vector and the RTS failure does not clutter the output with it.</p>
+  <p>To exercise the path deliberately, add a hidden <code>--force-rtr-fail</code> flag that clears <code>is_global</code> before the R6 call. The test suite uses it, and it also gives you a known-bad case to develop the diagnostic against before you have a real failure.</p>
+</div>
+
+<h2>H11 — Teardown Order (R11)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Five handles now, plus two sockets and a buffer. The single-cleanup-block pattern from TRD-01 H10 still works; it just has more lines.</p>
+  <p>The new ordering constraint is not obvious from the creation order: the queue pair references the completion queue, so it must be destroyed first. Destroying the completion queue while a queue pair still points at it returns <code>EBUSY</code> — the same class of fault as deallocating a protection domain with a live memory region, one level down.</p>
+  <p>If keeping the order straight is starting to feel like a chore you will eventually get wrong, note that feeling. It is the entire argument for TRD-04.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>cleanup: {
+    const char *qp_s = "n/a", *cq_s = "n/a", *mr_s = "n/a",
+               *pd_s = "n/a", *ctx_s = "n/a";
+    int e;
+
+    if (qp)  { e = ibv_destroy_qp(qp);  qp_s = e ? errno_name(e) : "ok"; }
+    if (cq)  { e = ibv_destroy_cq(cq);  cq_s = e ? errno_name(e) : "ok"; }
+    if (mr)  { e = ibv_dereg_mr(mr);    mr_s = e ? errno_name(e) : "ok"; }
+    free(buf);
+    if (pd)  { e = ibv_dealloc_pd(pd);  pd_s = e ? errno_name(e) : "ok"; }
+    if (ctx) { ctx_s = ibv_close_device(ctx) ? "failed" : "ok"; }
+    if (list) ibv_free_device_list(list);
+    if (sock &gt;= 0)   close(sock);
+    if (listen_fd &gt;= 0) close(listen_fd);
+
+    printf("teardown: qp=%s cq=%s mr=%s pd=%s context=%s\n",
+           qp_s, cq_s, mr_s, pd_s, ctx_s);
+    return rc;
+}</pre>
+  <p>Verify both paths, not just the happy one:</p>
+  <pre>valgrind --leak-check=full ./build/limen_connect -d rxe0 -g 3 10.0.0.1
+valgrind --leak-check=full ./build/limen_connect -d rxe0 -g 3 --force-rtr-fail 10.0.0.1</pre>
+</div>
+
+<h2>Debugging This TRD</h2>
+
+<table>
+  <tr><th style="width:235px;">Question</th><th>Instrument</th></tr>
+  <tr><td>Which field made RTR fail?</td><td>Your own R10 diagnostic. Build it first. Nothing else answers this.</td></tr>
+  <tr><td>Is my GID string round-tripping?</td><td>Print, parse, compare all sixteen bytes, locally, before involving a peer.</td></tr>
+  <tr><td>Did the side channel actually deliver?</td><td><code>sudo tcpdump -i any -A -n port 18515</code> — the values are plain text and readable directly.</td></tr>
+  <tr><td>Which GID index is correct here?</td><td><code>show_gids</code>, and <code>/sys/class/infiniband/rxe0/ports/1/gid_attrs/types/</code></td></tr>
+  <tr><td>Does the reference implementation work on this fabric?</td><td><code>ibv_rc_pingpong -d rxe0 -g &lt;idx&gt;</code>. If it fails too, the fault is the fabric or the index, not your code. Always establish this before debugging your own program.</td></tr>
+  <tr><td>What did the kernel think?</td><td><code>sudo dmesg -T | tail -30</code> immediately after a failed transition.</td></tr>
+  <tr><td>Which state did it actually reach?</td><td>Your R8 readback. Call it after <em>every</em> transition while debugging, not only at the end.</td></tr>
+  <tr><td>Is it hung or is it failing?</td><td><code>gdb -p &lt;pid&gt;</code> and a backtrace. A hang in <code>read()</code> is a side-channel ordering bug; a hang elsewhere is not.</td></tr>
+</table>
+
+<div class="callout">
+  <div class="callout-label">The single most useful check</div>
+  <p>Run <code>ibv_rc_pingpong -d rxe0 -g &lt;your index&gt;</code> between the two nodes before debugging anything of your own. It performs exactly this bringup. If it succeeds and yours fails, the fault is definitively in your code and the index is definitively right. If it fails too, stop reading your own program.</p>
+</div>
+
+<h2>The Tool Boundary</h2>
+
+<p>This rung rewards instrumentation over inspection more than any other. <code>EINVAL</code> from a transition carries no information, so the productive move is always to make the program report what it passed — which is R10, and which is why R10 exists as a requirement rather than as advice. Reading your own code hoping to spot the wrong field is the slow path, and it is the path most people take first.</p>
+
+<p>An AI assistant is appropriate for reviewing code once it works, clarifying a concept a document left unclear, and grading comprehension answers. It is not appropriate for writing or debugging the implementation.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_modify_qp(3).</em> Linux manual page, section 3. Required attribute masks per transition and the return convention used throughout H5, H6, H7, and H10. https://man7.org/linux/man-pages/man3/ibv_modify_qp.3.html</li>
+
+  <li>[2] <em>ibv_create_ah(3).</em> Linux manual page, section 3. <code>struct ibv_ah_attr</code> and <code>struct ibv_global_route</code> field definitions used in H6, including the destination GID and source GID index distinction.</li>
+
+  <li>[3] linux-rdma mailing list. <em>"EINVAL when INIT -&gt; RTR on RoCE."</em> Establishes that RoCE requires a global route header where InfiniBand on a local subnet does not — the first check in H6. Accessed 2026-07. https://linux-rdma.vger.kernel.narkive.com/sBIMjfva/einval-when-init-rtr-on-roce</li>
+
+  <li>[4] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual.</em> "Queue Pair Bringup (ibv_modify_qp)." Cited in H5 as the source of the widely repeated return-value error. https://docs.nvidia.com/networking/display/rdmaawareprogrammingv17/queue+pair+bringup+(ibv_modify_qp)</li>
+
+  <li>[5] linux-rdma. <em>rdma-core.</em> <code>libibverbs/examples/rc_pingpong.c</code> — the conditional global-route population referenced in H6 and the conventional timeout and retry values in H7. Accessed 2026-07. https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/examples/rc_pingpong.c</li>
+
+  <li>[6] <em>ibv_query_qp(3)</em> and <em>ibv_query_gid(3).</em> Linux manual pages, section 3. Used in H8 and H9.</li>
+</ol>
+
+<div class="footer">
+  TRD-02: Queue Pairs and the State Machine &nbsp;|&nbsp; Hints &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

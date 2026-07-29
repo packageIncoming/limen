@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-08: Benchmark Harness — Hints</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+.level-box { border: 2px solid #000; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
+.level-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-08: Benchmark Harness</h1>
+  <div class="subtitle">Hints &mdash; Limen RDMA Transport Project</div>
+  <div class="meta">Level 1 = nudge &nbsp;|&nbsp; Level 2 = stronger push &nbsp;|&nbsp; Try Level 1 for 15+ minutes before escalating</div>
+</div>
+
+<p>Level 1 points at the right place. Level 2 names the mechanism.</p>
+
+<p>This rung fails differently from every other one. Nothing hangs, nothing errors, nothing corrupts &mdash; the harness runs cleanly and produces numbers that are wrong in ways the output does not reveal. The defence is R8: validate against a reference before believing anything, and treat a discrepancy as your bug until proven otherwise.</p>
+
+<p>Build order: R1 and R2 first, because everything downstream depends on the clock being sound and the warm-up being right. Then R3, which is where the numbers become readable. Then R8 &mdash; validate before building the sweeps, so you are not sweeping a broken measurement.</p>
+
+<h2>H1 &mdash; Clock Discipline (R1)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>One function, one clock constant, and a subtraction. The part worth thinking about is the return type: nanoseconds do not fit comfortably in a 32-bit value and the structure has two fields that must be combined without losing precision.</p>
+  <p>For the floor: loop, take timestamps, subtract, and report the median rather than the mean &mdash; the same reasoning as &sect;3, applied to your instrument. Discard the first few hundred, because the clock path warms up too.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>static inline uint64_t now_ns() {
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &amp;ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}</pre>
+  <pre>/* --clock-floor */
+std::vector&lt;uint64_t&gt; d;
+d.reserve(10000);
+for (int i = 0; i &lt; 10500; ++i) {
+    uint64_t a = now_ns(), b = now_ns();
+    if (i &gt;= 500) d.push_back(b - a);      /* discard the first 500 */
+}
+std::sort(d.begin(), d.end());
+std::printf("clock: median=%lu ns min=%lu ns p99=%lu ns\n",
+            d[d.size()/2], d.front(), d[d.size()*99/100]);</pre>
+  <p>Expect 20&ndash;40 ns on a modern system where <code>clock_gettime</code> is served from the vDSO. If you see hundreds of nanoseconds, the call is entering the kernel &mdash; common in some virtual machine configurations &mdash; and you should say so in the report, because it changes your error bar.</p>
+</div>
+
+<h2>H2 &mdash; Warm-Up (R2)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Excluding the first <em>n</em> samples is one condition in the recording branch. The requirement is the justification, not the exclusion.</p>
+  <p>To find the right number, do the opposite of what warm-up does: record everything from iteration zero, then look at where the curve flattens. Print every hundredth sample and read the column &mdash; the transition is usually obvious without plotting anything.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>for (unsigned i = 0; i &lt; warmup + iterations; ++i) {
+    uint64_t t0 = now_ns();
+    do_operation();
+    uint64_t dt = now_ns() - t0;
+    if (i &gt;= warmup) samples.push_back(dt);
+    else if (opt_show_warmup &amp;&amp; i % 100 == 0)
+        std::printf("warmup[%u] = %lu ns\n", i, dt);
+}</pre>
+  <p>Typical shape: the first handful of samples several times the steady-state figure, converging within a few hundred iterations. Record a short table in the report:</p>
+  <pre>iteration:     0     100    500   1000   2000
+latency (us): 89.2   44.1   41.3   41.0   41.1
+→ flat by ~500; default warmup set to 1000 for margin.</pre>
+  <p>That is the whole justification and it is worth more than citing a convention.</p>
+</div>
+
+<h2>H3 &mdash; Distribution (R3)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Keep every sample in a vector, sort once at the end, and index. A million samples of 8 bytes each is 8 MB, which is nothing &mdash; do not be tempted into streaming quantile estimation for a problem this size.</p>
+  <p>Watch the index arithmetic on percentiles. Off-by-one errors here are silent and produce figures that are almost right, which is worse than obviously wrong. A quick consistency check &mdash; each percentile at least as large as the one below it &mdash; catches most of them.</p>
+  <p>For the median-versus-mean comparison the requirement asks for, compute the ratio and state what it indicates rather than leaving the reader to divide.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>static uint64_t pct(const std::vector&lt;uint64_t&gt; &amp;s, double p) {
+    if (s.empty()) return 0;
+    size_t i = (size_t)(p / 100.0 * (double)(s.size() - 1) + 0.5);
+    return s[std::min(i, s.size() - 1)];
+}
+
+std::sort(samples.begin(), samples.end());
+double mean = std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size();
+double med  = (double)pct(samples, 50);
+std::printf("  median/mean ratio = %.3f  (%s distribution)\n",
+            med / mean,
+            std::fabs(med / mean - 1.0) &lt; 0.10 ? "fairly flat" : "skewed — tail present");</pre>
+  <p>For the JSON, emit the raw samples rather than only the summary, so the distribution can be re-analysed later without re-running:</p>
+  <pre>{"config": {...}, "conditions": {...},
+ "samples_ns": [41230, 41180, 41310, ...]}</pre>
+  <p>A million integers is a few megabytes of JSON. Acceptable, and it means a question you think of next week does not require the fabric to still exist.</p>
+</div>
+
+<h2>H4 &mdash; Coordinated Omission (R4)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Read &sect;4 of the Prior Knowledge document twice before writing this. The code difference between the correct and incorrect versions is one line, and the conceptual difference is the whole point of the rung.</p>
+  <p>The one line: where the interval starts. In the closed loop it starts when you send. In the open loop it starts when you <em>should have</em> sent, which is a value computed before the loop began and independent of whatever the system did.</p>
+  <p>The behaviour to get right: when you are behind schedule, do not sleep. Sleeping to &ldquo;catch up&rdquo; to a schedule you have already missed is precisely the coordination the technique is named after.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>/* --mode response: open loop against a fixed schedule */
+const uint64_t interval = 1000000000ull / rate;      /* ns between ops */
+const uint64_t t_start  = now_ns();
+
+for (unsigned i = 0; i &lt; iterations; ++i) {
+    uint64_t intended = t_start + (uint64_t)i * interval;
+
+    uint64_t t = now_ns();
+    if (t &lt; intended) {
+        busy_wait_until(intended);                   /* early: wait      */
+    } else {
+        ++behind;                                    /* late: do NOT sleep */
+    }
+
+    do_operation();
+    samples.push_back(now_ns() - intended);          /* from INTENDED */
+}</pre>
+  <p>Prefer a busy wait to <code>nanosleep</code> for sub-millisecond intervals &mdash; sleep granularity is coarser than the intervals you care about and would itself distort the schedule.</p>
+  <p>Report <code>behind</code>. A large count means the requested rate exceeds what the system can sustain, and the response figures are then measuring saturation rather than the rate you asked for &mdash; which is worth knowing and worth stating.</p>
+  <p>Label the outputs so the distinction survives into the report:</p>
+  <pre>report: mode=latency  quantity=service_time  (closed loop, 1 outstanding)
+report: mode=response quantity=response_time (open loop, target 50000 ops/s, behind=12)</pre>
+</div>
+
+<h2>H5 &mdash; Bandwidth (R5)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Opposite methodology to latency: many operations in flight, total bytes over elapsed time. TRD-07&rsquo;s pipelining is what makes this possible &mdash; use it rather than reimplementing it.</p>
+  <p>Run long enough that connection setup and warm-up are negligible relative to the measured window. Start the timer after warm-up, not at program start.</p>
+  <p>The unit conversion has two traps in it: a factor of eight, and a binary-versus-decimal convention. Do the conversion once, in one place, and label every figure.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>uint64_t t0 = now_ns();
+/* ... transfer `iterations` messages of `size` bytes, pipelined ... */
+uint64_t elapsed = now_ns() - t0;
+
+double bytes   = (double)iterations * (double)size;
+double sec     = (double)elapsed / 1e9;
+double mib_s   = bytes / sec / (1024.0 * 1024.0);
+double gbit_s  = bytes * 8.0 / sec / 1e9;
+double msg_s   = (double)iterations / sec;
+
+std::printf("bandwidth: %.2f MiB/s  %.3f Gbit/s  %.0f msg/s  (size=%zu, %.2f s)\n",
+            mib_s, gbit_s, msg_s, size, sec);</pre>
+  <p>MiB uses 1024-based units, Gbit uses 1000-based &mdash; matching the reference tools, which default to MiB/sec and offer a flag for Gbit/sec.<span class="cite">[3]</span> Mixing conventions silently is how a 7% discrepancy appears from nowhere.</p>
+  <p>Report the elapsed time too. A bandwidth figure from a 40-millisecond window is not a sustained measurement and the duration is what lets a reader judge that.</p>
+</div>
+
+<h2>H6 &mdash; The Sweeps (R6)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Two nested loops and a table formatter. The engineering is in making the output readable enough that the shape is visible without a spreadsheet.</p>
+  <p>The size sweep should reduce iteration count as size grows, or the large sizes take minutes. Keeping total bytes roughly constant per size is the usual approach.</p>
+  <p>For the option sweep, change exactly one switch from the baseline per row. A row differing in two switches cannot be attributed to either.</p>
+  <p>The requirement about the noise floor is the part that matters. Compute the difference, then compare it against R7&rsquo;s spread, and print a marker rather than a percentage when it is smaller.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>size(B)  iters   med(us)  p99(us)  MiB/s   Gbit/s   msg/s
+     64  100000    41.2     58.3     1.48    0.012   24270
+    256  100000    41.6     59.1     5.87    0.049   24038
+   1024   50000    42.9     61.0    22.75    0.191   23320
+   ...
+1048576     500   890.1   1102.4   112.30    0.942     112</pre>
+  <pre>option              med(us)  delta      p99(us)  verdict
+baseline              41.2      —          58.3    —
+inline=on             41.0    -0.5%        58.1    within noise (4.1%)
+signal_every=16       40.9    -0.7%        57.9    within noise (4.1%)
+pipeline=8            28.4   -31.1%        39.2    SIGNIFICANT
+reap=event            47.8   +16.0%        71.4    SIGNIFICANT (worse)
+op=write              40.8    -1.0%        57.6    within noise (4.1%)</pre>
+  <pre>const char *verdict(double delta_pct, double noise_pct) {
+    if (std::fabs(delta_pct) &lt;= noise_pct) return "within noise";
+    return delta_pct &lt; 0 ? "SIGNIFICANT" : "SIGNIFICANT (worse)";
+}</pre>
+  <p>That table is the report&rsquo;s centrepiece, and the &ldquo;within noise&rdquo; rows are as much a result as the significant ones. Two rows will likely move on this fabric &mdash; pipelining, because it addresses idle time; and event mode, because wakeup cost is real everywhere.</p>
+</div>
+
+<h2>H7 &mdash; Variance (R7)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Wrap the whole measurement in a loop, collect one median per run, and report the spread of those medians. Not the spread of samples within a run &mdash; that is the distribution, which R3 already covers.</p>
+  <p>Express it as a percentage of the mean median, because that is the form the R6 comparison needs.</p>
+  <p>Print it before any comparison in the report. Stating the floor after presenting differences invites the reader to have already believed them.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>std::vector&lt;double&gt; medians;
+for (unsigned r = 0; r &lt; runs; ++r) medians.push_back(one_run());
+
+double mean = std::accumulate(medians.begin(), medians.end(), 0.0) / medians.size();
+auto [lo, hi] = std::minmax_element(medians.begin(), medians.end());
+double spread_pct = (*hi - *lo) / mean * 100.0;
+
+std::printf("variance: %u runs, medians %.2f-%.2f us, spread %.1f%% of mean\n"
+            "  → no difference smaller than %.1f%% is meaningful\n",
+            runs, *lo / 1000.0, *hi / 1000.0, spread_pct, spread_pct);</pre>
+  <p>Expect a few percent on an idle virtual machine and considerably more on a loaded one. If the spread exceeds ten percent, close other work and re-run &mdash; a noise floor that large makes every comparison in R6 unusable, which is itself worth knowing before you spend an hour sweeping.</p>
+</div>
+
+<h2>H8 &mdash; Validation (R8)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Do this before the sweeps, not after. A validated harness sweeping is an afternoon well spent; an unvalidated one is an afternoon producing a table you will have to discard.</p>
+  <p>The convention question is answered by arithmetic, not by reading documentation. Measure a full round trip yourself, compare against theirs, and see whether the ratio is near one or near two. That is the experiment.</p>
+  <p>Match everything you can control &mdash; size, iterations, transport type, warm-up &mdash; because every unmatched parameter is a candidate explanation for a discrepancy you would otherwise have to chase.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre># reference
+ib_send_lat -d rxe0 -s 64 -n 10000            # server
+ib_send_lat -d rxe0 -s 64 -n 10000 10.0.0.1   # client
+
+# yours, matched
+./build/limen_bench -d rxe0 --mode latency -s 64 -n 10000 10.0.0.1</pre>
+  <p>Their output columns, in order: <code>#bytes #iterations t_min t_max t_typical t_avg t_stdev 99% 99.9%</code>. Compare their <code>t_typical</code> &mdash; the median &mdash; against yours.</p>
+  <pre>ib_send_lat t_typical : 41.30 us
+limen_bench median RTT: 41.55 us
+ratio 1.006  →  the reference reports the FULL round trip on this build.
+                (a ratio near 2.0 would mean it reports one-way.)
+discrepancy 0.6%, within the declared 25% tolerance.</pre>
+  <p>Record that block verbatim in the report. It is short, it is the single most credibility-bearing paragraph in the document, and it answers the first question a skeptical reader will ask.</p>
+  <p>If you are outside tolerance, look at your harness first: warm-up not applied, the clock floor not subtracted where it should be, a percentile index off by one, or the two sides not actually running matched parameters.</p>
+</div>
+
+<h2>H9 &mdash; Conditions (R9)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Mechanical, and the temptation is to do it by hand at the end. Do not &mdash; a block assembled manually after the fact is the block that gets stale.</p>
+  <p>Most of it you can read programmatically at startup: the kernel release from a system call, the device attributes you have queried since TRD-01, and the effective configuration line TRD-07 R1 already builds.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <pre>utsname u; uname(&amp;u);
+std::printf("conditions:\n"
+            "  kernel:      %s %s\n"
+            "  device:      %s (%s)\n"
+            "  active_mtu:  %d\n"
+            "  qp caps:     max_send_wr=%u max_sge=%u max_inline=%u\n"
+            "  clock floor: %lu ns\n"
+            "  warmup:      %u   iterations: %u   runs: %u\n"
+            "  date:        %s\n",
+            u.sysname, u.release, dev_name, provider,
+            mtu_bytes, cap.max_send_wr, cap.max_send_sge, cap.max_inline_data,
+            clock_floor_ns, warmup, iterations, runs, date_str);</pre>
+  <p>Emit the same fields into the JSON. The report&rsquo;s conditions section is then a paste rather than a transcription, and transcription is where errors enter.</p>
+</div>
+
+<h2>H10 &mdash; The Report (R10)</h2>
+
+<div class="level-box">
+  <div class="level-label">Level 1</div>
+  <p>Write it in the order listed in R10. That order is not arbitrary &mdash; methodology and validation come before results so a reader knows whether to believe them, and the noise floor comes before comparisons so no difference is read as meaningful before its threshold is known.</p>
+  <p>The section people write badly is the last one. &ldquo;What this does not show&rdquo; is not a disclaimer; it is where you demonstrate you understand your own measurement&rsquo;s limits, and it is the section a technical reader trusts you for.</p>
+  <p>On the flat results: state them plainly with their numbers and explain the mechanism. A null result with an explanation is a finding. A null result quietly omitted is a missing row someone will notice.</p>
+</div>
+
+<div class="level-box">
+  <div class="level-label">Level 2</div>
+  <p>A shape for the two hardest sections:</p>
+  <pre>## Findings
+
+1. Pipelining is the only optimisation with a significant effect here.
+   Depth 8 reduced median service time 31% (41.2 → 28.4 us). It addresses
+   idle time rather than per-operation cost, and idle time exists on any
+   fabric. [Table 2, rows 1 and 4]
+
+2. Inline data, periodic signalling, and one-sided operations showed no
+   effect distinguishable from the 4.1% noise floor. This is the expected
+   result on a software provider: each removes a cost — a DMA fetch, a
+   completion, remote CPU involvement — that is a small fraction of the
+   tens of microseconds the software transport itself costs. [Table 2]
+
+3. Event-driven reaping was 16% worse than polling. Wakeup cost is real
+   on any fabric; this is the one row where soft-RoCE gives a
+   representative answer. [Table 2, row 5]
+
+4. TCP outperformed RDMA on this link (iperf3 X Gbit/s vs Y Gbit/s),
+   consistent with the TRD-00 baseline and for the same reason.
+
+## What this does not show
+
+- Nothing about hardware RDMA. Every figure is soft-RoCE, where the
+  transport runs in kernel software. The absolute numbers are ~20x worse
+  than a real adapter and the optimisation results do not transfer.
+- Nothing about scaling. One connection, two nodes.
+- Response-time figures at rates well below saturation only; the
+  behaviour near saturation was not characterised.
+- The 99.9th percentile is estimated from 10^5 samples, so it rests on
+  ~100 observations and is correspondingly uncertain.
+
+## What would change on hardware
+
+Expectation, clearly labelled as such rather than measured: inline and
+periodic signalling would become significant because the baseline drops
+from ~41 us to ~2 us, so a cost that is 1% of the operation here becomes
+a third of it there. The optimisations do not change; the denominator does.</pre>
+  <p>Every numbered finding cites a table. That is the discipline that makes the document defensible &mdash; a reader can check any claim against the data without asking you.</p>
+</div>
+
+<h2>Debugging This TRD</h2>
+
+<table>
+  <tr><th style="width:235px;">Question</th><th>Instrument</th></tr>
+  <tr><td>Are my numbers real?</td><td>R8. Validate before believing anything. A discrepancy is your bug until proven otherwise.</td></tr>
+  <tr><td>Tail latency looks too good</td><td>Coordinated omission. Compare <code>--mode latency</code> against <code>--mode response</code> at the same size &mdash; if they agree at the 99.9th percentile under load, the response mode is not working.</td></tr>
+  <tr><td>Results differ every run</td><td>R7 first. If the spread exceeds the effects you are chasing, no sweep will tell you anything.</td></tr>
+  <tr><td>Latency exactly 2x the reference</td><td>Round-trip versus one-way convention. R8.</td></tr>
+  <tr><td>Bandwidth far below the reference</td><td>Not enough in flight. Bandwidth needs pipeline depth; latency needs none.</td></tr>
+  <tr><td>First samples wildly slow</td><td>Warm-up not applied, or applied after the timer started.</td></tr>
+  <tr><td>Percentiles look implausible</td><td>Assert they are monotonic. An off-by-one in the index is silent.</td></tr>
+  <tr><td>Is the machine quiet?</td><td><code>uptime</code> and <code>top</code> before a run. Another process on the same core invalidates everything.</td></tr>
+</table>
+
+<div class="callout">
+  <div class="callout-label">The most important habit on this rung</div>
+  <p>Validate first, sweep second. Every other rung&rsquo;s bugs announced themselves; this rung&rsquo;s produce clean output that is quietly wrong, and the reference implementation is the only external check you have.</p>
+</div>
+
+<h2>The Tool Boundary</h2>
+
+<p>The instrument here is another implementation of the same measurement. When your figure and theirs disagree, the disagreement is the information &mdash; investigate it rather than explaining it away, and assume your harness is at fault until you can show otherwise.</p>
+
+<p>An AI assistant is appropriate for reviewing code once it works, clarifying a concept a document left unclear, and grading comprehension answers. It is not appropriate for writing or debugging the implementation, and it is emphatically not appropriate for interpreting your results &mdash; the findings section is where you demonstrate you understand what you measured.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] Tene, Gil. <em>How NOT to Measure Latency.</em> The coordinated omission problem H4 implements the defence against.</li>
+
+  <li>[2] <em>clock_gettime(2).</em> Linux manual page, section 2. The clock source and vDSO behaviour discussed in H1.</li>
+
+  <li>[3] <em>ib_send_lat(1)</em> and <em>ib_send_bw(1).</em> perftest manual pages. The output column order H8 parses, the unit conventions in H5, and the warm-up option H2 mirrors. https://manpages.debian.org/testing/perftest/ib_send_lat.1.en.html</li>
+
+  <li>[4] Lawrey, Peter. <em>What is Latency, Throughput and Degree of Concurrency?</em> The median-versus-mean heuristic implemented in H3. Accessed 2026-07. https://dzone.com/articles/what-latency-throughput-and</li>
+
+  <li>[5] linux-rdma. <em>perftest.</em> The reference implementation validated against in H8. Accessed 2026-07. https://github.com/linux-rdma/perftest</li>
+</ol>
+
+<div class="footer">
+  TRD-08: Benchmark Harness &nbsp;|&nbsp; Hints &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-06: One-Sided Operations — Comprehension</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+.answer-key { page-break-before: always; }
+.qa-block { border: 1.5px solid #000; padding: 12px 14px; margin: 14px 0; page-break-inside: avoid; }
+.qa-block .qa-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px; }
+.qa-miss { border-left: 4px solid #000; padding: 6px 12px; margin: 8px 0 0 0; font-size: 9.5pt; font-style: italic; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-06: One-Sided Operations</h1>
+  <div class="subtitle">Comprehension &mdash; Limen RDMA Transport Project</div>
+  <div class="meta">8 questions &nbsp;|&nbsp; Answer in writing before the key &nbsp;|&nbsp; Est.: 55&ndash;80 minutes</div>
+</div>
+
+<h2>Questions</h2>
+
+<p><strong>Q1.</strong> Trace an <code>IBV_WR_RDMA_WRITE</code> from your <code>ibv_post_send</code> call to the moment the data is in the peer&rsquo;s memory. Name every component that acts and say what each does. Then state exactly what your completion tells you, and exactly what it does not.</p>
+
+<p><strong>Q2.</strong> Four fields in the work request describe memory: the scatter-gather entry&rsquo;s address and key, and the remote address and key. Say which machine each belongs to. Then explain why swapping a local key for a remote key produces an error that names neither.</p>
+
+<p><strong>Q3.</strong> Polling the last byte of the payload is the obvious way to detect an incoming write, and it is wrong. Explain precisely what RDMA guarantees about ordering and what it does not, and why the distinction between those two makes the flag-write pattern correct and last-byte polling incorrect.</p>
+
+<p><strong>Q4.</strong> Your R7 run probably passed at both sizes. Explain what a passing test established and what it did not, and describe the conditions under which the technique would eventually fail in production.</p>
+
+<p><strong>Q5.</strong> <code>IBV_WR_RDMA_WRITE_WITH_IMM</code> is grouped with the one-sided opcodes and is arguably not one. Make the case that it is two-sided, using what you observed in R6. Then say when you would choose it over the flag-write pattern despite that.</p>
+
+<p><strong>Q6.</strong> An incoming remote write passes two independent access checks. Name both, say where each was configured and in which rung, and explain why <code>IBV_WC_REM_ACCESS_ERR</code> cannot tell you which one refused.</p>
+
+<p><strong>Q7.</strong> <code>RDMA_READ</code> is bounded by a negotiated depth while <code>RDMA_WRITE</code> is not. Explain what makes reads different, name the two attributes involved and which side each constrains, and say what this implies for pipelining in TRD-07.</p>
+
+<p><strong>Q8.</strong> You now have three notification mechanisms and have implemented all three. Choose one for a hypothetical production transport moving many small messages across hundreds of connections, defend the choice, and name the workload that would change your mind.</p>
+
+<hr>
+
+<p><em>Answer all eight in writing before turning the page. Writing is the point &mdash; an answer that feels clear in your head and falls apart on paper was never clear. Then compare against the key. Where your answer is thinner than the key&rsquo;s, reread the Prior Knowledge section named at the end of that answer before starting TRD-07. Where you disagree with the key and can defend the disagreement, that is a good sign rather than a wrong answer.</em></p>
+
+<div class="answer-key">
+
+<h2>Answer Key</h2>
+
+<div class="qa-block">
+  <div class="qa-label">Q1 &mdash; Answer</div>
+  <p><code>ibv_post_send</code> validates the request and places it on the send queue, then returns. Nothing has been transmitted.</p>
+  <p>Your local adapter removes the request, reads your local buffer by direct memory access &mdash; validating the local key against its registered regions &mdash; and transmits a packet carrying the payload, the peer&rsquo;s virtual address, and the peer&rsquo;s remote key. The remote adapter receives it, validates the key against its own registered regions and against the queue pair&rsquo;s access flags, and writes the payload directly into the named memory by direct memory access. It returns an acknowledgement and <strong>generates no completion</strong>. Your adapter receives the acknowledgement and writes a completion to your completion queue.</p>
+  <p>Three components act: your adapter, the wire, and the remote adapter. <strong>The remote CPU is not among them.</strong> No instruction executes on the peer, no interrupt is raised, nothing is scheduled.</p>
+  <p><strong>Your completion tells you:</strong> the write was acknowledged by the remote adapter, so the data has been placed in the peer&rsquo;s memory and your local buffer is free for reuse.</p>
+  <p><strong>It does not tell you:</strong> anything about whether the peer has noticed, will notice, or can notice &mdash; because the peer has no mechanism to notice. It also says nothing about whether the peer&rsquo;s application considers that memory ready to read, which is a question only a protocol you build can answer.</p>
+  <p>That gap between &ldquo;the data is there&rdquo; and &ldquo;the peer knows the data is there&rdquo; is the entire subject of section 6, and it is the reason a one-sided completion is a weaker statement than a two-sided one despite looking identical.</p>
+  <div class="qa-miss">Common miss: treating the completion as equivalent to a <code>SEND</code>&rsquo;s. On a <code>SEND</code>, the completion implies the peer&rsquo;s receive buffer was consumed, which means the peer&rsquo;s application had participated. Here it implies nothing about the peer&rsquo;s software at all, and building on the assumption that it does produces a reader that races the writer.</div>
+  <p><em>Covered in Prior Knowledge &sect;2 and &sect;3. Demonstrated by R3.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q2 &mdash; Answer</div>
+  <table>
+    <tr><th style="width:210px;">Field</th><th style="width:80px;">Machine</th><th>Meaning</th></tr>
+    <tr><td><code>sg_list[].addr</code></td><td>Yours</td><td>Where the data comes from (write) or lands (read)</td></tr>
+    <tr><td><code>sg_list[].lkey</code></td><td>Yours</td><td>Proves that buffer is registered here, in this protection domain</td></tr>
+    <tr><td><code>wr.rdma.remote_addr</code></td><td>Theirs</td><td>The virtual address in the peer&rsquo;s address space</td></tr>
+    <tr><td><code>wr.rdma.rkey</code></td><td>Theirs</td><td>The capability the peer granted over that region</td></tr>
+  </table>
+  <p><strong>Why a swap produces an unhelpful error:</strong> all four are just integers, and the two keys are both 32-bit values that frequently hold <em>the same numeric value</em> for a given region &mdash; a fact you observed in TRD-01 R7 and which makes the mistake nearly invisible.</p>
+  <p>Trace what happens with your local key in the remote field. The request is well-formed and your adapter transmits it. The remote adapter looks up that key in <em>its</em> registered regions. One of two things follows: the value matches nothing, and it returns a protection error; or &mdash; and this is the dangerous case &mdash; it happens to match one of its own regions, and the write lands somewhere entirely unintended and <em>succeeds</em>.</p>
+  <p>The error, when you get one, is <code>IBV_WC_REM_ACCESS_ERR</code>: the remote side refused access. That is all it can say, because from the remote adapter&rsquo;s perspective nothing anomalous happened &mdash; it was handed a key, it checked it, the check failed. It has no way to know the key was meant for a different machine.</p>
+  <p>Which is why the practical defence is printing all four fields with a label naming whose each is. The mistake is not visible in source, where both keys are <code>uint32_t</code> and both addresses are pointers.</p>
+  <div class="qa-miss">Common miss: assuming a wrong key always errors. It usually does, but a 32-bit key space is small and a value that collides with a legitimate registration on the peer produces a silent write to the wrong buffer. That is precisely why protection domains exist &mdash; TRD-01 &sect;6 &mdash; and why a multi-tenant server gives each connection its own.</div>
+  <p><em>Covered in Prior Knowledge &sect;3 and &sect;4. Exercised by R8.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q3 &mdash; Answer</div>
+  <p>Two guarantees, and the whole answer is that they operate at different granularities.</p>
+  <p><strong>What RDMA guarantees:</strong> within a single send queue, write-class work requests &mdash; <code>SEND</code>, <code>RDMA_WRITE</code>, <code>RDMA_WRITE_WITH_IMM</code> &mdash; are totally ordered against each other.<span class="cite">[5]</span> Request <em>n+1</em> cannot take effect at the destination before request <em>n</em> has.</p>
+  <p><strong>What it does not guarantee:</strong> the order in which bytes <em>within</em> a single message are placed into destination memory.<span class="cite">[1]</span> Reliable-connected service orders messages relative to one another; it says nothing about byte placement inside one. A large write is segmented into multiple packets, and nothing requires the segment containing the final byte to be written last.</p>
+  <p><strong>Why this makes the flag pattern correct:</strong> the flag is a <em>separate message</em>, posted after the payload. The between-message guarantee applies, so the flag cannot land before the payload is complete. Observing the flag is therefore sound evidence about the payload.</p>
+  <p><strong>Why it makes last-byte polling incorrect:</strong> the last byte is <em>inside</em> the payload message. Only the within-message non-guarantee applies. Observing that byte establishes that some segment containing it has landed and nothing about the rest.</p>
+  <p>The two techniques look almost identical &mdash; poll a memory location, act when it changes &mdash; and the difference between them is entirely which of the two guarantees applies. That is why the mistake is so common: the code is nearly the same and only the specification distinguishes them.</p>
+  <div class="qa-miss">Common miss: &ldquo;RC guarantees ordering, so the last byte arrives last.&rdquo; RC does guarantee ordering &mdash; between messages. Applying a between-message guarantee to within-message behaviour is the exact error, and it is convincing enough that it survives review.</div>
+  <p><em>Covered in Prior Knowledge &sect;6, and in references [1] and [5].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q4 &mdash; Answer</div>
+  <p><strong>What passing established:</strong> that on this fabric, at these sizes, on an idle machine, with this provider, you did not observe out-of-order byte placement. That is a true and narrow statement.</p>
+  <p><strong>What it did not establish:</strong> that out-of-order placement cannot occur. The specification permits it; your test simply did not provoke it. A test can demonstrate a failure but cannot demonstrate its impossibility, and when the specification explicitly declines to guarantee the behaviour you are relying on, a passing test is evidence about your test rather than about your code.</p>
+  <p>Soft-RoCE in particular is the least likely place to see this. It processes messages in kernel threads over a virtual link with a small MTU and no real segmentation offload, so the natural implementation places bytes in order. Nothing requires it to, and nothing about it predicts hardware.</p>
+  <p><strong>Where it would fail:</strong></p>
+  <ul>
+    <li><em>Hardware with real segmentation.</em> A multi-megabyte write becomes many packets, potentially reordered on the wire and reassembled by the adapter as they arrive. The final byte&rsquo;s packet can land before earlier ones.</li>
+    <li><em>Under load.</em> Congestion, retransmission, and multiple queue pairs contending all increase the chance of segments arriving out of order.</li>
+    <li><em>Across a routed fabric.</em> RoCEv2 is routable, and equal-cost multipath can distribute a flow&rsquo;s packets across links with different latencies.</li>
+  </ul>
+  <p>And the symptom is the worst kind: the reader observes a buffer that is partly new and partly stale, with success reported everywhere. No completion carries an error, no log line appears, and the corruption surfaces later as a data bug with no apparent cause.</p>
+  <p>The transferable lesson: when a correctness argument rests on observation rather than on specification, the observation is only as broad as the conditions you tested &mdash; and here the specification actively contradicts the observation.</p>
+  <div class="qa-miss">Common miss: concluding the technique is &ldquo;fine for small messages.&rdquo; A single-packet message does place its bytes atomically in practice, so the reasoning is not absurd &mdash; but it makes correctness depend on a size threshold nobody documents, that varies with MTU, and that a future change to message size silently crosses.</div>
+  <p><em>Covered in Prior Knowledge &sect;6, and Requirements R7.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q5 &mdash; Answer</div>
+  <p><strong>The case that it is two-sided</strong> rests on three observations, all of which R6 produced:</p>
+  <ul>
+    <li>It <strong>consumes a receive work request</strong> on the peer.<span class="cite">[2]</span> If none is posted, the responder returns a receiver-not-ready error<span class="cite">[3]</span> &mdash; identical behaviour to a plain <code>SEND</code>.</li>
+    <li>It <strong>generates a completion</strong> on the peer&rsquo;s completion queue. Your R6 run reported non-zero remote completions where R3 reported zero.</li>
+    <li>It therefore <strong>requires the peer&rsquo;s software to participate</strong>: post receives, replenish them, poll a completion queue. Every obligation the receiver had in TRD-03 returns.</li>
+  </ul>
+  <p>Which means the defining property of one-sided operations &mdash; remote CPU bypass &mdash; is absent. What remains one-sided is the <em>addressing</em>: the sender still chooses the destination address rather than consuming whatever buffer the receiver posted. So it is a hybrid, and calling it one-sided because of its opcode name is a category error that produces a hang the first time you forget the receives.</p>
+  <p><strong>When to choose it anyway,</strong> despite the receiver becoming active:</p>
+  <ul>
+    <li><em>Many connections.</em> Flag polling requires the receiver to poll one memory location per connection. With hundreds of peers that is either hundreds of polled locations or a scan with growing latency. Immediate data funnels every notification into one completion queue, so the receiver polls one place regardless of connection count. This is the decisive argument at scale.</li>
+    <li><em>The four immediate bytes are useful.</em> A length, a sequence number, or a buffer index arrives out of band with no in-band framing and no extra round trip.</li>
+    <li><em>You want completion-queue mechanisms.</em> Event-driven reaping, moderation, and blocking waits &mdash; all of TRD-07 &mdash; work on completions. A flag in memory has none of that, and a polling loop cannot yield the CPU.</li>
+  </ul>
+  <p>Against: it costs a receive request per message, reintroduces receiver-not-ready with a 655&nbsp;ms retry floor under the connection manager, and adds completion-processing latency that flag polling avoids.</p>
+  <div class="qa-miss">Common miss: choosing between them on latency alone. Flag polling wins on latency and loses on scalability and CPU, and which matters depends entirely on connection count and whether the receiver has a core to burn. A defensible answer names the axis rather than declaring a winner.</div>
+  <p><em>Covered in Prior Knowledge &sect;6, and Requirements R6.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q6 &mdash; Answer</div>
+  <p><strong>Gate one: the queue pair.</strong> <code>qp_access_flags</code>, set at the <code>RESET</code>&rarr;<code>INIT</code> transition in TRD-02 R5, or supplied as part of <code>rdma_conn_param</code> in TRD-05 R8. It answers: <em>may this connection perform this class of operation at all?</em> A per-peer decision.</p>
+  <p><strong>Gate two: the memory region.</strong> The access flags passed to <code>ibv_reg_mr</code> in TRD-01 R7. It answers: <em>may this specific buffer be accessed this way by anyone?</em> A per-buffer decision.</p>
+  <p>Both must permit the operation. Either refusing produces the same completion status on the initiator.<span class="cite">[4]</span></p>
+  <p><strong>Why the error cannot distinguish them:</strong> because the error is generated on the <em>responder</em> and delivered to the <em>initiator</em>, and the completion carries only a status code. The responder knows which check failed; the initiator receives a status that says access was refused. There is no field for a reason, and there could not usefully be one &mdash; telling a peer <em>which</em> of your access controls rejected it is telling a potentially hostile peer about your memory configuration.</p>
+  <p>So the diagnostic burden falls on you, which is why R8 required printing what the initiator does know &mdash; the key, address, and length used &mdash; plus a reminder that two gates exist. In practice, the first thing to check is the one configured longest ago and least recently, which is the queue-pair flags from TRD-02.</p>
+  <p>The layering is worth appreciating rather than resenting. Two independent gates let a server permit remote writes on a trusted connection while registering most of its buffers without remote write permission &mdash; an expression neither gate alone could make.</p>
+  <div class="qa-miss">Common miss: naming only the memory region&rsquo;s flags, since that is where the rkey comes from. The key identifies which memory; the queue pair&rsquo;s flags decide whether this connection may reach it. A program setting only one fails here with an error that appears to implicate the other.</div>
+  <p><em>Covered in Prior Knowledge &sect;4. Provoked by R8.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q7 &mdash; Answer</div>
+  <p><strong>What makes reads different:</strong> a read is a request that returns a value. The responder must hold state for each outstanding read &mdash; which request it belongs to, where the response goes &mdash; until it has been serviced. A write is fire-and-forget from the responder&rsquo;s perspective: the data arrives, it is placed, an acknowledgement is returned, nothing is retained. Bounded state on the responder means a bounded number of concurrent reads.</p>
+  <table>
+    <tr><th style="width:200px;">Attribute</th><th style="width:100px;">Set at</th><th>Constrains</th></tr>
+    <tr><td><code>max_rd_atomic</code> / <code>initiator_depth</code></td><td>RTS, TRD-02 R7</td><td>Reads <em>you initiate</em> that may be outstanding</td></tr>
+    <tr><td><code>max_dest_rd_atomic</code> / <code>responder_resources</code></td><td>RTR, TRD-02 R6</td><td>Reads <em>you serve</em> that may be outstanding</td></tr>
+  </table>
+  <p>Both are bounded by device attributes recorded in TRD-00 R7: <code>max_qp_init_rd_atom</code> and <code>max_qp_rd_atom</code> respectively. They are negotiated during connection setup, so the effective limit is the minimum of what each side offered.</p>
+  <p><strong>What it implies for TRD-07:</strong> pipelining &mdash; keeping several operations in flight to hide latency &mdash; has a hard ceiling on reads that it does not have on writes. Writes can be pipelined to the send queue&rsquo;s depth, potentially hundreds. Reads are capped at the negotiated depth, often 16 or fewer and 1 in this ladder&rsquo;s configuration.</p>
+  <p>Which means the two operations need different pipelining strategies, and a read-heavy workload may need the depth negotiated upward at connection time &mdash; a decision made in <code>rdma_conn_param</code> before any transfer, and not changeable afterwards without rebuilding the connection.</p>
+  <p>Exceeding the limit does not queue politely. It produces a transport error and the queue pair enters the error state, which is TRD-03 &sect;9&rsquo;s unrecoverable condition.</p>
+  <div class="qa-miss">Common miss: treating the two attributes as one, or setting them to the same value without noticing they constrain opposite directions. They are independent: a node can serve many concurrent reads while issuing few, which is exactly the profile of a storage target.</div>
+  <p><em>Covered in Prior Knowledge &sect;5. Reported by R9, exploited in TRD-07.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q8 &mdash; Answer</div>
+  <p>The stipulated workload &mdash; many small messages, hundreds of connections &mdash; points to <strong>write with immediate data</strong>, and the deciding factor is connection count rather than message size.</p>
+  <p><strong>The argument:</strong> flag polling requires the receiver to watch one memory location per connection. At hundreds of connections that is either hundreds of polled addresses, which does not fit in cache and produces a scan whose latency grows with connection count, or dedicated cores per connection, which does not scale at all. Immediate data delivers every notification to a completion queue, so the receiver polls <em>one</em> place regardless of how many peers exist. Notification cost becomes independent of connection count, which is the property that matters at this scale.</p>
+  <p>Small messages reinforce it: the flag pattern costs a second work request per message, so at small sizes the notification overhead approaches the payload cost. Immediate data carries the notification inside the payload&rsquo;s own operation.</p>
+  <p>The four immediate bytes also earn their place &mdash; a sequence number or buffer index arrives with no in-band framing, which matters more when messages are small enough that a header would be a meaningful fraction of them.</p>
+  <p><strong>What would change my mind:</strong></p>
+  <ul>
+    <li><em>Few connections and latency as the only metric.</em> Two peers, a dedicated polling core, and a target measured in nanoseconds: flag polling wins because it removes completion processing entirely. This is the high-frequency-trading profile, and it is why that industry polls memory.</li>
+    <li><em>A receiver that must not be interrupted.</em> If the remote CPU is saturated with other work, immediate data forces it to post, poll, and replenish. Plain writes with flags keep it out of the path, which is the whole reason one-sided operations exist.</li>
+    <li><em>Large messages, low rate.</em> The per-message notification cost stops mattering and either works; choose the simpler one.</li>
+    <li><em>A receiver that cannot guarantee posted receives.</em> Immediate data reintroduces receiver-not-ready, now with a 655&nbsp;ms retry floor. If the receiver&rsquo;s replenishment is unreliable, the plain-write path degrades gracefully where immediate data stalls.</li>
+  </ul>
+  <p>Worth saying plainly: production transports use both, in different places. Bulk data moves by plain write; control messages and completion notifications use immediate data or sends. Treating this as a single global choice is the framing to resist.</p>
+  <div class="qa-miss">Common miss: choosing flag polling because it is &ldquo;more one-sided&rdquo; or truer to RDMA&rsquo;s spirit. The property is a means, not an end, and at hundreds of connections it buys a per-connection polling cost that outweighs what it saves. Purity is not a design criterion.</div>
+  <p><em>Covered in Prior Knowledge &sect;6, and the R5, R6, and R7 comparison in the deliverable notes.</em></p>
+</div>
+
+<h2>References Cited in This Key</h2>
+
+<ol class="refs">
+  <li>[1] Barak, Dotan. <em>RDMAmojo &mdash; Fence.</em> https://www.rdmamojo.com/2013/12/06/fence/</li>
+  <li>[2] Barak, Dotan. <em>RDMAmojo &mdash; ibv_post_send().</em> https://www.rdmamojo.com/2013/01/26/ibv_post_send/</li>
+  <li>[3] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual.</em> https://docs.nvidia.com/rdma-aware-networks-programming-user-manual-1-7.pdf</li>
+  <li>[4] <em>ibv_reg_mr(3).</em> Linux manual page, section 3.</li>
+  <li>[5] Reda, Waleed, et al. <em>RDMA is Turing complete, we just did not know it yet.</em> arXiv. https://arxiv.org/pdf/2103.13351</li>
+</ol>
+
+<p style="font-size:9pt; font-style:italic;">Numbering matches the reference list in the TRD-06 Prior Knowledge document.</p>
+
+</div>
+
+<div class="footer">
+  TRD-06: One-Sided Operations &nbsp;|&nbsp; Comprehension &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-03: Two-Sided Transfer — Requirements</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.hint-ref { border: 1px solid #000; padding: 3px 8px; margin: 6px 0 2px 0; font-size: 9pt; font-style: italic; display: inline-block; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-03: Two-Sided Transfer</h1>
+  <div class="subtitle">Requirements — Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-02 &nbsp;|&nbsp; Difficulty: Medium-High &nbsp;|&nbsp; Estimated: 3–5 sessions</div>
+</div>
+
+<h2>Objective</h2>
+
+<p>Build <code>limen_pingpong</code>: a two-node program that brings up a connected queue pair as in TRD-02, then posts receive and send work requests, polls completions, verifies payloads, and runs a bounded ping-pong loop. It must also be able to provoke the receiver-not-ready condition deliberately and report what happened.</p>
+
+<h2>What This Is Not</h2>
+
+<p>No flow control. The ping-pong is self-limiting because each side sends only in reply, and that is the property this rung exploits rather than solves. Credit schemes are TRD-05 territory at the earliest and are not built here.</p>
+
+<p>No pipelining and no unsignalled sends as a technique — one message outstanding at a time, every send signalled. TRD-07 changes both, deliberately, once there is something to measure.</p>
+
+<p>Nothing one-sided. The remote key printed in TRD-01 stays unused. Both peers run, both post, both poll.</p>
+
+<p>Still no C++ resource management. This program reaches seven handles and two buffers with ownership rules the type system does not express, which is the complete argument for TRD-04.</p>
+
+<h2>Interface</h2>
+
+<pre>./build/limen_pingpong -d &lt;device&gt; -g &lt;gid_index&gt; [-p &lt;port&gt;] [-t &lt;tcp_port&gt;]
+                       [-s &lt;bytes&gt;] [-n &lt;iterations&gt;] [-r &lt;rx_depth&gt;]
+                       [--rnr-retry &lt;n&gt;] [--no-recv] [--unsignaled] [&lt;peer&gt;]</pre>
+
+<table>
+  <tr><th style="width:150px;">Argument</th><th>Effect</th></tr>
+  <tr><td><code>-d</code>, <code>-g</code>, <code>-p</code>, <code>-t</code></td><td>As TRD-02. Device, GID index, RDMA port, TCP port.</td></tr>
+  <tr><td><code>-s &lt;bytes&gt;</code></td><td>Message size. Default 4096.</td></tr>
+  <tr><td><code>-n &lt;iterations&gt;</code></td><td>Ping-pong rounds. Default 100.</td></tr>
+  <tr><td><code>-r &lt;rx_depth&gt;</code></td><td>Receives posted up front. Default 8. Clamped to the granted <code>max_recv_wr</code>.</td></tr>
+  <tr><td><code>--rnr-retry &lt;n&gt;</code></td><td>Override <code>rnr_retry</code> at the RTS transition. Default 7, which means infinite.<span class="cite">[5]</span></td></tr>
+  <tr><td><code>--no-recv</code></td><td>Skip posting receives entirely. For R8.</td></tr>
+  <tr><td><code>--unsignaled</code></td><td>Omit <code>IBV_SEND_SIGNALED</code> from send requests. For R9.</td></tr>
+  <tr><td><code>&lt;peer&gt;</code></td><td>Absent means server, present means client.</td></tr>
+</table>
+
+<p>Exit codes: 0 success, 1 usage error, 2 device not found, 3 verbs operation failed, 4 side-channel failure, 5 completion reported an error status, 6 payload verification failed.</p>
+
+<h2>Output Contract</h2>
+
+<p>Bringup output is inherited from TRD-02 unchanged. This rung adds:</p>
+
+<pre>recv: posted=8 depth=8 size=4096
+pingpong: role=client iterations=100 size=4096 signaled=yes rnr_retry=7
+completion: wr_id=0x0000000000000001 opcode=SEND status=SUCCESS
+completion: wr_id=0x0000000000000100 opcode=RECV status=SUCCESS byte_len=4096
+result: iterations=100 sent=100 received=100 mismatches=0
+teardown: qp=ok cq=ok mr=ok pd=ok context=ok</pre>
+
+<p>An error completion prints the restricted form and stops:</p>
+
+<pre>completion: wr_id=0x0000000000000001 status=RNR_RETRY_EXC_ERR vendor_err=0x00000022 qp_num=0x0000011a
+  note: opcode and byte_len are not valid on an error completion
+qp_state_after_error: ERR
+result: iterations=100 sent=1 received=0 mismatches=0 first_error=RNR_RETRY_EXC_ERR
+teardown: qp=ok cq=ok mr=ok pd=ok context=ok</pre>
+
+<h2>Technical Requirements</h2>
+
+<h3>R1 — Separate Send and Receive Buffers</h3>
+<p>Register two memory regions, or one region with two non-overlapping halves: one the send buffer, one an array of <code>rx_depth</code> receive slots each of the message size.</p>
+<p>Sharing a single buffer for both directions happens to work in a strict ping-pong and breaks the moment anything overlaps. Separating them now costs nothing and removes a class of failure that would otherwise appear in TRD-07 as intermittent corruption.</p>
+<p>Print the <code>recv:</code> line reporting slots posted, depth, and message size.</p>
+<span class="hint-ref">Stuck? → Hints H1</span>
+
+<h3>R2 — Post Receives Before Any Send</h3>
+<p>After the queue pair reaches <code>RTS</code> and before signalling readiness to the peer, post <code>rx_depth</code> receive work requests, one per slot, each with a <code>wr_id</code> that identifies which slot it names.</p>
+<p>Clamp <code>rx_depth</code> to the <code>max_recv_wr</code> the provider granted in TRD-02 — the granted value, not the requested one.</p>
+<div class="warning">Both sides must have posted before either sends. Use the side channel: after posting, exchange a one-byte ready marker over the TCP socket already open from R4 of TRD-02, and only then begin. Without that synchronisation the first message can arrive before the peer's receives are posted, and section 8 of the Prior Knowledge document describes what happens next.</div>
+<span class="hint-ref">Stuck? → Hints H2</span>
+
+<h3>R3 — Post a Send</h3>
+<p>Post an <code>IBV_WR_SEND</code> work request naming the send buffer through a single scatter-gather entry carrying the region's local key.</p>
+<p>Set <code>IBV_SEND_SIGNALED</code> unless <code>--unsignaled</code> was given. TRD-02 created the queue pair with <code>sq_sig_all</code> at zero, so without this flag no send completion is generated.<span class="cite">[1]</span></p>
+<p>Use a <code>wr_id</code> scheme that distinguishes send requests from receive requests at a glance — the completion carries nothing else identifying which queue it came from.</p>
+<span class="hint-ref">Stuck? → Hints H3</span>
+
+<h3>R4 — Poll for Completions</h3>
+<p>Poll the completion queue in a loop. Read only the first <em>n</em> entries of your array, where <em>n</em> is the value the call returned; a negative return is a failure and exits 3.<span class="cite">[2]</span></p>
+<p>Zero is the ordinary case and is not an error. A polling loop that treats it as one will fail constantly.</p>
+<p>Bound the wait. A loop with no timeout is indistinguishable from a hang, and R8 requires you to be able to tell those apart. Ten seconds without a completion is a timeout, reported as such, exiting 5.</p>
+<span class="hint-ref">Stuck? → Hints H4</span>
+
+<h3>R5 — Interpret Completions Correctly</h3>
+<p>Branch on <code>status</code> before reading anything else.</p>
+<p>On success, print the <code>completion:</code> line with <code>wr_id</code>, the opcode rendered symbolically, the status, and — for receive completions only — <code>byte_len</code>.</p>
+<p>On failure, print only <code>wr_id</code>, <code>status</code>, <code>vendor_err</code>, and <code>qp_num</code>, followed by the note line shown in the Output Contract. Those four are the only fields the specification guarantees are valid when the status is not success; <code>opcode</code> and <code>byte_len</code> are undefined and printing them produces confident nonsense.<span class="cite">[2]</span></p>
+<p>Use <code>ibv_wc_status_str()</code> for the status text rather than writing a table.</p>
+<span class="hint-ref">Stuck? → Hints H5</span>
+
+<h3>R6 — Ping-Pong Loop</h3>
+<p>Run <code>-n</code> rounds. Each round: reap a receive completion, verify the payload, post a replacement receive, then post the reply. The client sends the opening message.</p>
+<div class="callout">
+  <div class="callout-label">Replenish before replying</div>
+  <p>Post the replacement receive <em>before</em> posting the reply, not after. Replying first opens a window in which the peer's answer can arrive at a queue pair with no receive posted, and on a fast link that window is wide enough to hit.</p>
+</div>
+<p>Track sends posted, receives reaped, and completions of each kind. Print the <code>result:</code> line at the end.</p>
+<span class="hint-ref">Stuck? → Hints H6</span>
+
+<h3>R7 — Payload Verification</h3>
+<p>Fill the send buffer with a pattern that encodes the iteration number, so that a duplicated, stale, or reordered message is detectable rather than merely a byte mismatch. Verify every received message against the pattern expected for that round.</p>
+<p>Count mismatches and report them in the <code>result:</code> line. Any non-zero count exits 6, distinctly from a completion error, because a successful completion carrying wrong data is a different fault with different causes.</p>
+<p>Verify the full <code>byte_len</code> reported by the completion, not the size you expected. Those agreeing is a fact worth confirming rather than assuming.</p>
+<span class="hint-ref">Stuck? → Hints H7</span>
+
+<h3>R8 — Provoke Receiver Not Ready</h3>
+<p>The program must be able to demonstrate the condition in both of its forms.</p>
+<ul>
+  <li><code>--no-recv</code> with the default <code>--rnr-retry 7</code>: the peer's send is retried indefinitely and your polling loop reaches R4's timeout. Report the timeout explicitly, naming an unposted receive as the probable cause.</li>
+  <li><code>--no-recv --rnr-retry 1</code>: the retry budget is finite, so the sender receives an <code>IBV_WC_RNR_RETRY_EXC_ERR</code> completion. Report it through R5's error path.</li>
+</ul>
+<p>The same fault therefore produces a silent hang under one configuration and a self-naming error under another, and the difference is a single value set at the RTS transition. Being able to switch between them on demand is the point of this requirement.</p>
+<span class="hint-ref">Stuck? → Hints H8</span>
+
+<h3>R9 — Unsignalled Send Demonstration</h3>
+<p>With <code>--unsignaled</code>, omit <code>IBV_SEND_SIGNALED</code>. The transfer still occurs and the peer still receives, but no send completion is generated.</p>
+<p>The program must not hang waiting for one. Report the absence explicitly — that sends were posted, that receives were reaped, and that zero send completions appeared — and exit 0, since nothing failed.</p>
+<p>This exists so that the flag's effect is observed rather than believed. It is also a trap this rung inherits from TRD-02: an unsignalled send that works is invisible, and a loop written to expect a completion waits forever for one that was never coming.</p>
+<span class="hint-ref">Stuck? → Hints H9</span>
+
+<h3>R10 — Error Consequences</h3>
+<p>On the first non-success completion, query the queue pair and print <code>qp_state_after_error:</code> with the state rendered symbolically. It will be <code>ERR</code>.<span class="cite">[3]</span></p>
+<p>Record the <em>first</em> non-success status in the <code>result:</code> line as <code>first_error</code>. When a queue pair enters the error state every outstanding request is completed with <code>IBV_WC_WR_FLUSH_ERR</code>,<span class="cite">[6]</span> so one real failure produces a burst of completions of which exactly one names the cause. A program that reports the last error it saw reports the debris.</p>
+<p>Do not attempt recovery. A reliable-connected queue pair in the error state requires transitioning back through <code>RESET</code> and repeating the whole of TRD-02 on both nodes; exit 5 and let teardown run.</p>
+<span class="hint-ref">Stuck? → Hints H10</span>
+
+<h3>R11 — Buffer Ownership and Teardown</h3>
+<p>Do not write the send buffer for round <em>n+1</em> until the completion for round <em>n</em> has been reaped. Do not read a receive slot until its completion has appeared. Nothing enforces this and violations produce intermittent corruption under load rather than an error.<span class="cite">[1]</span></p>
+<p>Teardown in reverse creation order, now covering both memory regions: queue pair, completion queue, receive region, send region, protection domain, context. Print the <code>teardown:</code> line reporting every stage.</p>
+<p>Every exit path unwinds, including the R8 timeout and the R10 error path. Under <code>valgrind --leak-check=full</code>, zero bytes definitely lost on a successful run, on an RNR run, and on a verification failure.</p>
+<span class="hint-ref">Stuck? → Hints H11</span>
+
+<h2>Acceptance Criteria</h2>
+
+<table>
+  <tr><th style="width:40px;">ID</th><th>Criterion</th><th style="width:215px;">Verified by</th></tr>
+  <tr><td>R1</td><td>Target builds clean under <code>-Wall -Wextra</code></td><td><code>test_builds</code></td></tr>
+  <tr><td>R1</td><td><code>recv:</code> line reports slots, depth, and size</td><td><code>test_recv_buffers_reported</code></td></tr>
+  <tr><td>R2</td><td>Receives are posted before the first send is issued</td><td><code>test_recv_posted_first</code></td></tr>
+  <tr><td>R3</td><td>A signalled send produces a send completion</td><td><code>test_send_completion_appears</code></td></tr>
+  <tr><td>R4</td><td>A poll returning zero does not terminate the loop</td><td><code>test_poll_tolerates_empty</code></td></tr>
+  <tr><td>R5</td><td>Success completions report opcode and, for receives, <code>byte_len</code></td><td><code>test_success_fields_reported</code></td></tr>
+  <tr><td>R5</td><td>Error completions omit opcode and <code>byte_len</code> and carry the validity note</td><td><code>test_error_field_validity</code></td></tr>
+  <tr><td>R6</td><td>The full ping-pong completes and counts match the requested iterations</td><td><code>test_pingpong_completes</code></td></tr>
+  <tr><td>R6</td><td>A non-default iteration count is honoured</td><td><code>test_iteration_count_honoured</code></td></tr>
+  <tr><td>R7</td><td>Payloads verify with zero mismatches</td><td><code>test_payload_verified</code></td></tr>
+  <tr><td>R8</td><td><code>--no-recv</code> with infinite retry times out rather than hanging forever</td><td><code>test_rnr_infinite_times_out</code></td></tr>
+  <tr><td>R8</td><td><code>--no-recv --rnr-retry 1</code> yields an RNR retry-exceeded completion</td><td><code>test_rnr_finite_reports_error</code></td></tr>
+  <tr><td>R9</td><td><code>--unsignaled</code> transfers data, reports zero send completions, exits 0</td><td><code>test_unsignaled_no_completion</code></td></tr>
+  <tr><td>R10</td><td>After an error completion the queue pair reports <code>ERR</code></td><td><code>test_qp_error_after_failure</code></td></tr>
+  <tr><td>R10</td><td>The <em>first</em> non-success status is reported, not the last</td><td><code>test_first_error_reported</code></td></tr>
+  <tr><td>R11</td><td><code>teardown:</code> line reports all stages</td><td><code>test_teardown_reports_all</code></td></tr>
+  <tr><td>R11</td><td><code>valgrind</code> reports zero bytes definitely lost on success and on the RNR path</td><td><code>test_no_leaks</code></td></tr>
+</table>
+
+<h2>Deliverables</h2>
+
+<ul>
+  <li><code>src/limen_pingpong.c</code> (or <code>.cpp</code>) and any headers under <code>include/limen/</code>. Bringup may be factored out of <code>limen_connect</code> into a shared translation unit rather than duplicated.</li>
+  <li>An updated <code>CMakeLists.txt</code> building all three programs.</li>
+  <li><code>scripts/trd-03-tests.sh</code>, executable, passing.</li>
+  <li><code>docs/transfer-log.md</code> recording: one successful hundred-iteration run from both nodes; the output of an <code>--no-recv</code> run at infinite retry; the output of an <code>--no-recv --rnr-retry 1</code> run; and the output of an <code>--unsignaled</code> run. Four captures, with a sentence on each describing what the difference demonstrates.</li>
+  <li>An updated <code>README.md</code>.</li>
+  <li>Written answers to the comprehension questions.</li>
+</ul>
+
+<h2>What Comes Next</h2>
+
+<p>TRD-04 replaces every hand-written cleanup path in this program with C++ types that own their resources. The seven handles, two buffers, and the ownership rule in R11 that the type system cannot currently express are the whole argument, and this program is the thing that gets refactored.</p>
+
+<p>The four captures in <code>docs/transfer-log.md</code> are not busywork. TRD-07 changes the signalling policy and the queue depths deliberately, and the unsignalled capture is the baseline that makes those changes legible rather than mysterious.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_post_send(3)</em> and <em>ibv_post_recv(3).</em> Linux manual pages, section 3. Work request structures, the send flag semantics required by R3 and R9 — including that <code>IBV_SEND_SIGNALED</code> is only relevant when the queue pair was created with <code>sq_sig_all</code> at zero — and the buffer reuse rule R11 enforces. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+
+  <li>[2] <em>ibv_poll_cq(3).</em> Linux manual page, section 3. The return convention required by R4, and the normative list of completion fields that remain valid when the status is not success, which R5 depends on. https://man7.org/linux/man-pages/man3/ibv_poll_cq.3.html</li>
+
+  <li>[3] Barak, Dotan. <em>RDMAmojo — ibv_poll_cq().</em> Establishes that an error completion transitions a reliable-connected queue pair to the error state permanently, as R10 requires you to confirm. Accessed 2026-07. https://www.rdmamojo.com/2013/02/15/ibv_poll_cq/</li>
+
+  <li>[4] <em>ibv_query_qp(3).</em> Linux manual page, section 3. State readback used by R10.</li>
+
+  <li>[5] Barak, Dotan. <em>RDMAmojo — ibv_post_send().</em> Source for <code>rnr_retry = 7</code> denoting infinite retries, the default this rung inherits from TRD-02 and that R8 requires you to override. Accessed 2026-07. https://www.rdmamojo.com/2013/01/26/ibv_post_send/</li>
+
+  <li>[6] <em>ibv_wc completion status reference.</em> Definition of <code>IBV_WC_WR_FLUSH_ERR</code> as a request outstanding when the queue pair entered the error state — the flush burst R10 requires you to see past. Accessed 2026-07. https://docs.rs/ibverbs/0.3.0/ibverbs/ffi/struct.ibv_wc.html</li>
+
+  <li>[7] linux-rdma. <em>rdma-core.</em> <code>libibverbs/examples/rc_pingpong.c</code> — reference posting and polling loop, including the receive replenishment ordering specified in R6. Accessed 2026-07. https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/examples/rc_pingpong.c</li>
+</ol>
+
+<div class="footer">
+  TRD-03: Two-Sided Transfer &nbsp;|&nbsp; Requirements &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

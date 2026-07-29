@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-02: Queue Pairs and the State Machine — Requirements</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.hint-ref { border: 1px solid #000; padding: 3px 8px; margin: 6px 0 2px 0; font-size: 9pt; font-style: italic; display: inline-block; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-02: Queue Pairs and the State Machine</h1>
+  <div class="subtitle">Requirements — Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-01 &nbsp;|&nbsp; Difficulty: High &nbsp;|&nbsp; Estimated: 4–6 sessions</div>
+</div>
+
+<h2>Objective</h2>
+
+<p>Build <code>limen_connect</code>: a two-node program that creates a completion queue and a reliable-connected queue pair, exchanges endpoint parameters with a peer over TCP, drives the queue pair from <code>RESET</code> to <code>RTS</code> through all three transitions, and verifies the result by querying the queue pair back.</p>
+
+<h2>What This Is Not</h2>
+
+<p>Nothing is transmitted over RDMA. No work requests are posted, no completions are polled, and the registered buffer from TRD-01 is carried along unused. The queue pair ends the program connected and idle — a state a real transport would never occupy, and the right place to stop while the state machine is what is being learned.</p>
+
+<p>The TCP side channel is disposable. It needs no framing, no versioning, and no reconnection logic, because TRD-05 deletes it. Time spent making it robust is time wasted.</p>
+
+<p>Still no C++ resource management. TRD-04 is where that arrives, and the seven-handle teardown this rung produces is the argument for it.</p>
+
+<h2>Interface</h2>
+
+<pre>./build/limen_connect -d &lt;device&gt; -g &lt;gid_index&gt; [-p &lt;port&gt;] [-t &lt;tcp_port&gt;] [-s &lt;bytes&gt;] [&lt;peer&gt;]</pre>
+
+<table>
+  <tr><th style="width:150px;">Argument</th><th>Effect</th></tr>
+  <tr><td><code>-d &lt;device&gt;</code></td><td>RDMA device to open. Required.</td></tr>
+  <tr><td><code>-g &lt;gid_index&gt;</code></td><td>Index into the local GID table. Required — there is no safe default.</td></tr>
+  <tr><td><code>-p &lt;port&gt;</code></td><td>RDMA port number. Default 1.</td></tr>
+  <tr><td><code>-t &lt;tcp_port&gt;</code></td><td>TCP port for the parameter exchange. Default 18515.</td></tr>
+  <tr><td><code>-s &lt;bytes&gt;</code></td><td>Buffer size to allocate and register. Default 4096.</td></tr>
+  <tr><td><code>&lt;peer&gt;</code></td><td>Peer address. Absent means server, present means client — the same convention the reference tools use.</td></tr>
+</table>
+
+<p>Exit codes: 0 success, 1 usage error, 2 device not found, 3 verbs operation failed, 4 side-channel failure.</p>
+
+<h2>Output Contract</h2>
+
+<p>The test suite matches these lines. Both roles produce the same shape.</p>
+
+<pre>role: server
+local:  qpn=0x0000011a psn=0x00a3f2c1 gid=fe80:0000:0000:0000:0000:0000:0a00:0001 lid=0x0000
+remote: qpn=0x0000012b psn=0x0071ee40 gid=fe80:0000:0000:0000:0000:0000:0a00:0002 lid=0x0000
+cq: cqe=64 (requested 32)
+qp: type=RC max_send_wr=16 max_recv_wr=16 max_send_sge=1 max_recv_sge=1
+state: RESET -&gt; INIT ok
+state: INIT -&gt; RTR ok
+state: RTR -&gt; RTS ok
+verify: qp_state=RTS
+teardown: qp=ok cq=ok mr=ok pd=ok context=ok</pre>
+
+<p>A failed transition replaces its <code>ok</code> and stops:</p>
+
+<pre>state: INIT -&gt; RTR FAILED: EINVAL (Invalid argument)
+  attr_mask: IBV_QP_STATE|IBV_QP_AV|IBV_QP_PATH_MTU|IBV_QP_DEST_QPN|IBV_QP_RQ_PSN|IBV_QP_MAX_DEST_RD_ATOMIC|IBV_QP_MIN_RNR_TIMER
+  ah_attr: is_global=1 sgid_index=3 hop_limit=1 port_num=1
+  dgid: fe80:0000:0000:0000:0000:0000:0a00:0002
+  path_mtu: 1024  dest_qp_num: 0x0000012b  rq_psn: 0x0071ee40
+  hint: on RoCE, is_global must be 1 and grh must be populated</pre>
+
+<h2>Technical Requirements</h2>
+
+<h3>R1 — Completion Queue Sized From Device Attributes</h3>
+<p>Create a completion queue with capacity for at least the sum of the send and receive queue depths chosen in R2. Clamp the request to <code>max_cqe</code> from the device attributes; do not use a literal constant as the ceiling.</p>
+<p>Print the <code>cq:</code> line reporting the granted <code>cqe</code> and the value requested. Providers round up, and the report exists so you observe that rather than assume it did not happen.</p>
+<span class="hint-ref">Stuck? → Hints H1</span>
+
+<h3>R2 — Reliable-Connected Queue Pair</h3>
+<p>Create an <code>IBV_QPT_RC</code> queue pair against the protection domain, using the completion queue from R1 for both send and receive.</p>
+<p>Clamp each of <code>max_send_wr</code>, <code>max_recv_wr</code>, <code>max_send_sge</code>, and <code>max_recv_sge</code> against the corresponding device limits before the call. After the call, print the <code>qp:</code> line reporting the values the provider actually granted — read them back out of the structure you passed, which the call writes into.</p>
+<span class="hint-ref">Stuck? → Hints H2</span>
+
+<h3>R3 — Local Endpoint Identity</h3>
+<p>Assemble the four values the peer needs: the queue pair number from the created queue pair, a randomly chosen 24-bit packet sequence number, the GID at the index given by <code>-g</code>, and the port's LID.</p>
+<p>Print the <code>local:</code> line. Render the GID in the conventional colon-separated hexadecimal form so it can be compared by eye against <code>show_gids</code> output.</p>
+<div class="warning">A GID that prints as all zeroes means the index selects an unpopulated table entry. The program must detect this and exit 3 with a message naming the index, rather than proceeding to a transition that will fail for a reason the error will not identify.</div>
+<span class="hint-ref">Stuck? → Hints H3</span>
+
+<h3>R4 — Side-Channel Exchange</h3>
+<p>Exchange the R3 values with the peer over TCP. Server binds and accepts; client connects. Both must send their own values and receive the peer's before either proceeds.</p>
+<p>Encode as text, one line, fields separated by a single character. Do not transmit a struct — layout and endianness differ across machines and a text line can be read directly out of a packet capture when the exchange is what broke.</p>
+<p>Print the <code>remote:</code> line in the same format as <code>local:</code>. A side-channel failure exits 4, distinctly from a verbs failure, so that the two classes are distinguishable without reading the message.</p>
+<span class="hint-ref">Stuck? → Hints H4</span>
+
+<h3>R5 — RESET → INIT</h3>
+<p>Transition the queue pair to <code>INIT</code> with the mask required for the reliable-connected service type.<span class="cite">[1]</span></p>
+<p>Set <code>qp_access_flags</code> to permit incoming remote reads and writes. TRD-06 requires this, and the value cannot be changed on a connected queue pair without transitioning back through <code>RESET</code> and repeating the entire bringup.</p>
+<p>Print <code>state: RESET -&gt; INIT ok</code>.</p>
+<span class="hint-ref">Stuck? → Hints H5</span>
+
+<h3>R6 — INIT → RTR</h3>
+<p>Transition to <code>RTR</code> with the required mask, supplying the peer's queue pair number and sequence number from R4, the path MTU from the port attributes, and a fully populated address vector.</p>
+<p>The address vector must set <code>is_global</code>, the destination GID, the source GID index, the hop limit, and the port number. Section 8 of the Prior Knowledge document explains which of those is the peer's value and which is an index into your own table — they are not symmetric and confusing them is the second most common failure here.</p>
+<p>Print <code>state: INIT -&gt; RTR ok</code>. This is the transition that fails; R10 governs what happens when it does.</p>
+<span class="hint-ref">Stuck? → Hints H6</span>
+
+<h3>R7 — RTR → RTS</h3>
+<p>Transition to <code>RTS</code> with the required mask, supplying your own sequence number, the acknowledgement timeout, both retry counts, and the outstanding-read limit clamped against <code>max_qp_rd_atom</code>.</p>
+<p>Print <code>state: RTR -&gt; RTS ok</code>.</p>
+<div class="callout">
+  <div class="callout-label">Which sequence number goes where</div>
+  <p><code>rq_psn</code> at R6 takes the <em>peer's</em> number. <code>sq_psn</code> here takes <em>yours</em>. Crossing them is accepted by both transitions without error and surfaces in TRD-03 as a transfer that never completes.</p>
+</div>
+<span class="hint-ref">Stuck? → Hints H7</span>
+
+<h3>R8 — Verify State</h3>
+<p>After the final transition, query the queue pair back and print <code>verify: qp_state=RTS</code>. Any other state exits 3.</p>
+<p>This is the rung's gate. With nothing transmitted, a queue pair reporting <code>RTS</code> on both ends is the only available evidence that bringup succeeded — and it is also the only way to detect a queue pair that has silently fallen into the error state, which is externally indistinguishable from one sitting idle.</p>
+<span class="hint-ref">Stuck? → Hints H8</span>
+
+<h3>R9 — GID Index Validation</h3>
+<p>Require <code>-g</code> explicitly; do not default it. Validate the supplied index against <code>gid_tbl_len</code> from the port attributes and exit 1 if it is out of range.</p>
+<p>If the GID at that index is all zeroes, exit 3 with a message naming the index and pointing at the enumeration procedure from TRD-00. A silently wrong GID index is the single most expensive mistake available at this rung, because the resulting failure appears at R6 with an error that does not mention GIDs.</p>
+<span class="hint-ref">Stuck? → Hints H9</span>
+
+<h3>R10 — Transition Failure Diagnosis</h3>
+<p>A failed transition must print the diagnostic block shown in the Output Contract before exiting 3: the symbolic errno with its description, the attribute mask rendered as pipe-separated flag names, and every attribute the mask names with the value actually passed.</p>
+<p>For a failed RTR transition specifically, the block must include the address vector fields and the RoCE hint. This is not decoration. <code>EINVAL</code> from this transition carries no information about which of eleven fields was wrong, and a program that prints only the errno leaves you comparing your code against a manual page line by line.</p>
+<p>Every verbs call is checked using the convention its own manual page documents. <code>ibv_modify_qp()</code> returns 0 or an errno <em>value</em>; testing for <code>-1</code> produces a check that never fires.<span class="cite">[1]</span></p>
+<span class="hint-ref">Stuck? → Hints H10</span>
+
+<h3>R11 — Teardown Order</h3>
+<p>Destroy in reverse creation order: queue pair, completion queue, memory region, protection domain, context. The queue pair must go before the completion queue it references, and both before the protection domain.</p>
+<p>Print the <code>teardown:</code> line reporting each stage as <code>ok</code>, <code>n/a</code>, or the symbolic errno. Every exit path unwinds what it created, including the failure paths from R6 and R10. Running under <code>valgrind --leak-check=full</code> must report zero bytes definitely lost on both a successful run and a deliberately failed one.</p>
+<span class="hint-ref">Stuck? → Hints H11</span>
+
+<h2>Acceptance Criteria</h2>
+
+<table>
+  <tr><th style="width:40px;">ID</th><th>Criterion</th><th style="width:200px;">Verified by</th></tr>
+  <tr><td>R1</td><td>Target builds clean under <code>-Wall -Wextra</code></td><td><code>test_builds</code></td></tr>
+  <tr><td>R1</td><td><code>cq:</code> line reports granted and requested capacity</td><td><code>test_cq_reports_capacity</code></td></tr>
+  <tr><td>R2</td><td><code>qp:</code> line reports type RC and all four granted capabilities</td><td><code>test_qp_reports_caps</code></td></tr>
+  <tr><td>R3</td><td><code>local:</code> line carries qpn, psn, gid, and lid</td><td><code>test_local_identity</code></td></tr>
+  <tr><td>R3</td><td>A GID that reads all zeroes is rejected with exit 3</td><td><code>test_zero_gid_rejected</code></td></tr>
+  <tr><td>R4</td><td><code>remote:</code> line appears and its qpn differs from the local one</td><td><code>test_exchange_completed</code></td></tr>
+  <tr><td>R4</td><td>An unreachable peer exits 4, not 3</td><td><code>test_side_channel_failure_exits_four</code></td></tr>
+  <tr><td>R5</td><td><code>state: RESET -&gt; INIT ok</code> is printed</td><td><code>test_init_transition</code></td></tr>
+  <tr><td>R6</td><td><code>state: INIT -&gt; RTR ok</code> is printed</td><td><code>test_rtr_transition</code></td></tr>
+  <tr><td>R7</td><td><code>state: RTR -&gt; RTS ok</code> is printed</td><td><code>test_rts_transition</code></td></tr>
+  <tr><td>R8</td><td><code>verify: qp_state=RTS</code> is printed and the process exits 0</td><td><code>test_verify_rts</code></td></tr>
+  <tr><td>R9</td><td>A GID index above <code>gid_tbl_len</code> exits 1</td><td><code>test_bad_gid_index_exits_one</code></td></tr>
+  <tr><td>R9</td><td>A missing <code>-g</code> exits 1 rather than defaulting</td><td><code>test_missing_gid_exits_one</code></td></tr>
+  <tr><td>R10</td><td>A forced transition failure prints mask and attribute values</td><td><code>test_failure_diagnostic</code></td></tr>
+  <tr><td>R11</td><td><code>teardown:</code> line reports all five stages</td><td><code>test_teardown_reports_all</code></td></tr>
+  <tr><td>R11</td><td><code>valgrind</code> reports zero bytes definitely lost</td><td><code>test_no_leaks</code></td></tr>
+</table>
+
+<h2>Deliverables</h2>
+
+<ul>
+  <li><code>src/limen_connect.c</code> (or <code>.cpp</code>) and any headers under <code>include/limen/</code>.</li>
+  <li>An updated <code>CMakeLists.txt</code> building both <code>limen_devinfo</code> and <code>limen_connect</code>.</li>
+  <li><code>scripts/trd-02-tests.sh</code>, executable, passing.</li>
+  <li><code>docs/bringup-log.md</code> recording one complete successful run from both nodes, and — if you hit one — the diagnostic block from a failed RTR transition with a note on what the cause turned out to be.</li>
+  <li>An updated <code>README.md</code> documenting usage, the GID index your fabric requires, and the exit codes.</li>
+  <li>Written answers to the comprehension questions.</li>
+</ul>
+
+<h2>What Comes Next</h2>
+
+<p>TRD-03 posts the first work request into the queue pair this rung connected. Receives must be posted before the peer sends, which is where the receiver-not-ready condition becomes concrete rather than a parameter you set at R6. The registered buffer carried unused through this rung becomes the buffer that is actually transferred, addressed by the local key printed in TRD-01.</p>
+
+<p>The five-handle teardown in R11 becomes seven in TRD-03 and continues growing. TRD-04 replaces it.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_modify_qp(3).</em> Linux manual page, section 3. Defines the minimum required attribute masks per transition for each transport service type, as used in R5, R6, and R7, and the return convention R10 requires you to honour — 0 on success, or the value of <code>errno</code> on failure. https://man7.org/linux/man-pages/man3/ibv_modify_qp.3.html</li>
+
+  <li>[2] <em>ibv_create_qp(3)</em> and <em>ibv_create_cq(3).</em> Linux manual pages, section 3. Creation parameters and the capability write-back behaviour that R1 and R2 require you to report.</li>
+
+  <li>[3] <em>ibv_create_ah(3).</em> Linux manual page, section 3. Defines <code>struct ibv_ah_attr</code> and <code>struct ibv_global_route</code>, the fields R6 requires you to populate and R10 requires you to report on failure.</li>
+
+  <li>[4] <em>ibv_query_qp(3)</em> and <em>ibv_query_gid(3).</em> Linux manual pages, section 3. State readback used by R8, and GID table access used by R3 and R9.</li>
+
+  <li>[5] linux-rdma. <em>rdma-core.</em> <code>libibverbs/examples/rc_pingpong.c</code> — reference implementation of the bringup sequence and side-channel exchange specified in R4 through R7. Accessed 2026-07. https://github.com/linux-rdma/rdma-core/blob/master/libibverbs/examples/rc_pingpong.c</li>
+</ol>
+
+<div class="footer">
+  TRD-02: Queue Pairs and the State Machine &nbsp;|&nbsp; Requirements &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

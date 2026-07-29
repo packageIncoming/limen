@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-00: Fabric Up — Prior Knowledge</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; }
+em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; }
+li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.hint-ref { border: 1px solid #000; padding: 3px 8px; margin: 6px 0 2px 0; font-size: 9pt; font-style: italic; display: inline-block; }
+.level-box { border: 2px solid #000; padding: 12px 14px; margin: 10px 0; page-break-inside: avoid; }
+.level-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.trd-card { border: 2px solid #000; margin: 16px 0; page-break-inside: avoid; }
+.trd-header { background: #f5f5f5; border-bottom: 1.5px solid #000; padding: 6px 12px; font-weight: bold; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.trd-card .trd-body { padding: 10px 12px; }
+.trd-card .trd-body p:last-child { margin-bottom: 0; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.answer-key { page-break-before: always; }
+.qa-block { border: 1.5px solid #000; padding: 12px 14px; margin: 14px 0; page-break-inside: avoid; }
+.qa-block .qa-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px; }
+.qa-miss { border-left: 4px solid #000; padding: 6px 12px; margin: 8px 0 0 0; font-size: 9.5pt; font-style: italic; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .level-box, .qa-block, .trd-card, .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-00: Fabric Up</h1>
+  <div class="subtitle">Prior Knowledge — Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: None &nbsp;|&nbsp; Difficulty: Low &nbsp;|&nbsp; Setup: ~1 session &nbsp;|&nbsp; Requirements: 1–2 sessions</div>
+</div>
+
+<h2>1 &nbsp; The Project</h2>
+
+<p><strong>Limen</strong> is a small RDMA transport library and the benchmark harness that measures it. When it is finished it exposes a C++ interface for moving bytes directly between two machines' memory, and a measurement tool that reports how long that takes and how much bandwidth it sustains.</p>
+
+<p>The distinguishing property of Remote Direct Memory Access is that the remote CPU is not involved. On an ordinary network, sending data means the sender copies a buffer into the kernel, the kernel hands it to a network card, the receiving card raises an interrupt, the receiving kernel copies the data into a socket buffer, and eventually a process calls <code>read()</code> and copies it once more into user memory. Every one of those steps costs cycles and cache. RDMA removes almost all of them: the network adapter reads directly out of one machine's user memory and writes directly into another machine's user memory, with no kernel involvement on the data path and, for one-sided operations, no participation from the remote process at all.</p>
+
+<p>That is the property Limen exists to expose and to measure. By the end of the ladder Limen can perform two-sided <code>SEND</code>/<code>RECV</code> transfers, one-sided <code>RDMA_WRITE</code> and <code>RDMA_READ</code> into and out of a peer's registered memory, and report calibrated latency and bandwidth numbers for each.</p>
+
+<div class="diagram">
+  <svg viewBox="0 0 700 300" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif" font-size="9">
+    <defs>
+      <marker id="a1" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000"/></marker>
+    </defs>
+
+    <text x="175" y="16" text-anchor="middle" font-size="10" font-weight="bold">SOCKETS PATH</text>
+    <text x="525" y="16" text-anchor="middle" font-size="10" font-weight="bold">RDMA PATH</text>
+
+    <!-- Sockets column -->
+    <rect x="70" y="28" width="210" height="34" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="175" y="49" text-anchor="middle">application buffer</text>
+    <line x1="175" y1="62" x2="175" y2="78" stroke="#000" stroke-width="1.2" marker-end="url(#a1)"/>
+    <text x="200" y="74" font-size="8" font-style="italic">copy</text>
+    <rect x="70" y="80" width="210" height="34" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="175" y="101" text-anchor="middle">kernel socket buffer</text>
+    <line x1="175" y1="114" x2="175" y2="130" stroke="#000" stroke-width="1.2" marker-end="url(#a1)"/>
+    <text x="200" y="126" font-size="8" font-style="italic">copy</text>
+    <rect x="70" y="132" width="210" height="34" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="175" y="153" text-anchor="middle">driver / NIC</text>
+    <line x1="175" y1="166" x2="175" y2="182" stroke="#000" stroke-width="1.2" marker-end="url(#a1)"/>
+    <rect x="70" y="184" width="210" height="34" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="175" y="205" text-anchor="middle">remote kernel</text>
+    <line x1="175" y1="218" x2="175" y2="234" stroke="#000" stroke-width="1.2" marker-end="url(#a1)"/>
+    <text x="200" y="230" font-size="8" font-style="italic">copy</text>
+    <rect x="70" y="236" width="210" height="34" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="175" y="257" text-anchor="middle">remote application buffer</text>
+
+    <!-- RDMA column -->
+    <rect x="420" y="28" width="210" height="34" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="525" y="49" text-anchor="middle">registered application buffer</text>
+    <line x1="525" y1="62" x2="525" y2="130" stroke="#000" stroke-width="1.2" marker-end="url(#a1)"/>
+    <text x="535" y="100" font-size="8" font-style="italic">adapter DMA — no copy</text>
+    <rect x="420" y="132" width="210" height="34" fill="none" stroke="#000" stroke-width="2.5"/>
+    <text x="525" y="147" text-anchor="middle" font-weight="bold">RDMA adapter</text>
+    <text x="525" y="159" text-anchor="middle" font-size="8">(kernel not on this path)</text>
+    <line x1="525" y1="166" x2="525" y2="234" stroke="#000" stroke-width="1.2" marker-end="url(#a1)"/>
+    <text x="535" y="204" font-size="8" font-style="italic">adapter DMA — no copy</text>
+    <rect x="420" y="236" width="210" height="34" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="525" y="257" text-anchor="middle">remote registered buffer</text>
+
+    <line x1="350" y1="28" x2="350" y2="272" stroke="#000" stroke-width="0.8" stroke-dasharray="4,3"/>
+  </svg>
+  <div class="diagram-caption">Figure 1 — The same byte, two paths. The left path crosses the kernel boundary four times and copies three. The right path crosses it zero times on the data path.</div>
+</div>
+
+<p>The name is Latin for <em>threshold</em> — the boundary between two spaces. That is what a transport is.</p>
+
+<h2>2 &nbsp; What You Will Learn</h2>
+
+<p>By the end of the ladder you will be able to:</p>
+
+<ul>
+  <li>Explain what an RDMA adapter does between the moment a work request is posted and the moment a completion appears, and name every structure involved.</li>
+  <li>Describe the difference between a two-sided and a one-sided operation, and explain why the one-sided case requires no CPU participation on the far side.</li>
+  <li>Register a memory region and explain what physically happens to those pages, why the registration can fail, and what the local and remote keys protect against.</li>
+  <li>Walk a queue pair through its full state machine and explain what each transition establishes and why the order cannot be changed.</li>
+  <li>Post send and receive work requests with scatter-gather lists, poll a completion queue, and correctly interpret every completion status you are likely to see.</li>
+  <li>Diagnose a receiver-not-ready condition and explain why it is a design problem rather than a transient error.</li>
+  <li>Write C++ RAII wrappers for resources with mandatory destruction ordering, including correct move semantics and a destructor that cannot throw.</li>
+  <li>Establish connections with the RDMA connection manager, drive its asynchronous event channel, and explain why its ownership model differs from every other resource in the API.</li>
+  <li>Perform <code>RDMA_WRITE</code> and <code>RDMA_READ</code> against a peer's memory, including the key exchange that makes it possible and the trust boundary that key represents.</li>
+  <li>Explain and apply the four principal completion-side optimizations — inline data, unsignaled completions, completion-queue moderation, and event-driven versus polled reaping — and say what each trades away.</li>
+  <li>Build a benchmark harness that produces defensible numbers: warm-up, repetition, percentile reporting rather than means, and validation against a reference implementation.</li>
+  <li>Read the verbs API's manual pages and the reference implementation's source without needing a tutorial in between.</li>
+</ul>
+
+<h2>3 &nbsp; What You Should Already Know</h2>
+
+<table>
+  <tr><th style="width:150px;">Area</th><th style="width:230px;">Level needed</th><th>If you are short</th></tr>
+  <tr>
+    <td>C or C++</td>
+    <td>Comfortable writing and debugging several hundred lines without a reference at your elbow. Structs, pointers, function pointers, manual allocation.</td>
+    <td><em>The C Programming Language</em> ch. 5–6, or <em>A Tour of C++</em> ch. 1–5 <span class="cite">[10]</span></td>
+  </tr>
+  <tr>
+    <td>Modern C++</td>
+    <td>Needed from TRD-04 onward, not before. Constructors, destructors, move semantics, <code>std::unique_ptr</code>. You may learn this during TRD-00 through TRD-03.</td>
+    <td><em>A Tour of C++</em> ch. 5–6 and 13 <span class="cite">[10]</span></td>
+  </tr>
+  <tr>
+    <td>Pointers and memory</td>
+    <td>Can explain why returning a pointer to a local is broken, and what virtual-to-physical address translation means.</td>
+    <td><em>Computer Systems: A Programmer's Perspective</em> ch. 9 <span class="cite">[11]</span></td>
+  </tr>
+  <tr>
+    <td>Sockets</td>
+    <td>Have written a TCP client and server. You need the concept of a connection and a listening endpoint, not expertise.</td>
+    <td><code>socket(2)</code>, <code>listen(2)</code>, <code>accept(2)</code> manual pages</td>
+  </tr>
+  <tr>
+    <td>Linux command line</td>
+    <td>Navigate, build with a compiler and a build system, edit files over SSH, read a manual page.</td>
+    <td>Any introductory Linux text</td>
+  </tr>
+  <tr>
+    <td>Virtualization</td>
+    <td>Can create a virtual machine and configure its network adapter. Any hypervisor.</td>
+    <td>Your hypervisor's documentation on bridged and host-only networking</td>
+  </tr>
+</table>
+
+<p><strong>What you do not need.</strong> No prior exposure to InfiniBand, RDMA, RoCE, or high-performance networking of any kind. No kernel programming. No experience with any specialized hardware. No networking theory beyond knowing what an IP address and a port are. Every RDMA concept in this ladder is introduced from nothing.</p>
+
+<p>You also do not need special hardware. The entire ladder runs on software RDMA, described in section 9.</p>
+
+<h2>4 &nbsp; Environment</h2>
+
+<p><strong>Two Linux nodes</strong> that can reach each other directly at layer 2 — normally two virtual machines on a shared private network. Ubuntu 24.04 LTS is the reference; 22.04 works identically. Two virtual CPUs and 2 GB of memory per node is ample.</p>
+
+<p>The complete configuration procedure — hypervisor adapters, addresses, packages, kernel modules, firewall, and creating the software RDMA device — is the <strong>Setup</strong> section of this TRD&rsquo;s Requirements document, written as nine numbered steps with exact commands and a troubleshooting table. Work through it there.</p>
+
+<p>Setup is deliberately not part of the requirements. Installing a package has one correct outcome and no judgment in it; it produces a working machine rather than knowledge. The requirements begin once the machine works.</p>
+
+<div class="warning">
+  If your host runs Windows, use real virtual machines. The Windows Subsystem for Linux kernel does not ship the software RDMA module, and discovering this after an hour of debugging is a poor use of an evening.
+</div>
+
+<p><strong>Toolchain:</strong> a C++20 compiler (GCC 12 or Clang 15 and later), CMake 3.16 or later, Git, the RDMA userspace stack, plus <code>tcpdump</code> and <code>iperf3</code> for the observation and comparison requirements.</p>
+
+<h2>5 &nbsp; The Ladder</h2>
+
+<p>Nine rungs. Each depends on all before it. Estimates are in sessions, where a session is a focused block of roughly two to three hours.</p>
+
+<table>
+  <tr><th style="width:45px;">TRD</th><th style="width:200px;">Title</th><th>Builds</th><th style="width:75px;">Difficulty</th><th style="width:45px;">Est.</th></tr>
+  <tr><td>00</td><td>Fabric Up</td><td>Verified software RDMA fabric, repository, baseline</td><td>Low</td><td>1–2</td></tr>
+  <tr><td>01</td><td>Context, Domain, Memory</td><td>Device opened, memory registered, first verbs code</td><td>Medium</td><td>3–4</td></tr>
+  <tr><td>02</td><td>Queue Pairs</td><td>A connected queue pair, driven by hand through its state machine</td><td>High</td><td>4–6</td></tr>
+  <tr><td>03</td><td>Two-Sided Transfer</td><td>SEND and RECV moving real bytes between nodes</td><td>Medium-High</td><td>3–5</td></tr>
+  <tr><td>04</td><td>The RAII Layer</td><td>C++ ownership over every verbs resource</td><td>Medium</td><td>3–5</td></tr>
+  <tr><td>05</td><td>Connection Management</td><td>Connection setup by address, via the RDMA CM</td><td>Medium-High</td><td>4–5</td></tr>
+  <tr><td>06</td><td>One-Sided Operations</td><td>RDMA_WRITE and RDMA_READ against remote memory</td><td>Medium</td><td>3–4</td></tr>
+  <tr><td>07</td><td>Completion Efficiency</td><td>Inline, unsignaled, moderated, and event-driven completion</td><td>High</td><td>4–6</td></tr>
+  <tr><td>08</td><td>Benchmark Harness</td><td>Defensible latency and bandwidth measurement</td><td>Medium</td><td>3–4</td></tr>
+</table>
+
+<div class="trd-card">
+  <div class="trd-header">TRD-00 — Fabric Up</div>
+  <div class="trd-body">
+    <p><strong>Builds:</strong> A verified two-node software RDMA fabric, a recorded performance baseline measured against a TCP control, a packet capture proving what the encapsulation is, and a repository skeleton whose build system locates the RDMA libraries.</p>
+    <p><strong>Depends on:</strong> Nothing.</p>
+    <p><strong>Unlocks:</strong> Everything. Until stock reference tools move bytes between the two nodes, no failure in TRD-01 can be attributed with confidence, because the environment is still a suspect.</p>
+    <p><strong>Central idea:</strong> Verify the substrate with instruments you did not write, before writing anything that depends on it. This is the only rung with no code of your own in it, and it exists precisely so that every later rung's bugs are yours rather than the environment's.</p>
+  </div>
+</div>
+
+<div class="trd-card">
+  <div class="trd-header">TRD-01 — Context, Protection Domain, Memory Registration</div>
+  <div class="trd-body">
+    <p><strong>Builds:</strong> A program that enumerates RDMA devices, opens a context on one, allocates a protection domain, registers a buffer, and prints the resulting keys and device limits.</p>
+    <p><strong>Depends on:</strong> TRD-00's verified device and working build system.</p>
+    <p><strong>Unlocks:</strong> Queue pairs, which cannot be created without a protection domain, and data transfer, which cannot address memory that has not been registered.</p>
+    <p><strong>Central idea:</strong> Before an adapter can read your memory it must be told which memory, and the operating system must guarantee those pages will not move. Registration is where that bargain is struck, and it is why RDMA memory behaves unlike ordinary memory.</p>
+  </div>
+</div>
+
+<div class="trd-card">
+  <div class="trd-header">TRD-02 — Queue Pairs and the State Machine</div>
+  <div class="trd-body">
+    <p><strong>Builds:</strong> A completion queue, a reliable-connected queue pair, and a hand-rolled exchange over TCP that carries the parameters each side needs to reach the other. The queue pair is driven from RESET through INIT and RTR to RTS.</p>
+    <p><strong>Depends on:</strong> TRD-01's context, protection domain, and registered memory.</p>
+    <p><strong>Unlocks:</strong> All data transfer. A queue pair in any state below RTS cannot send.</p>
+    <p><strong>Central idea:</strong> A queue pair is a connection whose endpoint state you manage explicitly rather than delegating to the kernel. Each transition supplies information the adapter needs, and supplying it in the wrong order fails in ways whose error messages do not identify the cause. This is the hardest rung in the ladder.</p>
+  </div>
+</div>
+
+<div class="trd-card">
+  <div class="trd-header">TRD-03 — Two-Sided Transfer</div>
+  <div class="trd-body">
+    <p><strong>Builds:</strong> A working ping-pong. Work requests posted with scatter-gather lists, receives posted in advance, completions polled and interpreted, and a loop that survives being run repeatedly.</p>
+    <p><strong>Depends on:</strong> TRD-02's connected queue pair.</p>
+    <p><strong>Unlocks:</strong> The RAII refactor, which needs enough distinct resource types to be worth doing, and one-sided operations, which reuse this posting machinery with different opcodes.</p>
+    <p><strong>Central idea:</strong> Two-sided transfer requires the receiver to have posted a receive buffer before the sender's data arrives. Nothing in the API enforces this, and violating it produces a receiver-not-ready condition that reveals the deeper truth: RDMA gives you no flow control you did not build yourself.</p>
+  </div>
+</div>
+
+<div class="trd-card">
+  <div class="trd-header">TRD-04 — The RAII Layer</div>
+  <div class="trd-body">
+    <p><strong>Builds:</strong> C++ wrapper types owning the context, protection domain, memory region, completion queue, and queue pair, with correct move semantics, deleted copies, non-throwing destructors, and enforced destruction order. Every earlier program is refactored onto them.</p>
+    <p><strong>Depends on:</strong> TRD-03, which by now has accumulated enough manual cleanup to make the case for itself.</p>
+    <p><strong>Unlocks:</strong> Every later rung, which would otherwise drown in cleanup paths.</p>
+    <p><strong>Central idea:</strong> Verbs resources must be destroyed in the reverse of creation order, and destroying one out of turn either fails silently or corrupts the adapter's state. This is the textbook case for RAII, and building it here is what makes the rest of the ladder tractable.</p>
+  </div>
+</div>
+
+<div class="trd-card">
+  <div class="trd-header">TRD-05 — Connection Management</div>
+  <div class="trd-body">
+    <p><strong>Builds:</strong> Connection establishment by IP address using the RDMA connection manager: an event channel, an identifier, an asynchronous event loop, and clean connect, accept, and disconnect paths. TRD-02's hand-rolled TCP exchange is deleted.</p>
+    <p><strong>Depends on:</strong> TRD-04's ownership model, which is now extended to a resource that does not obey it.</p>
+    <p><strong>Unlocks:</strong> Any program you would let another person run, since manual parameter exchange is not a usable interface.</p>
+    <p><strong>Central idea:</strong> The connection manager hides the parameter exchange you built by hand, which is why you built it by hand first. Its identifier has different lifetime rules than every other resource in the API — a genuine test of whether the abstraction from TRD-04 generalizes or merely fit the first five cases.</p>
+  </div>
+</div>
+
+<div class="trd-card">
+  <div class="trd-header">TRD-06 — One-Sided Operations</div>
+  <div class="trd-body">
+    <p><strong>Builds:</strong> <code>RDMA_WRITE</code> and <code>RDMA_READ</code> against a peer's registered memory, with the remote address and key exchanged during connection setup.</p>
+    <p><strong>Depends on:</strong> TRD-05's connection setup, which is where the keys are exchanged.</p>
+    <p><strong>Unlocks:</strong> The optimizations in TRD-07, whose effects are clearest on one-sided operations, and the measurements in TRD-08 that make the point of the project.</p>
+    <p><strong>Central idea:</strong> This is the operation the technology exists for. The remote CPU is not merely idle during the transfer — it is not informed that it happened. Understanding what the remote key permits, and what it therefore risks, is understanding RDMA's actual trust model.</p>
+  </div>
+</div>
+
+<div class="trd-card">
+  <div class="trd-header">TRD-07 — Completion Efficiency</div>
+  <div class="trd-body">
+    <p><strong>Builds:</strong> Inline data for small payloads, unsignaled completions with periodic signalling, completion-queue moderation, and a selectable polled or event-driven reaping mode.</p>
+    <p><strong>Depends on:</strong> TRD-06, since there is nothing to optimize until transfers work.</p>
+    <p><strong>Unlocks:</strong> Measurements worth taking. Without these, TRD-08 reports the cost of a naive implementation rather than the cost of the transport.</p>
+    <p><strong>Central idea:</strong> Every one of these trades something. Inline copies to save a memory reference. Unsignaled saves completion processing at the cost of knowing when a buffer is reusable. Event-driven trades latency for CPU. Naming the trade is the skill; applying the technique is mechanical.</p>
+  </div>
+</div>
+
+<div class="trd-card">
+  <div class="trd-header">TRD-08 — Benchmark Harness</div>
+  <div class="trd-body">
+    <p><strong>Builds:</strong> A measurement tool reporting latency percentiles and sustained bandwidth across a payload sweep, with warm-up, repetition, and validation against the reference implementation.</p>
+    <p><strong>Depends on:</strong> All prior rungs.</p>
+    <p><strong>Unlocks:</strong> Nothing — this is the final rung. It converts the library into a result.</p>
+    <p><strong>Central idea:</strong> A number without a methodology is not a measurement. Reporting a mean latency hides the tail that actually matters, and a benchmark that has not been validated against a known-good implementation measures your harness rather than your transport.</p>
+  </div>
+</div>
+
+<h2>6 &nbsp; How To Work Through a TRD</h2>
+
+<div class="diagram">
+  <svg viewBox="0 0 680 130" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif" font-size="8">
+    <defs><marker id="a2" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000"/></marker></defs>
+    <rect x="10" y="26" width="105" height="40" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="62" y="43" text-anchor="middle" font-weight="bold">1. Read Prior</text>
+    <text x="62" y="55" text-anchor="middle" font-weight="bold">Knowledge</text>
+    <line x1="115" y1="46" x2="140" y2="46" stroke="#000" stroke-width="1.3" marker-end="url(#a2)"/>
+    <rect x="142" y="26" width="105" height="40" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="194" y="43" text-anchor="middle" font-weight="bold">2. Read</text>
+    <text x="194" y="55" text-anchor="middle" font-weight="bold">Requirements</text>
+    <line x1="247" y1="46" x2="272" y2="46" stroke="#000" stroke-width="1.3" marker-end="url(#a2)"/>
+    <rect x="274" y="26" width="105" height="40" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="326" y="43" text-anchor="middle" font-weight="bold">3. Implement</text>
+    <text x="326" y="55" text-anchor="middle" font-weight="bold">(hints if stuck)</text>
+    <line x1="379" y1="46" x2="404" y2="46" stroke="#000" stroke-width="1.3" marker-end="url(#a2)"/>
+    <rect x="406" y="26" width="105" height="40" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="458" y="43" text-anchor="middle" font-weight="bold">4. Run tests</text>
+    <text x="458" y="55" text-anchor="middle" font-weight="bold">until green</text>
+    <line x1="511" y1="46" x2="536" y2="46" stroke="#000" stroke-width="1.3" marker-end="url(#a2)"/>
+    <rect x="538" y="26" width="128" height="40" fill="none" stroke="#000" stroke-width="1.5"/>
+    <text x="602" y="43" text-anchor="middle" font-weight="bold">5. Answer questions,</text>
+    <text x="602" y="55" text-anchor="middle" font-weight="bold">check the key</text>
+    <path d="M 458,66 Q 458,96 326,96 Q 326,96 326,68" fill="none" stroke="#000" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#a2)"/>
+    <text x="392" y="110" text-anchor="middle" font-size="8" font-style="italic">tests fail → fix → rerun</text>
+  </svg>
+  <div class="diagram-caption">Figure 2 — The working cycle for every rung.</div>
+</div>
+
+<p>For a TRD with a Setup section, work through those steps first — they are prerequisites, not part of the assessment. Then read Prior Knowledge start to finish before writing code. Read the Requirements and note which ones you cannot yet picture implementing — those are the ones to read again. Implement. Consult the Hints at Level 1 only after fifteen minutes of genuine attempts on a specific blocker, and Level 2 only after Level 1 has failed. Run the test suite until it is green. Answer the comprehension questions in writing, then check the key. Commit, and continue.</p>
+
+<h3>The package</h3>
+
+<table>
+  <tr><th style="width:150px;">Document</th><th>Purpose</th></tr>
+  <tr><td>Prior Knowledge</td><td>The chapter. Read first, completely.</td></tr>
+  <tr><td>Requirements</td><td>Opens with <strong>Setup</strong> — numbered environment steps, prerequisites rather than assessed work. Then the contract: what must exist when you are done.</td></tr>
+  <tr><td>Hints</td><td>Two-tier guidance, one section per requirement. Not read straight through.</td></tr>
+  <tr><td>Test Suite</td><td>The gate. Green means done.</td></tr>
+  <tr><td>Comprehension</td><td>Questions, then a full answer key. Answer before turning the page.</td></tr>
+</table>
+
+<h3>Tools, and the boundary</h3>
+
+<p>RDMA failures are unusually opaque. A misconfigured queue pair does not report a useful error code; it reports a completion status you must look up, or it hangs. The tools that resolve this are <code>ibv_devinfo</code> for adapter state, <code>strace</code> for the syscall sequence, <code>tcpdump</code> or <code>wireshark</code> for what actually left the machine, <code>gdb</code> for crashes, and <code>valgrind</code> for the leaks that RDMA's manual resource management invites. Reading the reference implementations in the <code>rdma-core</code> source tree resolves more questions than any other single habit.<span class="cite">[2]</span></p>
+
+<p>Reach for those before reaching for a chat window. An AI assistant is appropriate for reviewing code once it works, clarifying a concept this document left unclear, and grading comprehension answers. It is not appropriate for writing or debugging the implementation — that is the part that constitutes the learning, and delegating it produces a repository you cannot defend.</p>
+
+<hr>
+
+<h2>7 &nbsp; What RDMA Actually Is</h2>
+
+<p>Ordinary networking is built on the assumption that the CPU mediates every transfer. The kernel owns the network device, applications ask the kernel to move data, and the data is copied at each boundary because no layer trusts another layer's memory. That assumption is correct for a general-purpose operating system on a hostile network, and it costs microseconds and cache lines on every message.</p>
+
+<p>RDMA discards the assumption. Three properties follow, and together they define the technology:</p>
+
+<h3>Kernel bypass</h3>
+
+<p>After a connection is established, data transfer does not enter the kernel. The application writes a work request into a queue that the adapter reads directly, and the adapter writes completions into a queue that the application reads directly. Both queues live in memory mapped into the process. There is no system call on the data path. The kernel is still involved in setup — opening the device, registering memory, creating queues — but once those are done it steps aside.</p>
+
+<h3>Zero copy</h3>
+
+<p>The adapter transfers directly out of and into application buffers. There is no intermediate socket buffer, because the adapter has been told where the application's memory physically resides and is permitted to reach it by direct memory access. This is why memory must be registered before use: the adapter needs a physical address, and the operating system must promise that address will remain valid.</p>
+
+<h3>Remote CPU bypass</h3>
+
+<p>This is the property with no analogue in sockets. In a <em>one-sided</em> operation the initiating adapter carries both the data and the destination address. The remote adapter writes the data into the remote machine's memory and generates no completion, no interrupt, and no notification. The remote process is not merely uninvolved; it does not know the transfer occurred. Discovering that it happened requires the application to build its own signalling on top.</p>
+
+<p>The contrast with <em>two-sided</em> operations matters throughout the ladder:</p>
+
+<table>
+  <tr><th style="width:120px;"></th><th>Two-sided (SEND / RECV)</th><th>One-sided (WRITE / READ)</th></tr>
+  <tr><td>Remote CPU</td><td>Must have posted a receive request beforehand</td><td>Not involved at all</td></tr>
+  <tr><td>Destination address</td><td>Chosen by the receiver, from its posted buffer</td><td>Chosen by the sender, carried in the request</td></tr>
+  <tr><td>Remote completion</td><td>Yes — the receiver reaps a completion</td><td>None</td></tr>
+  <tr><td>Resembles</td><td><code>send()</code> and <code>recv()</code></td><td><code>memcpy()</code> across a network</td></tr>
+  <tr><td>Requires</td><td>A posted receive, or the transfer fails</td><td>The remote address and its access key</td></tr>
+  <tr><td>Built in</td><td>TRD-03</td><td>TRD-06</td></tr>
+</table>
+
+<h3>The verbs API</h3>
+
+<p>The programming interface is called <em>verbs</em>. It is not a socket API with different function names; the model is different in kind. You do not call a function that sends. You construct a work request describing a transfer, post it to a queue, and later reap a completion telling you the transfer finished. Posting and completion are separate events, potentially far apart in time, and everything about the API's shape follows from that asynchrony.</p>
+
+<p>The principal objects, all built across TRD-01 through TRD-03:</p>
+
+<table>
+  <tr><th style="width:170px;">Object</th><th>What it is</th></tr>
+  <tr><td>Device context</td><td>An open handle to one adapter. Everything else is created from it.</td></tr>
+  <tr><td>Protection domain</td><td>An isolation boundary. Memory regions and queue pairs in different domains cannot address each other, which is what stops one connection from reading another's memory.</td></tr>
+  <tr><td>Memory region</td><td>A registered buffer. Registration yields a local key and, if remote access is granted, a remote key.</td></tr>
+  <tr><td>Completion queue</td><td>Where the adapter deposits notice that a work request finished, successfully or otherwise.</td></tr>
+  <tr><td>Queue pair</td><td>A send queue and a receive queue together. This is the connection endpoint — the closest analogue to a socket, though the analogy breaks quickly.</td></tr>
+  <tr><td>Work request</td><td>One unit of work: an opcode, one or more buffer descriptors, and for one-sided operations a remote address and key.</td></tr>
+  <tr><td>Completion</td><td>One finished work request: an identifier, a status, and a byte count.</td></tr>
+</table>
+
+<h2>8 &nbsp; RoCE: RDMA Over Ethernet</h2>
+
+<p>RDMA was specified for InfiniBand, a purpose-built fabric with its own physical layer, switches, and addressing. RDMA over Converged Ethernet carries the same transport over ordinary Ethernet, which is what makes it reachable without specialized hardware.<span class="cite">[1]</span></p>
+
+<p>Two versions exist. RoCEv1 encapsulates the InfiniBand transport directly in an Ethernet frame with its own EtherType, which confines it to a single layer-2 broadcast domain — it cannot be routed. RoCEv2 encapsulates the same transport inside UDP inside IP, making it routable across ordinary networks. RoCEv2 is what Limen uses and what essentially all current deployments use.<span class="cite">[1]</span></p>
+
+<pre>+----------------+-------------+---------------+-------------------+-------+
+| Ethernet hdr   |   IP hdr    | UDP hdr       | InfiniBand        | ICRC  |
+|                |             | dst port 4791 | transport headers |       |
++----------------+-------------+---------------+-------------------+-------+
+                                                | + payload        |
+                                                +------------------+</pre>
+
+<p>The destination UDP port is 4791, registered with IANA for this purpose.<span class="cite">[3]</span> Three consequences follow immediately and all of them will bite you:</p>
+
+<ul>
+  <li>A firewall that does not permit UDP 4791 breaks everything, and does so by timing out rather than by reporting an error.</li>
+  <li>Packet capture works. RoCEv2 traffic is visible to <code>tcpdump</code> and decodable by Wireshark, which makes it far more debuggable than InfiniBand.</li>
+  <li>UDP is unreliable, yet reliable-connected queue pairs guarantee ordered, reliable delivery. The reliability is implemented in the InfiniBand transport headers inside the UDP payload — acknowledgements, sequence numbers, and retransmission — not by UDP. UDP is used purely as an encapsulation with routable addressing and a port number for demultiplexing.<span class="cite">[1]</span></li>
+</ul>
+
+<h3>Addressing and GIDs</h3>
+
+<p>InfiniBand addresses endpoints by Global Identifier, a 128-bit value. In RoCEv2 the GID is derived from the interface's IP address: an IPv4 address appears as an IPv4-mapped IPv6 address in the GID table. A single port therefore has several GID table entries — typically a RoCEv1 entry and a RoCEv2 entry for each address family — and the raw verbs API requires you to say which index you mean.<span class="cite">[6]</span></p>
+
+<p>This is why the reference tool <code>ibv_rc_pingpong</code> takes a <code>-g</code> argument and why the wrong value produces a connection that fails without explaining itself. The connection manager introduced in TRD-05 selects the index for you, which is one of the reasons to prefer it once you understand what it is hiding.</p>
+
+<h3>Lossless fabrics</h3>
+
+<p>Production RoCEv2 deployments configure the Ethernet fabric to be lossless, using Priority Flow Control and Explicit Congestion Notification, because the InfiniBand transport's retransmission behaves poorly under loss. This matters greatly in a data centre and not at all here: on a direct link or a virtual bridge there is no congestion to manage. It is worth knowing that the requirement exists, because it is the first thing a practitioner will ask about.</p>
+
+<h2>9 &nbsp; Soft-RoCE: What <code>rxe</code> Is And Is Not</h2>
+
+<p>The Linux kernel includes a software implementation of RoCEv2 called <code>rdma_rxe</code>, usually shortened to Soft-RoCE or simply <code>rxe</code>. It presents a fully functional RDMA device that any verbs program can open, and implements the transport in software over an ordinary Ethernet interface.<span class="cite">[4][5]</span></p>
+
+<p>It has been in the mainline kernel since 4.8, which matters because most material found by searching predates that and describes an out-of-tree package configured with a tool called <code>rxe_cfg</code>. That method is obsolete. The current interface is the <code>rdma</code> link management command.<span class="cite">[5][7]</span> If a guide mentions <code>rxe_cfg</code>, the rest of that guide is also stale.</p>
+
+<div class="callout">
+  <div class="callout-label">What transfers to hardware</div>
+  <p>Every line of verbs code you write against <code>rxe</code> compiles and runs unchanged against a hardware adapter. The device name changes and nothing else. The API surface is identical because <code>rxe</code> implements the same specification.</p>
+</div>
+
+<p>What does not transfer is performance, and the reason is structural. Soft-RoCE's "adapter" is the kernel. A posted work request is processed by kernel threads, encapsulated in software, and handed to the ordinary network stack for transmission. Consequently:</p>
+
+<table>
+  <tr><th style="width:190px;">Property</th><th>Hardware adapter</th><th>Soft-RoCE</th></tr>
+  <tr><td>Kernel bypass on data path</td><td>Real</td><td>None — the kernel <em>is</em> the implementation</td></tr>
+  <tr><td>Zero copy</td><td>Real DMA from user pages</td><td>Software copies through the network stack</td></tr>
+  <tr><td>Round-trip latency</td><td>Roughly 1–3 microseconds</td><td>Tens of microseconds</td></tr>
+  <tr><td>Bandwidth</td><td>Line rate</td><td>CPU-bound, typically a small fraction</td></tr>
+  <tr><td>CPU cost per transfer</td><td>Near zero after posting</td><td>Substantial on both sides</td></tr>
+  <tr><td>Memory registration</td><td>Pins pages, maps them for device DMA, consumes locked memory</td><td>Pins pages and accounts locked memory identically, through the same kernel path; no DMA mapping, because there is no device</td></tr>
+  <tr><td>Verbs API and semantics</td><td colspan="2">Identical</td></tr>
+</table>
+
+<div class="callout">
+  <div class="callout-label">Expect ordinary TCP to be faster</div>
+  <p>Because soft-RoCE runs the entire InfiniBand transport in software and <em>then</em> hands the result to the same kernel network stack that TCP uses, it performs strictly more work over the same wire. Measured against <code>iperf3</code> on the same link, it usually loses — often decisively.</p>
+  <p>That is not a defect and it is not an argument against RDMA. It is the cleanest available demonstration of what the hardware contributes: remove the adapter and you retain every byte of protocol cost and none of the benefit. R6 makes you measure this rather than take it on faith.</p>
+</div>
+
+<p>Two implications shape the whole ladder. First, every concept, every state transition, every failure mode, and every line of code in TRD-01 through TRD-07 is fully learnable on <code>rxe</code>. Second, no performance number produced on <code>rxe</code> means anything about RDMA — it measures the kernel's software implementation. TRD-08 is explicit about this, and the baseline you record in this TRD exists so that a future comparison against real hardware has a control.</p>
+
+<h2>10 &nbsp; The Software Stack</h2>
+
+<p>The userspace side is one project, <code>rdma-core</code>, which most distributions split into several packages.<span class="cite">[2]</span></p>
+
+<table>
+  <tr><th style="width:150px;">Component</th><th>Provides</th></tr>
+  <tr><td><code>libibverbs</code></td><td>The verbs API itself. Everything in TRD-01 through TRD-04 and TRD-06 through TRD-08 is this library.</td></tr>
+  <tr><td><code>librdmacm</code></td><td>The connection manager: connection setup by IP address, an event channel, and address resolution. TRD-05.</td></tr>
+  <tr><td>Provider drivers</td><td>Per-device userspace drivers loaded automatically. <code>rxe</code> and each hardware vendor have one. You never call into these directly.</td></tr>
+  <tr><td><code>ibverbs-utils</code></td><td>Diagnostic programs: <code>ibv_devices</code>, <code>ibv_devinfo</code>, <code>ibv_rc_pingpong</code>.</td></tr>
+  <tr><td><code>rdmacm-utils</code></td><td>Connection-manager diagnostics, principally <code>rping</code>.</td></tr>
+  <tr><td><code>perftest</code></td><td>The standard RDMA benchmark suite: <code>ib_send_bw</code>, <code>ib_send_lat</code>, <code>ib_write_bw</code>, <code>ib_read_lat</code>. TRD-08 validates against these.<span class="cite">[8]</span></td></tr>
+  <tr><td><code>rdma</code> command</td><td>Link and device management, including creating the <code>rxe</code> device.<span class="cite">[7]</span></td></tr>
+</table>
+
+<p>On the kernel side, <code>ib_core</code> provides the RDMA subsystem, <code>rdma_rxe</code> the software provider, <code>rdma_ucm</code> the connection manager's userspace interface, and <code>ib_uverbs</code> the verbs userspace interface. The last two are loaded on demand; if <code>rping</code> fails while <code>ibv_rc_pingpong</code> succeeds, a missing <code>rdma_ucm</code> is the first thing to check.</p>
+
+<p>Device state is visible in <code>sysfs</code> under <code>/sys/class/infiniband/</code>, including the GID table at <code>/sys/class/infiniband/&lt;dev&gt;/ports/1/gids/</code>. Reading these files directly is often faster than finding the tool that prints them.</p>
+
+<h2>11 &nbsp; The Verification Tools</h2>
+
+<p>This TRD is built entirely out of these four. Each answers a different question, and the order is deliberate: each one that passes eliminates a class of cause for the next one's failure.</p>
+
+<h3><code>ibv_devinfo</code></h3>
+
+<p>Prints adapter attributes and port state. Answers: <em>does a device exist and is its port up?</em> Three fields decide whether anything else can work — the port state must read <code>PORT_ACTIVE</code>, the link layer must read <code>Ethernet</code>, and the transport will read <code>InfiniBand</code>, which is correct and not a contradiction: RoCE is the InfiniBand transport carried over Ethernet.</p>
+
+<p>The same output reports device limits — maximum queue pairs, maximum work requests per queue, maximum scatter-gather entries per request, and the active maximum transfer unit. These are not the same on <code>rxe</code> as on hardware, which is why TRD-01 requires you to query them rather than assume them.</p>
+
+<h3><code>ibv_rc_pingpong</code></h3>
+
+<p>A minimal reliable-connected ping-pong using raw verbs. It exchanges queue-pair parameters over a side TCP channel, transitions both queue pairs by hand, and moves data. Answers: <em>can two nodes complete a raw verbs transfer?</em></p>
+
+<p>Its source is the single most valuable file you will read in this project. It is the skeleton of TRD-02 and TRD-03, written by the people who wrote the library, in under a thousand lines.<span class="cite">[2]</span></p>
+
+<h3><code>rping</code></h3>
+
+<p>The same idea via the connection manager: connect by IP address, no hand-rolled exchange. Answers: <em>does the connection-manager path work?</em> A failure here with <code>ibv_rc_pingpong</code> succeeding isolates the fault to <code>rdma_ucm</code> or the CM's addressing.</p>
+
+<p>This is the structural model for TRD-05 and beyond.</p>
+
+<h3><code>perftest</code></h3>
+
+<p><code>ib_send_bw</code> and <code>ib_send_lat</code> produce bandwidth and latency figures. Answers: <em>how fast is this fabric, measured by an implementation known to be correct?</em> These are the reference numbers TRD-08 validates against, and the baseline recorded here.<span class="cite">[8]</span></p>
+
+<h2>12 &nbsp; Failure Modes</h2>
+
+<p>Nearly every failure in this TRD is one of the following. Consult before searching.</p>
+
+<table>
+  <tr><th style="width:215px;">Symptom</th><th style="width:230px;">Cause</th><th>Resolution</th></tr>
+  <tr>
+    <td>Nodes cannot reach each other at all</td>
+    <td>Network address translation. A translated guest cannot accept an inbound connection.</td>
+    <td>Change the adapter to bridged or host-only.</td>
+  </tr>
+  <tr>
+    <td><code>modprobe</code> reports the module is not found</td>
+    <td>The distribution's base kernel image omits <code>rdma_rxe</code>.</td>
+    <td>Install the extra modules package matching the running kernel exactly.</td>
+  </tr>
+  <tr>
+    <td>Every transfer times out with no error text</td>
+    <td>A firewall is dropping UDP 4791.</td>
+    <td>Permit 4791/udp, or disable the firewall on a lab machine.</td>
+  </tr>
+  <tr>
+    <td><code>ibv_devinfo</code> reports <code>PORT_DOWN</code></td>
+    <td>The underlying interface is down, or the <code>rxe</code> link was attached to the wrong interface — commonly the translated one rather than the bridged one.</td>
+    <td>Confirm the interface is up and carries the expected address, then remove and recreate the link.</td>
+  </tr>
+  <tr>
+    <td>The device disappears after reboot</td>
+    <td>Expected. <code>rxe</code> links are not persistent.</td>
+    <td>Recreate it, or arrange for the command to run at boot.</td>
+  </tr>
+  <tr>
+    <td><code>ibv_rc_pingpong</code> fails, <code>rping</code> succeeds</td>
+    <td>Wrong GID index passed to <code>-g</code>.</td>
+    <td>Enumerate the GID table and select the RoCEv2 IPv4 entry.</td>
+  </tr>
+  <tr>
+    <td><code>rping</code> fails, <code>ibv_rc_pingpong</code> succeeds</td>
+    <td><code>rdma_ucm</code> is not loaded.</td>
+    <td>Load it, and add it to the boot-time module list.</td>
+  </tr>
+  <tr>
+    <td>Small transfers succeed, large ones hang</td>
+    <td>Maximum transfer unit mismatch between the two nodes.</td>
+    <td>Set both interfaces to the same value and recreate both links.</td>
+  </tr>
+  <tr>
+    <td>A guide instructs you to build a kernel or run <code>rxe_cfg</code></td>
+    <td>The guide predates the in-tree driver.</td>
+    <td>Discard it. Use the <code>rdma</code> command.</td>
+  </tr>
+  <tr>
+    <td>Bandwidth in the hundreds of megabits</td>
+    <td>Not a failure. Software RoCE is CPU-bound.</td>
+    <td>Record it and continue.</td>
+  </tr>
+</table>
+
+<h2>13 &nbsp; What Is Deliberately Left Out</h2>
+
+<p>This TRD verifies an environment. It contains no verbs code, and that is intentional — its entire value is that when TRD-01 fails, the fabric is already eliminated as a suspect.</p>
+
+<p>Also absent by design across the early ladder: this fabric is not lossless, has no congestion control, and is not tuned. None of that matters on a virtual bridge with two nodes, and all of it matters in a data centre. Memory registration on <code>rxe</code> does not pin pages the way hardware does, so the locked-memory limits that cause hardware registration to fail will not appear until TRD-01 discusses them. Connection setup here is performed by reference tools; you build it by hand in TRD-02 and replace that with the connection manager in TRD-05.</p>
+
+<p>The baseline recorded in this TRD is the control for a comparison that has not happened yet — and the TCP figure beside it is the control for the baseline itself. If the project is later moved to hardware, this file is what makes the difference measurable. Capturing it costs ten minutes now and cannot be reconstructed later.</p>
+
+<h2>14 &nbsp; Further Reading</h2>
+
+<p><strong>Read now, before starting the requirements:</strong></p>
+
+<ul>
+  <li><strong><code>rxe.md</code></strong> in the <code>rdma-core</code> documentation directory <span class="cite">[2]</span> — two pages, current, and authoritative for exactly this TRD. If you read one thing, read this.</li>
+  <li><strong><code>rxe(7)</code></strong> and <strong><code>rdma-link(8)</code></strong> <span class="cite">[4][7]</span> — brief manual pages covering the driver and the command that creates the link. Read both in full; together they are shorter than this section.</li>
+</ul>
+
+<p><strong>Read during the requirements, when the corresponding tool starts working:</strong></p>
+
+<ul>
+  <li><strong><code>rc_pingpong.c</code></strong> in the <code>libibverbs</code> examples <span class="cite">[2]</span> — after the raw verbs check passes. Annotate it. It is the direct skeleton for TRD-02 and TRD-03, and the annotation is the best possible preparation for them.</li>
+  <li><strong><code>rping.c</code></strong> in the <code>librdmacm</code> examples <span class="cite">[2]</span> — after the connection-manager check passes. The structural model for TRD-05.</li>
+</ul>
+
+<p><strong>Reference throughout the ladder, not read front to back:</strong></p>
+
+<ul>
+  <li><strong>RDMAmojo</strong> <span class="cite">[9]</span> — a per-function reference covering the verbs API in more depth than the manual pages, written by a longtime contributor to the specification. Consult it per function as you encounter each one.</li>
+  <li><strong>RDMA Aware Networks Programming User Manual</strong> <span class="cite">[6]</span> — vendor documentation, but the most complete narrative treatment of the programming model in print. Its chapters on queue-pair state transitions and memory registration are worth reading before TRD-02 and TRD-01 respectively.</li>
+  <li><strong>InfiniBand Architecture Specification, Volume 1, Annexes A16 and A17</strong> <span class="cite">[1]</span> — the normative definition of RoCE and RoCEv2. Consult when you need to settle a question about wire format or transport semantics definitively. Not a tutorial.</li>
+</ul>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] InfiniBand Trade Association. <em>InfiniBand Architecture Specification, Volume 1, Release 1.7.</em> Annex A16 ("RDMA over Converged Ethernet") and Annex A17 ("RoCEv2"). Normative for the encapsulation, addressing, and transport semantics described in section 8. https://www.infinibandta.org/ibta-specification/</li>
+
+  <li>[2] linux-rdma. <em>rdma-core: RDMA core userspace libraries and daemons.</em> See <code>Documentation/rxe.md</code> for Soft-RoCE setup, <code>libibverbs/examples/rc_pingpong.c</code> for the raw verbs reference implementation, and <code>librdmacm/examples/rping.c</code> for the connection-manager reference. Accessed 2026-07. https://github.com/linux-rdma/rdma-core</li>
+
+  <li>[3] Internet Assigned Numbers Authority. <em>Service Name and Transport Protocol Port Number Registry.</em> Entry <code>roce</code>, 4791/udp. Accessed 2026-07. https://www.iana.org/assignments/service-names-port-numbers/</li>
+
+  <li>[4] <em>rxe(7).</em> Linux manual page, section 7. Describes the Soft-RoCE driver, its configuration, and its limitations relative to hardware providers.</li>
+
+  <li>[5] Linux kernel documentation. <em>InfiniBand and RDMA subsystem.</em> Accessed 2026-07. https://docs.kernel.org/infiniband/</li>
+
+  <li>[6] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual.</em> Chapters on memory registration, queue-pair state transitions, and GID addressing. Vendor documentation, but the most complete narrative treatment of the verbs programming model available.</li>
+
+  <li>[7] <em>rdma-link(8).</em> Linux manual page, section 8, from the <code>iproute2</code> RDMA tooling. Documents <code>rdma link add</code>, which creates the Soft-RoCE device, superseding the obsolete <code>rxe_cfg</code> method.</li>
+
+  <li>[8] linux-rdma. <em>perftest: RDMA performance benchmark suite.</em> Source of <code>ib_send_bw</code>, <code>ib_send_lat</code>, <code>ib_write_bw</code>, and <code>ib_read_lat</code>. Accessed 2026-07. https://github.com/linux-rdma/perftest</li>
+
+  <li>[9] Barak, Dotan. <em>RDMAmojo.</em> Per-function reference for the verbs API. Accessed 2026-07. https://www.rdmamojo.com/</li>
+
+  <li>[10] Stroustrup, Bjarne. <em>A Tour of C++.</em> 3rd ed., Addison-Wesley, 2022. Ch. 1–5 for the language subset used through TRD-03; ch. 5–6 and 13 for the resource management applied in TRD-04.</li>
+
+  <li>[11] Bryant, Randal E., and David R. O'Hallaron. <em>Computer Systems: A Programmer's Perspective.</em> 3rd ed., Pearson, 2015. Ch. 9, "Virtual Memory" — background for the address translation and page pinning discussed in section 7 and required in TRD-01.</li>
+</ol>
+
+<div class="footer">
+  TRD-00: Fabric Up &nbsp;|&nbsp; Prior Knowledge &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

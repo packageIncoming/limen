@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-05: Connection Management — Prior Knowledge</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-05: Connection Management</h1>
+  <div class="subtitle">Prior Knowledge — Limen RDMA Transport Project</div>
+  <div class="meta">Depends on: TRD-04 &nbsp;|&nbsp; Difficulty: Medium-High &nbsp;|&nbsp; Estimated: 4–5 sessions</div>
+</div>
+
+<h2>1 &nbsp; Where This Fits</h2>
+
+<p>TRD-02 had you exchange four values over a hand-rolled TCP socket and then drive a queue pair through three transitions with eleven fields that had to be simultaneously correct. TRD-04 gave you types that own resources and release them in the right order without being told.</p>
+
+<p>This rung deletes the first of those and stress-tests the second.</p>
+
+<p>The RDMA connection manager performs the parameter exchange and the state transitions for you, driven by an IP address. All of TRD-02's bringup — the GID index, the address vector, the sequence numbers, the three <code>ibv_modify_qp</code> calls — disappears behind two function calls. You will delete the TCP side channel from the ping-pong program and never write one again.</p>
+
+<p>What replaces it is an asynchronous event model with three ownership rules that do not fit the layer you just built. An identifier can be created by an event rather than by you. Destroying an identifier blocks until its events have been acknowledged. And a pointer handed to you inside an event becomes invalid at a moment you choose. Each of those is a real hazard, each is documented, and together they are the reason this rung exists rather than being a paragraph in TRD-02.</p>
+
+<h2>2 &nbsp; What the Connection Manager Is</h2>
+
+<p><code>librdmacm</code> sits above <code>libibverbs</code> and provides connection establishment by IP address. It resolves an address to an RDMA device, resolves a route, exchanges endpoint parameters with the peer over the fabric's own management channel, creates the queue pair, and drives it to <code>RTS</code>.</p>
+
+<p>The API is deliberately socket-shaped — <code>bind</code>, <code>listen</code>, <code>accept</code>, <code>connect</code>, <code>disconnect</code> — and the shape is a useful guide until it stops being one. The differences that matter:</p>
+
+<table>
+  <tr><th style="width:150px;"></th><th>Sockets</th><th>RDMA CM</th></tr>
+  <tr><td>Progress</td><td>Blocking calls that return when done</td><td>Calls that <em>initiate</em>; completion arrives as an event</td></tr>
+  <tr><td>Accepting</td><td><code>accept()</code> on the listening socket</td><td><code>rdma_accept()</code> on a <em>new</em> id delivered by an event<span class="cite">[3]</span></td></tr>
+  <tr><td>Handshake payload</td><td>None</td><td>Up to 56 bytes each way at connect time<span class="cite">[2]</span></td></tr>
+  <tr><td>Cleanup</td><td><code>close()</code> is unconditional</td><td>Destroying an id blocks on unacknowledged events<span class="cite">[1]</span></td></tr>
+  <tr><td>What you get</td><td>A byte stream</td><td>A queue pair already in <code>RTS</code></td></tr>
+</table>
+
+<p>The last row is the payoff. After <code>RDMA_CM_EVENT_ESTABLISHED</code>, the queue pair on <code>id-&gt;qp</code> is connected and ready — and you can post to it with exactly the code TRD-03 already contains.</p>
+
+<h2>3 &nbsp; The Event Channel</h2>
+
+<p>Every asynchronous result arrives through an event channel. <code>rdma_create_event_channel()</code> returns one; it holds a file descriptor, so it can be polled or made non-blocking, and by default <code>rdma_get_cm_event()</code> blocks until something arrives.<span class="cite">[1]</span></p>
+
+<pre>struct rdma_cm_event {
+    struct rdma_cm_id       *id;         /* the id this concerns          */
+    struct rdma_cm_id       *listen_id;  /* for CONNECT_REQUEST           */
+    enum rdma_cm_event_type  event;
+    int                      status;     /* non-zero on the *_ERROR types */
+    union {
+        struct rdma_conn_param conn;
+        struct rdma_ud_param   ud;
+    } param;
+};</pre>
+
+<div class="callout">
+  <div class="callout-label">Every event must be acknowledged</div>
+  <p>The event structure is allocated by the library and released by <code>rdma_ack_cm_event()</code>. There must be a one-to-one correspondence between successful gets and acks.<span class="cite">[1][6]</span> Failing to acknowledge does not merely leak — see section 6.</p>
+</div>
+
+<p><code>rdma_event_str()</code> converts an event type to a printable name. Use it everywhere; the enumeration has more than a dozen members and an unexpected one is far more useful reported by name than by number.</p>
+
+<h2>4 &nbsp; The Connection Sequence</h2>
+
+<div class="diagram">
+  <svg viewBox="0 0 680 330" xmlns="http://www.w3.org/2000/svg" font-family="Georgia, serif" font-size="8">
+    <defs><marker id="a8" markerWidth="7" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0, 7 2.5, 0 5" fill="#000"/></marker></defs>
+    <text x="120" y="13" text-anchor="middle" font-weight="bold" font-size="10">SERVER</text>
+    <text x="560" y="13" text-anchor="middle" font-weight="bold" font-size="10">CLIENT</text>
+    <line x1="120" y1="20" x2="120" y2="308" stroke="#000" stroke-width="1"/>
+    <line x1="560" y1="20" x2="560" y2="308" stroke="#000" stroke-width="1"/>
+
+    <text x="120" y="36" text-anchor="middle">create_event_channel</text>
+    <text x="560" y="36" text-anchor="middle">create_event_channel</text>
+    <text x="120" y="50" text-anchor="middle">create_id (listener)</text>
+    <text x="560" y="50" text-anchor="middle">create_id</text>
+    <text x="120" y="64" text-anchor="middle">bind_addr · listen</text>
+
+    <text x="560" y="82" text-anchor="middle">resolve_addr</text>
+    <text x="560" y="96" text-anchor="middle" font-style="italic">← ADDR_RESOLVED</text>
+    <text x="560" y="110" text-anchor="middle">resolve_route</text>
+    <text x="560" y="124" text-anchor="middle" font-style="italic">← ROUTE_RESOLVED</text>
+    <text x="560" y="138" text-anchor="middle">create_qp</text>
+    <text x="560" y="152" text-anchor="middle" font-weight="bold">connect(private_data)</text>
+
+    <line x1="500" y1="168" x2="180" y2="168" stroke="#000" stroke-width="1.3" marker-end="url(#a8)"/>
+    <text x="340" y="163" text-anchor="middle" font-style="italic">rkey · addr · len  (≤ 56 B)</text>
+
+    <text x="120" y="188" text-anchor="middle" font-style="italic" font-weight="bold">← CONNECT_REQUEST</text>
+    <text x="120" y="201" text-anchor="middle" font-size="7.5">event-&gt;id is a NEW id you now own</text>
+    <text x="120" y="215" text-anchor="middle">copy private_data OUT</text>
+    <text x="120" y="229" text-anchor="middle">create_qp(new id)</text>
+    <text x="120" y="243" text-anchor="middle" font-weight="bold">accept(private_data)</text>
+
+    <line x1="180" y1="259" x2="500" y2="259" stroke="#000" stroke-width="1.3" marker-end="url(#a8)"/>
+    <text x="340" y="254" text-anchor="middle" font-style="italic">rkey · addr · len  (≤ 196 B)</text>
+
+    <text x="120" y="279" text-anchor="middle" font-style="italic">← ESTABLISHED</text>
+    <text x="560" y="279" text-anchor="middle" font-style="italic">← ESTABLISHED</text>
+    <text x="340" y="300" text-anchor="middle" font-weight="bold">both queue pairs are in RTS · post and poll as in TRD-03</text>
+  </svg>
+  <div class="diagram-caption">Figure 1 — The full handshake. Every italic line is an event that must be acknowledged.</div>
+</div>
+
+<h3>Client</h3>
+
+<table>
+  <tr><th style="width:190px;">Call</th><th>Then wait for</th></tr>
+  <tr><td><code>rdma_resolve_addr</code></td><td><code>RDMA_CM_EVENT_ADDR_RESOLVED</code>, or <code>ADDR_ERROR</code></td></tr>
+  <tr><td><code>rdma_resolve_route</code></td><td><code>RDMA_CM_EVENT_ROUTE_RESOLVED</code>, or <code>ROUTE_ERROR</code></td></tr>
+  <tr><td><code>rdma_create_qp</code></td><td>nothing — synchronous</td></tr>
+  <tr><td><code>rdma_connect</code></td><td><code>RDMA_CM_EVENT_ESTABLISHED</code>, or <code>REJECTED</code> / <code>CONNECT_ERROR</code> / <code>UNREACHABLE</code></td></tr>
+</table>
+
+<p>The route must be resolved before connecting; the manual page states the precondition explicitly.<span class="cite">[2]</span> After <code>rdma_create_qp</code>, the queue pair is reachable as <code>id-&gt;qp</code> and the CM owns its state transitions.</p>
+
+<h3>Server</h3>
+
+<table>
+  <tr><th style="width:190px;">Call</th><th>Then wait for</th></tr>
+  <tr><td><code>rdma_bind_addr</code>, <code>rdma_listen</code></td><td><code>RDMA_CM_EVENT_CONNECT_REQUEST</code></td></tr>
+  <tr><td><code>rdma_create_qp</code> on the <em>new</em> id</td><td>nothing</td></tr>
+  <tr><td><code>rdma_accept</code> on the <em>new</em> id</td><td><code>RDMA_CM_EVENT_ESTABLISHED</code></td></tr>
+</table>
+
+<div class="warning">
+  <code>rdma_accept</code> is not called on the listening id. After <code>rdma_listen</code>, the connect request event delivers a newly created id — similar to a new socket, but already bound to a specific RDMA device — and <code>rdma_accept</code> is called on that.<span class="cite">[3]</span> The listener remains open for further requests.
+</div>
+
+<h2>5 &nbsp; Private Data</h2>
+
+<p>Both <code>rdma_connect</code> and <code>rdma_accept</code> carry an application payload to the peer, delivered in the corresponding event's <code>param.conn.private_data</code>. The contents are copied by the library, so your source buffer need not outlive the call.<span class="cite">[2]</span></p>
+
+<p>This is where TRD-06's remote key, address, and length travel. The exchange that TRD-02 built by hand over TCP becomes a struct in the handshake.</p>
+
+<div class="callout">
+  <div class="callout-label">The limits are asymmetric, and small</div>
+  <p><strong>56 bytes</strong> on <code>rdma_connect</code>, and <strong>196 bytes</strong> on <code>rdma_accept</code>, for <code>RDMA_PS_TCP</code>.<span class="cite">[2][3]</span> The connect direction is the binding one. A remote key, a 64-bit address, and a length occupy sixteen bytes, so there is room — but not room for anything casual, and a payload designed against the accept limit will fail in the other direction.</p>
+</div>
+
+<p>Two further properties worth knowing. The received buffer may be <em>larger</em> than what the peer sent, with the remainder zeroed<span class="cite">[1]</span> — so never infer the payload length from the buffer length. And connections over iWARP require the active side to send the first message,<span class="cite">[2]</span> which does not affect RoCE but is the kind of transport-specific constraint that makes a hand-rolled protocol non-portable.</p>
+
+<h3>Encoding</h3>
+
+<p>The payload crosses machines, so fixed-width types and an explicit byte order are required, exactly as in TRD-02's text-based exchange. A packed struct with <code>uint64_t</code> and <code>uint32_t</code> members converted to network order is the straightforward answer. Do not send a struct with native padding and native endianness; it works between two identical nodes and is broken by construction.</p>
+
+<h2>6 &nbsp; Three Ownership Rules That Break the Layer</h2>
+
+<p>TRD-04 built a layer on the assumption that resources are created by you, owned by exactly one object, and released whenever you like. The connection manager violates all three assumptions, in three separate ways.</p>
+
+<h3>Rule 1 — An event creates an identifier</h3>
+
+<p>On <code>RDMA_CM_EVENT_CONNECT_REQUEST</code>, <code>event-&gt;id</code> references a <strong>new id created by the library</strong>.<span class="cite">[1][3]</span> You did not call anything to create it, and you are nevertheless responsible for destroying it.</p>
+
+<p>So the server holds two identifiers with different origins: the listener it created, and the connection the event handed it. A wrapper type whose only constructor acquires a resource cannot represent the second. It needs an <em>adopting</em> constructor — one that takes an already-live handle and assumes responsibility for it. That is a genuinely different shape from the five wrappers of TRD-04, and it is the first thing this rung will make you add.</p>
+
+<h3>Rule 2 — Destruction blocks on acknowledgement</h3>
+
+<div class="warning">
+  <strong>Destruction of an <code>rdma_cm_id</code> will block until related events have been acknowledged.</strong><span class="cite">[1][6]</span> An unacknowledged event does not leak a few bytes — it deadlocks your destructor, and the program hangs during teardown with no diagnostic.
+</div>
+
+<p>This is what makes the acknowledgement worth a type of its own. An event is a resource with a mandatory release, obtained from a function and released by another, whose omission has a consequence far worse than a leak. That is the exact shape RAII exists for:</p>
+
+<pre>class Event {
+public:
+    explicit Event(EventChannel &amp;ch);      /* blocks until one arrives */
+    ~Event() noexcept { if (ev_) rdma_ack_cm_event(ev_); }
+    /* move-only, as in TRD-04 */
+    rdma_cm_event_type type() const noexcept;
+private:
+    rdma_cm_event *ev_ = nullptr;
+};</pre>
+
+<p>With that type, every early return and every exception acknowledges the event on the way out, and the deadlock becomes unreachable. Without it, one <code>return</code> on an error path in the middle of a handler produces a hang at shutdown that is very hard to attribute back to its cause.</p>
+
+<h3>Rule 3 — A pointer inside the event dies when you acknowledge</h3>
+
+<p>The private data buffer referenced by the event is deallocated by <code>rdma_ack_cm_event</code>.<span class="cite">[1]</span> So the payload you came for is invalidated by the call that releases the event — and if you are using the RAII type above, that call is a destructor running at a scope exit you may not be thinking about.</p>
+
+<p><strong>Copy the payload out before the event is acknowledged.</strong> Every time, without exception. The failure mode is a dangling read whose contents are frequently still intact, so it works in development and produces a wrong remote key under load.</p>
+
+<p>Note the interaction: the RAII type from Rule 2 makes the acknowledgement automatic, which makes Rule 3 <em>easier</em> to get wrong, because there is no longer a visible <code>rdma_ack_cm_event</code> call to notice you are reading past. A well-designed <code>Event</code> type therefore does not expose the raw pointer at all — it exposes a function that copies the payload into a caller-supplied buffer, so reading after acknowledgement has no expression.</p>
+
+<h2>7 &nbsp; What the CM Takes Away</h2>
+
+<p>The convenience is not free, and one of the costs directly changes behaviour you observed in TRD-03.</p>
+
+<div class="callout">
+  <div class="callout-label">The CM sets the minimum RNR timer to 0, meaning 655 ms</div>
+  <p>InfiniBand queue pairs established through the CM are configured with a minimum RNR NAK timer of 0, which corresponds to a delay of 655 ms.<span class="cite">[2][3]</span> TRD-02 had you set that field to 12, meaning 0.64 ms. You no longer control it.</p>
+  <p>The consequence is concrete: the receiver-not-ready retry interval from TRD-03 becomes roughly a thousand times longer. With <code>rnr_retry</code> at 7 the behaviour is unchanged — still an infinite hang — but with a finite retry count the failure now takes seconds rather than milliseconds to report. If TRD-03's suite suddenly seems slow after this rung, this is why, and it is not a defect.</p>
+</div>
+
+<p>What you retain: <code>rdma_conn_param</code> carries <code>rnr_retry_count</code>, <code>retry_count</code>, <code>responder_resources</code>, and <code>initiator_depth</code>,<span class="cite">[2]</span> so TRD-03's <code>--rnr-retry</code> flag survives, mapped to a different field. The retry count is a 3-bit value, and 7 still means infinite.</p>
+
+<p>What you lose: the minimum RNR timer, the path MTU choice, the packet sequence numbers, the GID index, and direct control of the state transitions. For this project all of those are acceptable losses — and knowing precisely what was traded is why TRD-02 built them by hand first.</p>
+
+<p>One more field worth noting: <code>qp_num</code> in <code>rdma_conn_param</code> is ignored by the library when a queue pair has already been created on the identifier.<span class="cite">[3]</span> Since you will always call <code>rdma_create_qp</code> first, you never set it.</p>
+
+<h2>8 &nbsp; Disconnection and Timewait</h2>
+
+<p><code>rdma_disconnect</code> tears down the connection and both sides receive <code>RDMA_CM_EVENT_DISCONNECTED</code>. Either side may initiate; both must handle receiving it unprompted, because the peer may disconnect first.</p>
+
+<p>After disconnection the queue pair enters a timewait state, and <code>RDMA_CM_EVENT_TIMEWAIT_EXIT</code> reports when it has left and the queue pair may be reused.<span class="cite">[1]</span> This ladder does not reuse queue pairs, so the event is one to recognise and acknowledge rather than act on — but a server that recycles connections would need it, and ignoring it there produces a resource that appears leaked and is merely waiting.</p>
+
+<p>Two other events warrant explicit handling rather than a default branch. <code>RDMA_CM_EVENT_DEVICE_REMOVAL</code> requires you to destroy the associated identifier.<span class="cite">[1]</span> <code>RDMA_CM_EVENT_ADDR_CHANGE</code> signals that the underlying network device changed its hardware address, as after a bonding failover.<span class="cite">[1]</span> Neither will occur on a stable two-node lab, and a handler that treats an unexpected event as fatal — with a message naming it — is better than one that ignores it silently.</p>
+
+<h2>9 &nbsp; Failure Modes</h2>
+
+<table>
+  <tr><th style="width:225px;">Symptom</th><th style="width:215px;">Cause</th><th>Resolution</th></tr>
+  <tr><td>Program hangs during teardown, no output</td><td>An event was never acknowledged; destroying the id blocks.<span class="cite">[1]</span></td><td>The <code>Event</code> RAII type from section 6. Attach a debugger and the backtrace will sit in <code>rdma_destroy_id</code>.</td></tr>
+  <tr><td>Remote key is wrong, intermittently</td><td>Private data read after acknowledgement.<span class="cite">[1]</span></td><td>Copy the payload out before the event is released. Do not expose the raw pointer.</td></tr>
+  <tr><td>Server accepts once, then never again</td><td><code>rdma_accept</code> called on the listening id rather than the new one.<span class="cite">[3]</span></td><td>Accept on <code>event-&gt;id</code>; keep the listener for the next request.</td></tr>
+  <tr><td>Double free, or the connection dies at scope exit</td><td>Both the listener wrapper and the connection wrapper destroyed the same id, or the adopted id was never adopted by anything.</td><td>An adopting constructor with clear ownership. Section 6, rule 1.</td></tr>
+  <tr><td><code>rdma_connect</code> fails immediately</td><td>Route not resolved first.<span class="cite">[2]</span></td><td>Wait for <code>ROUTE_RESOLVED</code> before connecting.</td></tr>
+  <tr><td><code>rdma_connect</code> returns <code>EINVAL</code></td><td>Private data longer than 56 bytes.<span class="cite">[2]</span></td><td>Shrink the payload. The accept limit is larger and does not apply here.</td></tr>
+  <tr><td>Payload arrives with trailing garbage</td><td>Length inferred from the received buffer rather than from <code>private_data_len</code>.<span class="cite">[1]</span></td><td>The buffer may be larger than what was sent; the remainder is zeroed.</td></tr>
+  <tr><td><code>ADDR_ERROR</code> or <code>UNREACHABLE</code></td><td>No route to the peer, or no RDMA device owns the local address.</td><td>Confirm the address is on the interface the <code>rxe</code> link was bound to in TRD-00.</td></tr>
+  <tr><td><code>REJECTED</code> with no obvious reason</td><td>The peer's <code>rdma_accept</code> failed, frequently because its queue pair creation failed.</td><td>Read <code>event-&gt;status</code>, and check the server's own output.</td></tr>
+  <tr><td>RNR failures take seconds, not milliseconds</td><td>The CM forces a 655 ms minimum RNR timer.<span class="cite">[2]</span></td><td>Expected. Section 7.</td></tr>
+  <tr><td>Blocks forever waiting for an event</td><td><code>rdma_get_cm_event</code> blocks by default.<span class="cite">[1]</span></td><td>Make the channel's file descriptor non-blocking and poll, or accept the block and impose a timeout above it.</td></tr>
+</table>
+
+<h2>10 &nbsp; What Is Deliberately Left Out</h2>
+
+<p>One connection at a time. A server that holds many concurrent connections needs the event channel driven by a loop over a non-blocking descriptor with per-connection state, which is an event-loop design rather than an RDMA topic.</p>
+
+<p>No reconnection, no retry on <code>REJECTED</code>, no address resolution timeouts beyond the default. All are policy, and policy without a use case is guesswork.</p>
+
+<p>The hand-rolled bringup from TRD-02 is <em>not</em> deleted from the repository. <code>limen_connect</code> keeps it, and its test suite must keep passing. It is the reference for what the CM hides, and reading the two side by side is worth more than either alone.</p>
+
+<h2>11 &nbsp; Further Reading</h2>
+
+<p><strong>Read before starting:</strong></p>
+<ul>
+  <li><strong><code>rdma_cm(7)</code></strong><span class="cite">[4]</span> — the overview, and the index of every other page you will need. Read it once, completely.</li>
+  <li><strong><code>rdma_get_cm_event(3)</code></strong><span class="cite">[1]</span> — the event structure, the full event enumeration, the acknowledgement requirement, and the two ownership rules in section 6. The single most important page for this rung.</li>
+</ul>
+
+<p><strong>Read while implementing:</strong></p>
+<ul>
+  <li><strong><code>rdma_connect(3)</code></strong><span class="cite">[2]</span> and <strong><code>rdma_accept(3)</code></strong><span class="cite">[3]</span> — the connection properties, the asymmetric private data limits, and the RNR timer the CM imposes.</li>
+  <li><strong><code>rping.c</code></strong> in the <code>librdmacm</code> examples<span class="cite">[5]</span> — you read this in TRD-00 when it was a tool. Read it now as a structural model; it is a complete implementation of exactly this rung.</li>
+</ul>
+
+<p><strong>Reference as needed:</strong></p>
+<ul>
+  <li><strong><code>rdma_cma.h</code></strong><span class="cite">[6]</span> — the header's comments are terse and authoritative, and settle questions the manual pages leave ambiguous.</li>
+  <li><strong>RDMA Aware Networks Programming User Manual</strong>, the CM event handling chapter<span class="cite">[7]</span> — a narrative walkthrough. Note the return-value caveat identified in TRD-02 before relying on its code.</li>
+</ul>
+
+<h2>References</h2>
+
+<ol class="refs">
+  <li>[1] <em>rdma_get_cm_event(3).</em> Linux manual page, section 3. The <code>rdma_cm_event</code> structure, the full event enumeration, the requirement that every event be acknowledged, the statement that destruction of an <code>rdma_cm_id</code> blocks until related events have been acknowledged, the fact that <code>event-&gt;id</code> references a new id on <code>RDMA_CM_EVENT_CONNECT_REQUEST</code>, and the deallocation of the private data buffer by <code>rdma_ack_cm_event</code>. https://man7.org/linux/man-pages/man3/rdma_get_cm_event.3.html</li>
+
+  <li>[2] <em>rdma_connect(3).</em> Linux manual page, section 3. The <code>rdma_conn_param</code> fields, the 56-byte private data limit for <code>RDMA_PS_TCP</code>, the requirement that a route be resolved first, the minimum RNR NAK timer of 0 corresponding to a 655 ms delay, and the iWARP first-message constraint. https://man7.org/linux/man-pages/man3/rdma_connect.3.html</li>
+
+  <li>[3] <em>rdma_accept(3).</em> Linux manual page, section 3. The statement that <code>rdma_accept</code> is not called on a listening id but on the newly created id delivered by the connect request event, the 196-byte private data limit for <code>RDMA_PS_TCP</code>, and that <code>qp_num</code> is ignored when a queue pair has been created on the id. https://man7.org/linux/man-pages/man3/rdma_accept.3.html</li>
+
+  <li>[4] <em>rdma_cm(7).</em> Linux manual page, section 7. Overview of the connection manager and index of its interface. https://linux.die.net/man/7/rdma_cm</li>
+
+  <li>[5] linux-rdma. <em>rdma-core.</em> <code>librdmacm/examples/rping.c</code> — reference implementation of the connection sequence in section 4. Accessed 2026-07. https://github.com/linux-rdma/rdma-core</li>
+
+  <li>[6] linux-rdma. <em>rdma-core.</em> <code>librdmacm/rdma_cma.h</code> — header comments stating the one-to-one correspondence between successful gets and acks, and repeating the destruction-blocking rule. Accessed 2026-07. https://github.com/linux-rdma/rdma-core/blob/master/librdmacm/rdma_cma.h</li>
+
+  <li>[7] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual.</em> "RDMA_CM Event Handling Operations." Narrative treatment of the event model. https://docs.nvidia.com/networking/display/RDMAAwareProgrammingv17/RDMA_CM+Event+Handling+Operations</li>
+</ol>
+
+<div class="footer">
+  TRD-05: Connection Management &nbsp;|&nbsp; Prior Knowledge &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

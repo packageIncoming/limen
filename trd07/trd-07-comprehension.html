@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-07: Completion Efficiency — Comprehension</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+h3 { font-size: 11pt; font-weight: bold; margin-top: 16px; margin-bottom: 4px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; font-weight: bold; margin-top: 12px; margin-bottom: 3px; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.callout { border-left: 4px solid #000; padding: 8px 14px; margin: 12px 0; page-break-inside: avoid; }
+.callout-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+.warning { border-left: 5px solid #000; padding: 8px 14px; margin: 12px 0; font-style: italic; page-break-inside: avoid; }
+.diagram { border: 1.5px solid #000; padding: 14px; margin: 14px 0; text-align: center; page-break-inside: avoid; }
+.diagram svg { max-width: 100%; height: auto; }
+.diagram-caption { font-size: 9pt; font-style: italic; text-align: center; margin-top: 6px; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+.answer-key { page-break-before: always; }
+.qa-block { border: 1.5px solid #000; padding: 12px 14px; margin: 14px 0; page-break-inside: avoid; }
+.qa-block .qa-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px; }
+.qa-miss { border-left: 4px solid #000; padding: 6px 12px; margin: 8px 0 0 0; font-size: 9.5pt; font-style: italic; }
+@media print { body { padding: 0; } .diagram, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-07: Completion Efficiency</h1>
+  <div class="subtitle">Comprehension &mdash; Limen RDMA Transport Project</div>
+  <div class="meta">8 questions &nbsp;|&nbsp; Answer in writing before the key &nbsp;|&nbsp; Est.: 55&ndash;80 minutes</div>
+</div>
+
+<h2>Questions</h2>
+
+<p><strong>Q1.</strong> Inline data is the only mechanism in this ladder that relaxes the buffer-ownership rule from TRD-03. Explain why it can, what it costs to do so, and why there is a size above which it stops being worth it.</p>
+
+<p><strong>Q2.</strong> Signalling one send in sixteen still bounds buffer reuse correctly. State the property that makes this sound, then name two things you gave up that a fully-signalled implementation had.</p>
+
+<p><strong>Q3.</strong> Describe the arming race in the event-driven path precisely: the sequence of events that produces it, why the resulting failure is a permanent hang rather than an error, and what the specification prescribes as the remedy.</p>
+
+<p><strong>Q4.</strong> Your <code>race_polls_hit</code> counter reported some value and your <code>--broken-arming</code> run behaved some way. State both results, then explain what each does and does not establish. Compare this to what TRD-06 R7 asked about last-byte polling.</p>
+
+<p><strong>Q5.</strong> The event path has four rules: arm before posting, re-arm after every event, drain completely, and poll again after arming. For each, describe the specific failure that omitting it produces, and say which of the four failures is hardest to diagnose.</p>
+
+<p><strong>Q6.</strong> Pipelining is described as the largest win available and is not one of the four named optimisations. Explain what it addresses that the others do not, why unsignaled sends are a prerequisite rather than a companion, and why the bound differs between writes and reads.</p>
+
+<p><strong>Q7.</strong> Every technique in this rung trades something. Pick the two you consider most dangerous to apply without measurement, and for each describe a realistic workload where applying it would make performance <em>worse</em>.</p>
+
+<p><strong>Q8.</strong> None of these optimisations measurably helped on your fabric. Explain why, then describe what you expect TRD-08 to show on soft-RoCE &mdash; and what it would show on a hardware adapter. Say what that difference tells you about where the optimisations' benefit actually comes from.</p>
+
+<hr>
+
+<p><em>Answer all eight in writing before turning the page. Writing is the point &mdash; an answer that feels clear in your head and falls apart on paper was never clear. Then compare against the key. Where your answer is thinner than the key&rsquo;s, reread the Prior Knowledge section named at the end of that answer before starting TRD-08. Where you disagree with the key and can defend the disagreement, that is a good sign rather than a wrong answer.</em></p>
+
+<div class="answer-key">
+
+<h2>Answer Key</h2>
+
+<div class="qa-block">
+  <div class="qa-label">Q1 &mdash; Answer</div>
+  <p><strong>Why it can:</strong> TRD-03&rsquo;s ownership rule exists because the adapter fetches the payload from your buffer by direct memory access at an unpredictable time after posting. Inline data eliminates the fetch &mdash; the payload is copied into the work request itself, so by the time <code>ibv_post_send</code> returns, the adapter already has the data and your buffer is irrelevant to it.<span class="cite">[1]</span> The rule is not being violated; its precondition has been removed.</p>
+  <p>A consequence worth noticing: the local key is not checked either, because the adapter never touches your memory. The buffer need not even be registered.</p>
+  <p><strong>What it costs:</strong> a CPU copy. The payload is memcpy&rsquo;d into the descriptor by your processor rather than fetched by the adapter&rsquo;s DMA engine. You have moved work from the adapter to the CPU.</p>
+  <p><strong>Why there is a threshold:</strong> the two costs scale differently. The DMA fetch has a large fixed component &mdash; a round trip across the bus, descriptor processing &mdash; and a small per-byte component. The CPU copy is almost entirely per-byte. Below some size the fixed DMA cost dominates and copying is cheaper; above it the copy dominates and fetching is cheaper.</p>
+  <p>There is also a hard ceiling independent of that: <code>max_inline_data</code>, requested before queue-pair creation and granted by the provider. It exists because inline payloads occupy send-queue memory in every entry, so a large limit costs memory whether or not you use it.</p>
+  <p>The crossover is a measurement, not a constant &mdash; it depends on bus latency, CPU speed, and descriptor format. Typical hardware crosses somewhere in the low hundreds of bytes, and TRD-08 finds yours.</p>
+  <div class="qa-miss">Common miss: describing inline as &ldquo;faster&rdquo; without naming the copy. It is a trade of DMA for CPU, and on a CPU-saturated sender it can be a net loss even below the crossover size.</div>
+  <p><em>Covered in Prior Knowledge &sect;3, and in reference [1].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q2 &mdash; Answer</div>
+  <p><strong>The property:</strong> work requests on a send queue complete in order. A completion for request <em>n</em> therefore establishes that every request before <em>n</em> has also completed. One completion in sixteen still yields a monotonically advancing lower bound on what has finished, which is exactly what buffer reuse needs.</p>
+  <p>That is why R4&rsquo;s tracking collapses to a single integer: the highest covered sequence number. No per-buffer bookkeeping is required, because ordering does the bookkeeping.</p>
+  <p><strong>What was given up:</strong></p>
+  <ul>
+    <li><strong>Granularity, and therefore buffers.</strong> You no longer know that request 5 finished &mdash; only that everything through 16 did. Buffers must be freed in batches, so you need at least <em>n</em> in flight rather than one. Unsignaled sends and buffer pooling are the same design decision.</li>
+    <li><strong>Prompt error detection.</strong> An unsignaled request that fails still terminates the queue pair and flushes everything outstanding, so nothing is lost &mdash; but you learn about it at the next signalled completion, up to <em>n</em> operations later. For a transport that must react quickly to a peer failure, that delay is a real cost.</li>
+  </ul>
+  <p>A third thing, less often noticed: completions are what drain the send queue. Signalling too rarely fills it, and <code>ibv_post_send</code> returns <code>ENOMEM</code> with every prior request having succeeded &mdash; which is why R3 validates the period against the queue depth at parse time rather than discovering it at runtime.</p>
+  <div class="qa-miss">Common miss: concluding that unsignaled sends are risky and should be avoided. Every serious RDMA transport uses them; what is unsafe is signalling <em>nothing</em>. The discipline is periodic, and the period is a tuning parameter bounded below by error-detection latency and above by queue depth.</div>
+  <p><em>Covered in Prior Knowledge &sect;4, and Requirements R3 and R4.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q3 &mdash; Answer</div>
+  <p><strong>The sequence:</strong></p>
+  <ol>
+    <li>You poll the completion queue. It is empty.</li>
+    <li>A completion arrives and is placed in the queue.</li>
+    <li>You call <code>ibv_req_notify_cq</code>.</li>
+    <li>You block in <code>ibv_get_cq_event</code>.</li>
+  </ol>
+  <p>No notification is generated for the completion from step 2, because arming requests notification for the <em>next</em> completion added &mdash; anything already present when you arm does not notify.<span class="cite">[5]</span> So you block waiting for an event that will never come, with work sitting in the queue.</p>
+  <p><strong>Why it is a permanent hang rather than an error:</strong> nothing has failed. The completion is valid and waiting. The arm succeeded. The blocking call is behaving exactly as documented. Every component is doing its job correctly and the program makes no further progress. There is no error to report because there is no error &mdash; which is why it cannot be caught by checking return values, and why a timeout is the only local defence.</p>
+  <p>It also self-perpetuates: no further completions arrive because your peer is waiting for a response to the message whose completion you are not processing.</p>
+  <p><strong>The remedy:</strong> poll the completion queue once more <em>after</em> arming and before blocking. If anything is there, handle it and do not block. This is what the InfiniBand specification recommends,<span class="cite">[4]</span> and it works because after the arm, any completion is either already visible to that poll or will generate a notification &mdash; there is no longer a gap between the two.</p>
+  <div class="qa-miss">Common miss: proposing a shorter blocking timeout as the fix. A timeout converts a permanent hang into a periodic stall, which is an improvement in observability and not a fix &mdash; the completion is still not processed until the timeout expires, and on a latency-sensitive path that is catastrophic in a different way.</div>
+  <p><em>Covered in Prior Knowledge &sect;6, and in references [4] and [5].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q4 &mdash; Answer</div>
+  <p>Your own numbers go here. The reasoning is what matters, and the two results establish different things.</p>
+  <p><strong>A non-zero <code>race_polls_hit</code></strong> is positive evidence: the window was hit that many times, and each was a hang your guard prevented. It proves the race is real on <em>this</em> fabric at <em>this</em> concurrency &mdash; not a theoretical concern inherited from documentation.</p>
+  <p><strong>A zero <code>race_polls_hit</code></strong> establishes only that you did not hit the window during that run. The window is a few instructions wide and soft-RoCE&rsquo;s kernel-thread completion path makes it narrower than hardware would. Zero is not evidence of impossibility.</p>
+  <p><strong><code>--broken-arming</code> completing</strong> establishes nothing at all about safety. It is a negative result on a race, and races are precisely the class of bug that passes tests. If it <em>did</em> stall, that is strong evidence &mdash; you provoked the failure directly.</p>
+  <p><strong>The comparison to TRD-06 R7</strong> is the point of asking. Both are cases where <em>a passing test proves the absence of a trigger, not the absence of a defect</em>. In both, the correctness argument comes from the specification and the observation cannot overturn it. In both, the failure profile is identical: works in development, works under light load, fails on faster hardware under sustained traffic, and produces a symptom that does not point at the cause.</p>
+  <p>One asymmetry worth naming: here you have a counter that can produce <em>positive</em> evidence the window is real. TRD-06&rsquo;s last-byte polling has no equivalent &mdash; you cannot instrument the absence of a guarantee. So this rung gives you something the previous one could not, and a non-zero counter is worth more than any number of passing runs.</p>
+  <div class="qa-miss">Common miss: treating a completing <code>--broken-arming</code> run as evidence the guard is optional. It is the same reasoning as concluding last-byte polling is fine because it passed &mdash; and the ladder has now presented that error twice, deliberately, in two different forms.</div>
+  <p><em>Covered in Requirements R8, and compare TRD-06 R7.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q5 &mdash; Answer</div>
+  <table>
+    <tr><th style="width:170px;">Rule omitted</th><th>Failure</th></tr>
+    <tr><td>Arm before posting</td><td>The first completion may already be present when you arm, so no event is generated. Hangs immediately, on the first message.</td></tr>
+    <tr><td>Re-arm after each event</td><td>A notification disarms the queue.<span class="cite">[2]</span> You get exactly one event, process it, and block forever. Hangs after one message.</td></tr>
+    <tr><td>Drain completely</td><td>Leftover completions do not notify &mdash; only new arrivals do.<span class="cite">[5]</span> Work accumulates unprocessed and the peer eventually stops sending, so it stalls after a variable number of messages.</td></tr>
+    <tr><td>Poll again after arming</td><td>The Q3 race. Hangs unpredictably, under load, after an arbitrary number of messages.</td></tr>
+  </table>
+  <p><strong>The hardest to diagnose is the fourth,</strong> and the reason is the failure timing rather than the mechanism.</p>
+  <p>The first two hang deterministically &mdash; immediately, or after exactly one message &mdash; and a deterministic failure at a fixed point is straightforward to find. You add a print statement and see where it stops.</p>
+  <p>The third is intermittent but has a signature: completions visibly accumulate, and draining the queue manually at the stall point shows work waiting. That points at the drain.</p>
+  <p>The fourth is intermittent, load-dependent, and leaves the program in a state that looks identical to correct idleness: the queue may contain exactly one unprocessed completion, the thread is blocked in a legitimate call, no error is reported, and re-running it usually succeeds. It also disappears under a debugger, because attaching perturbs the timing that produced the window.</p>
+  <p>Which is why R8 requires the <em>counter</em> rather than just the guard. Instrumenting the window is the only way to know it exists on your fabric, and the ladder&rsquo;s general lesson applies: when a failure cannot be observed, instrument the condition rather than the symptom.</p>
+  <div class="qa-miss">Common miss: ranking by severity rather than by diagnosability. All four produce the same symptom &mdash; the program stops. What differs is how much information the failure gives you, and the fourth gives almost none.</div>
+  <p><em>Covered in Prior Knowledge &sect;6 and &sect;9, and Hints H6.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q6 &mdash; Answer</div>
+  <p><strong>What it addresses:</strong> the other four reduce the <em>cost per operation</em>. Pipelining addresses <em>idle time</em> &mdash; a different quantity entirely.</p>
+  <p>With one operation outstanding, the link sits idle for a full round trip on every message. Throughput is then bounded by latency rather than by bandwidth: at 2 microseconds round trip you cannot exceed 500,000 messages per second regardless of message size or how cheap each operation is. Making each operation 20% cheaper does not move that ceiling at all, because the bottleneck is waiting rather than working.</p>
+  <p>Keeping several operations in flight removes the wait. The ceiling becomes bandwidth or adapter processing rate, which is typically an order of magnitude higher.</p>
+  <p><strong>Why unsignaled sends are a prerequisite:</strong> with one message in flight there is nothing to batch, so periodic signalling saves nothing &mdash; you would signal every message anyway because there is only ever one outstanding. The saving appears only once several are in flight, at which point one completion covers all of them by the ordering property from Q2. Equally, pipelining without unsignaled sends means <em>n</em> completions for <em>n</em> outstanding operations, so you have added completion-processing cost in proportion to the depth. Each makes the other worth doing; neither is worth much alone.</p>
+  <p><strong>Why the bounds differ:</strong> a write is fire-and-forget from the responder&rsquo;s perspective &mdash; data arrives, is placed, is acknowledged, and no state is retained. A read is a request that returns a value, so the responder must hold state per outstanding read until it is serviced. Bounded responder state means a bounded number of concurrent reads.</p>
+  <p>Concretely: writes and sends pipeline to the send queue&rsquo;s depth, potentially hundreds. Reads are capped by the negotiated <code>max_rd_atomic</code> from TRD-06 &sect;5 &mdash; often 16, and 1 in this ladder&rsquo;s configuration. A read-heavy workload therefore needs that depth negotiated upward at connection time, before any transfer, and it cannot be changed afterwards without rebuilding the connection.</p>
+  <div class="qa-miss">Common miss: treating pipelining as just another optimisation of the same kind. It changes which resource is the bottleneck; the others reduce consumption of a resource that was not the bottleneck. On a latency-bound workload it is the only one of the five that matters.</div>
+  <p><em>Covered in Prior Knowledge &sect;2 and &sect;7, and TRD-06 &sect;5.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q7 &mdash; Answer</div>
+  <p>Any two defensible choices, with a concrete workload each. The two strongest cases:</p>
+  <p><strong>Completion-queue moderation.</strong> It adds up to the configured period in latency to every completion, directly and by construction. Configure a 16-microsecond period on a workload whose round trip is 2 microseconds and you have made every operation up to nine times slower while reducing an interrupt rate that was not the bottleneck.</p>
+  <p>The workload: a request-response service with a strict tail-latency target &mdash; a distributed lock manager, a key-value store on a hot path, anything where the client blocks on the response. Moderation is designed for bulk throughput where an extra few microseconds are invisible, and applying it to a latency-bound path is the clearest self-inflicted regression available in this rung.</p>
+  <p><strong>Event-driven reaping.</strong> The wakeup path &mdash; interrupt, scheduler, context switch &mdash; costs several microseconds, against a poll loop that observes the completion in nanoseconds. On a latency-critical path that is the entire operation cost, doubled or worse.</p>
+  <p>The workload: a two-node, single-connection, latency-measured system with a core to spare. Switching it to event-driven to &ldquo;save CPU&rdquo; trades a core nobody needed for microseconds that matter. This is exactly why high-frequency-trading systems poll and accept a burned core.</p>
+  <p><strong>Honourable mentions.</strong> Inline data is dangerous above the crossover size, where the CPU copy exceeds the DMA it replaced &mdash; and on a sender already CPU-saturated it can lose even below the crossover, because it moves work onto the constrained resource. Unsignaled sends are dangerous when error-detection latency matters: a period of 64 means up to 64 operations before you learn a peer died, which for a failover system is 64 operations of silently doing nothing.</p>
+  <p>The unifying observation: <strong>every one of these optimises a resource, and each is harmful when applied to a workload constrained by a different resource.</strong> Moderation and event-driven reaping optimise CPU at latency&rsquo;s expense. Inline optimises adapter work at the CPU&rsquo;s expense. Applying any of them without knowing which resource is scarce is choosing a point on a curve blindfolded, which is why TRD-07 builds switches rather than defaults and TRD-08 exists at all.</p>
+  <div class="qa-miss">Common miss: naming a technique as dangerous without a workload where it loses. &ldquo;Inline is risky if the payload is large&rdquo; states the limit rather than the trade &mdash; the interesting case is where it is legal, applied, and still worse.</div>
+  <p><em>Covered in Prior Knowledge &sect;8.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q8 &mdash; Answer</div>
+  <p><strong>Why nothing helped:</strong> every technique here reduces a cost that is negligible beside the software provider&rsquo;s own overhead. Soft-RoCE runs the entire InfiniBand transport in kernel software &mdash; queue-pair state, sequence numbering, acknowledgement, encapsulation &mdash; and then hands the result to the ordinary network stack. That software path costs tens of microseconds per operation. Saving a DMA fetch, or fifteen completions in sixteen, is a fraction of a microsecond against it. The signal is buried in noise several orders of magnitude larger.</p>
+  <p>There is no adapter to relieve, so optimisations aimed at adapter interaction have nothing to act on.</p>
+  <p><strong>What TRD-08 will show on soft-RoCE:</strong> essentially flat lines. Latency and throughput roughly unchanged across inline on and off, across signalling periods, across pipeline depths beyond very small values. Pipelining may show <em>some</em> improvement, since it addresses idle time rather than per-operation cost and the software path still has a round trip to overlap &mdash; but far less than on hardware, because the CPU is the bottleneck rather than the link. Event-driven mode will show measurably <em>worse</em> latency, since wakeup cost is real on any fabric.</p>
+  <p><strong>What it would show on hardware:</strong> inline data cutting small-message latency by a substantial fraction; unsignaled sends raising achievable message rate significantly at high rates; pipelining raising throughput by close to an order of magnitude on a latency-bound workload; moderation trading measurable latency for measurable CPU. All of them visible, because the baseline is one or two microseconds rather than forty and the costs they remove are a meaningful fraction of it.</p>
+  <p><strong>What the difference tells you:</strong> the benefit comes from the ratio between the cost removed and the cost remaining, not from the cost removed. Inline saves the same absolute time on both fabrics &mdash; a DMA fetch is a DMA fetch. On hardware that is a third of the operation; on soft-RoCE it is one percent. The optimisation did not change; the denominator did.</p>
+  <p>Which generalises past RDMA: an optimisation&rsquo;s value is a property of the system it is applied to, not of the optimisation. The same change is essential in one context and unmeasurable in another, and the only way to know which you are in is to measure the baseline first. That is why TRD-08 measures before it optimises, and why the honest thing to record on this fabric is that these mechanisms did nothing here and why.</p>
+  <div class="qa-miss">Common miss: concluding the optimisations are pointless because they did not help. They are pointless <em>on this fabric</em>, for a reason that names precisely what a hardware adapter contributes. That is a stronger conclusion than either &ldquo;they work&rdquo; or &ldquo;they don&rsquo;t,&rdquo; and it is the one your measurement actually supports.</div>
+  <p><em>Covered in Prior Knowledge &sect;1 and &sect;10, and TRD-00 &sect;9. Measured in TRD-08.</em></p>
+</div>
+
+<h2>References Cited in This Key</h2>
+
+<ol class="refs">
+  <li>[1] <em>ibv_post_send(3).</em> Linux manual page, section 3. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+  <li>[2] NVIDIA Corporation. <em>RDMA Aware Networks Programming User Manual</em>, &ldquo;Active Queue Pair Operations.&rdquo; https://docs.nvidia.com/networking/display/rdmaawareprogrammingv17/active+queue+pair+operations</li>
+  <li>[4] Dreier, Roland. <em>IB: Return &ldquo;maybe missed event&rdquo; hint from ib_req_notify_cq().</em> https://lkml.rescloud.iu.edu/0704.3/1689.html</li>
+  <li>[5] Barak, Dotan. <em>RDMAmojo &mdash; ibv_req_notify_cq().</em> https://www.rdmamojo.com/2013/02/22/ibv_req_notify_cq/</li>
+</ol>
+
+<p style="font-size:9pt; font-style:italic;">Numbering matches the reference list in the TRD-07 Prior Knowledge document.</p>
+
+</div>
+
+<div class="footer">
+  TRD-07: Completion Efficiency &nbsp;|&nbsp; Comprehension &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>

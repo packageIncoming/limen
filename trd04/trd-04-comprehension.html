@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRD-04: The RAII Layer — Comprehension</title>
+<style>
+@page { margin: 0.75in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Georgia', 'Times New Roman', serif; font-size: 10.5pt; line-height: 1.55; color: #000; background: #fff; max-width: 800px; margin: 0 auto; padding: 44px 34px; }
+.title-block { border-bottom: 3px solid #000; padding-bottom: 14px; margin-bottom: 26px; }
+.title-block h1 { font-size: 22pt; margin-bottom: 2px; letter-spacing: 0.3px; }
+.title-block .subtitle { font-size: 10pt; font-style: italic; }
+.title-block .meta { font-size: 8.5pt; margin-top: 6px; letter-spacing: 0.3px; }
+h2 { font-size: 14pt; margin-top: 28px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1.5px solid #000; page-break-after: avoid; }
+p { margin-bottom: 8px; }
+strong { font-weight: bold; } em { font-style: italic; }
+a { color: #000; text-decoration: underline; }
+ul, ol { margin: 6px 0 8px 22px; } li { margin-bottom: 3px; }
+hr { border: none; border-top: 1px solid #000; margin: 22px 0; }
+pre { border: 1.5px solid #000; padding: 10px 12px; margin: 10px 0; font-family: 'Courier New', monospace; font-size: 9pt; line-height: 1.45; background: #fff; color: #000; white-space: pre-wrap; word-wrap: break-word; page-break-inside: avoid; }
+code { font-family: 'Courier New', monospace; font-size: 9pt; color: #000; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; page-break-inside: avoid; }
+th, td { border: 1px solid #000; padding: 5px 9px; text-align: left; font-size: 9.5pt; vertical-align: top; }
+th { font-weight: bold; background: #f5f5f5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.answer-key { page-break-before: always; }
+.qa-block { border: 1.5px solid #000; padding: 12px 14px; margin: 14px 0; page-break-inside: avoid; }
+.qa-block .qa-label { font-weight: bold; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 5px; }
+.qa-miss { border-left: 4px solid #000; padding: 6px 12px; margin: 8px 0 0 0; font-size: 9.5pt; font-style: italic; }
+.refs { margin: 10px 0 0 0; padding-left: 0; list-style: none; }
+.refs li { font-size: 9.5pt; margin-bottom: 7px; padding-left: 30px; text-indent: -30px; }
+.cite { font-size: 8pt; vertical-align: super; line-height: 0; }
+.footer { margin-top: 36px; padding-top: 8px; border-top: 2px solid #000; font-size: 8pt; text-align: center; }
+@media print { body { padding: 0; } .qa-block, table, pre { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="title-block">
+  <h1>TRD-04: The RAII Layer</h1>
+  <div class="subtitle">Comprehension — Limen RDMA Transport Project</div>
+  <div class="meta">8 questions &nbsp;|&nbsp; Answer in writing before the key &nbsp;|&nbsp; Est.: 50–75 minutes</div>
+</div>
+
+<h2>Questions</h2>
+
+<p><strong>Q1.</strong> <code>Endpoint</code> declares no destructor, yet its five members are released in the correct order on every exit path. Explain the language mechanism that makes this true, and explain why writing a destructor to release them explicitly would be a step backwards.</p>
+
+<p><strong>Q2.</strong> A wrapper's move constructor has three obligations. Name all three, say which one only fails when assigning over a live object, and describe what a missing self-assignment guard does.</p>
+
+<p><strong>Q3.</strong> <code>ibv_destroy_qp()</code> can fail, and a destructor cannot report a failure by throwing. Explain what goes wrong if it does, then describe the design this rung required and what it gives up compared to throwing.</p>
+
+<p><strong>Q4.</strong> Section 6 rejects inspecting <code>std::uncaught_exceptions()</code> to throw only when no exception is in flight. That technique appears to solve the problem exactly. Explain why it is rejected.</p>
+
+<p><strong>Q5.</strong> R10 warned that a half-refactored program is worse than either the fully-refactored or the fully-manual version. Explain the specific defect that only exists in the intermediate state, and why neither of the endpoints has it.</p>
+
+<p><strong>Q6.</strong> This layer solves ownership of the buffer's <em>memory</em> and does not solve ownership of the buffer <em>during a transfer</em>. Explain why RAII cannot address the second problem, and describe the shape of a mechanism that could.</p>
+
+<p><strong>Q7.</strong> Most of this rung's test suite runs the compiler rather than the program. Explain why that is the right design here specifically, and name a category of defect on this rung that a runtime test would be unlikely to catch.</p>
+
+<p><strong>Q8.</strong> You decided whether to hand-write five wrapper classes or write one template instantiated five times. Defend your choice. Then say what would have to be true about TRD-05's connection identifier for that choice to have been the wrong one.</p>
+
+<hr>
+
+<p><em>Answer all eight in writing before turning the page. Writing is the point — an answer that feels clear in your head and falls apart on paper was never clear. Then compare against the key. Where your answer is thinner than the key's, reread the Prior Knowledge section named at the end of that answer before starting TRD-05. Where you disagree with the key and can defend the disagreement, that is a good sign rather than a wrong answer.</em></p>
+
+<div class="answer-key">
+
+<h2>Answer Key</h2>
+
+<div class="qa-block">
+  <div class="qa-label">Q1 — Answer</div>
+  <p>After a destructor body executes — including the empty body of an implicitly-defined destructor — the compiler calls the destructors of all non-static data members <strong>in reverse order of declaration</strong>.<span class="cite">[1]</span> This is a guarantee of the language, not an implementation detail or an optimisation.</p>
+  <p><code>Endpoint</code> declares its members in creation order: context, protection domain, memory region, completion queue, queue pair. Reverse declaration order is therefore queue pair, completion queue, memory region, protection domain, context — exactly the order the verbs API requires. The ordering is expressed once, in a declaration list, and the compiler honours it on every exit path: normal return, early return, and stack unwinding from an exception thrown anywhere in scope.</p>
+  <p><strong>Writing a destructor would be a step backwards</strong> for three reasons, in increasing order of importance:</p>
+  <ul>
+    <li>It would be redundant — the members are destroyed after the body runs regardless, so an explicit destructor would either duplicate the work or rely on <code>close()</code> being idempotent to avoid doing so.</li>
+    <li>It reintroduces a place to be wrong. The order would then exist in two places — the declaration list and the destructor body — and nothing would keep them synchronised. A future member added to one and forgotten in the other is a silent defect.</li>
+    <li>It converts a guarantee into a convention. The declaration list is checked by the language; a destructor body is checked by whoever reads it next.</li>
+  </ul>
+  <p>The general principle: when the language already enforces a rule, expressing the rule again in code is not extra safety, it is a second copy that can drift from the first.</p>
+  <div class="qa-miss">Common miss: saying the order is "reverse of construction" without connecting construction order to declaration order. Members are initialised in declaration order regardless of the order they appear in the constructor's initialiser list — which is why a mismatched initialiser list produces a <code>-Wreorder</code> warning rather than a different construction order. Declaration order is the contract; the initialiser list merely should agree with it.</div>
+  <p><em>Covered in Prior Knowledge §4, and in reference [1].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q2 — Answer</div>
+  <p>The three obligations:</p>
+  <ol>
+    <li><strong>Take the source's handle.</strong></li>
+    <li><strong>Leave the source empty</strong> — null — so its destructor, which will still run, releases nothing.</li>
+    <li><strong>Release the destination's existing resource before adopting.</strong></li>
+  </ol>
+  <p>The third applies only to move <em>assignment</em>, because a move constructor's destination does not yet hold anything. It is therefore the one that survives testing: a codebase that only ever moves into fresh objects never exercises it, and the leak appears the first time something is assigned over a live object — which the test suite does deliberately for exactly this reason.</p>
+  <p><strong>A missing self-assignment guard is worse than a leak.</strong> Without it, <code>a = std::move(a)</code> performs obligation three and releases <code>a</code>'s resource, then performs obligations one and two by adopting <code>a</code>'s handle — which is now null, because obligation three cleared it. The object silently becomes empty and its resource is gone. Nothing reports an error; the next use fails somewhere unrelated.</p>
+  <p>Self-move looks like something nobody writes, and directly it is. It arises indirectly: <code>std::swap</code> on some implementations, a container element assigned to itself during a sort or an erase-remove, or a generic algorithm operating on aliased references. The guard is two tokens and removes an entire class of very confusing bug.</p>
+  <div class="qa-miss">Common miss: implementing the move as a copy of the handle without nulling the source, on the reasoning that "the source will not be used again." It will be destroyed again, and that destruction passes a handle the destination is still using into a driver's free path. The moved-from object is not gone; it is empty, and emptiness has to be represented.</div>
+  <p><em>Covered in Prior Knowledge §5.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q3 — Answer</div>
+  <p>A destructor with no exception specification is implicitly <code>noexcept(true)</code>.<span class="cite">[2]</span> If an exception escapes one, <code>std::terminate()</code> is called, whose default effect is <code>std::abort()</code>. No further objects are destroyed and the program is left in an indeterminate state.<span class="cite">[1][2]</span> Declaring the destructor <code>noexcept(false)</code> does not fix this — it merely permits the throw when no exception is already in flight, and still terminates during unwinding, while additionally poisoning the implicit destructor of every type that contains one.</p>
+  <p>The consequence is unacceptable in a specific way: the most likely moment for a destructor to run is during unwinding from some <em>other</em> error, and that is precisely the moment where throwing turns a recoverable failure into an abort. A release failure is a minor problem; converting it into program termination is a major one.</p>
+  <p><strong>The design required here</strong> separates reporting from releasing. An explicit <code>close()</code> performs the release and <em>returns</em> the status, so a caller who cares can check it. The destructor calls <code>close()</code> and, on failure, writes a diagnostic to a sink. It never throws, never aborts, and never silently discards.</p>
+  <p><strong>What it gives up:</strong> the failure is no longer forced on the caller. A thrown exception cannot be ignored without an explicit catch; a message on <code>stderr</code> can be ignored by anyone not reading <code>stderr</code>. The error becomes advisory rather than mandatory, and that is a real loss.</p>
+  <p>It is the right trade because of what the failures actually are. An <code>EBUSY</code> from a destructor means a destruction-order violation — a programming error in the layer itself, discovered during development, not a runtime condition an application should handle. Reporting it loudly enough to be noticed during development is sufficient; forcing every caller to handle it is not worth terminating the program to achieve.</p>
+  <div class="qa-miss">Common miss: concluding the return value should simply be discarded, since nothing useful can be done with it. Something useful can be done with it — it can be printed, and it is the only signal that would tell you the member declaration order is wrong. Discarding it removes the layer's only self-check.</div>
+  <p><em>Covered in Prior Knowledge §6, and in references [1] and [2].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q4 — Answer</div>
+  <p>The technique inspects whether unwinding is in progress and throws only when it is not, which does avoid the termination. It is nevertheless rejected, and the reason given is not about the exception at all: <strong>circumventing normal destructor processing this way may keep the destructor from releasing important resources.</strong><span class="cite">[2]</span></p>
+  <p>The mechanics: to throw, the destructor must exit early, and everything after the throw statement does not run. So the destructor now has two behaviours — one that releases fully and one that releases partially and reports — selected by a global condition the object knows nothing about. A resource released on one path and leaked on the other, chosen by whether some unrelated part of the program happens to be unwinding, is not a design anyone can reason about.</p>
+  <p>There is a second problem. It makes the type's behaviour depend on context in a way that is invisible at the call site. The same destructor at the same line does different things depending on the dynamic state of the program, and no local reading of the code reveals which. Debugging a resource leak that only occurs when an exception is in flight elsewhere is close to the worst diagnostic position available.</p>
+  <p>The general lesson is worth extracting: a workaround that makes a rule conditional usually replaces one clear problem with two unclear ones. The rule "destructors do not throw" is absolute because a conditional version is unusable, not because the conditional version is impossible.</p>
+  <div class="qa-miss">Common miss: rejecting it on the grounds that <code>std::uncaught_exception</code> was deprecated in favour of <code>std::uncaught_exceptions</code>. That is a real API change and it is not the reason. The plural form works correctly and the technique is still rejected — the objection is to the design, not to the spelling.</div>
+  <p><em>Covered in Prior Knowledge §6, and normatively in reference [2].</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q5 — Answer</div>
+  <p>The defect that exists only in the intermediate state is a <strong>leak on the exception path</strong>.</p>
+  <p>Consider each state:</p>
+  <ul>
+    <li><strong>Fully manual.</strong> Every acquisition returns an error code and jumps to a cleanup block. Nothing throws, so the block runs on every path that exists. Correct, if verbose.</li>
+    <li><strong>Fully refactored.</strong> Constructors throw; there is no cleanup block; unwinding destroys every constructed wrapper. Correct.</li>
+    <li><strong>Half-refactored.</strong> Some constructors throw, and a <code>goto cleanup</code> block still exists. When a wrapper's constructor throws, the exception propagates past the cleanup block without executing it — <code>goto</code> and labels do not participate in unwinding. Any resource still owned by the old-style code is leaked, and the leak occurs only on a path neither the old design nor the new design would have leaked on.</li>
+  </ul>
+  <p>The intermediate state is worse than the starting state, which is what makes it dangerous — the natural incremental approach, converting one resource at a time and testing after each step, produces a program that passes every test while being less correct than the one it replaced. Testing does not catch it because the exception path is the one nobody exercises.</p>
+  <p>This is why R10 requires porting each program completely or not at all. Per-program is a safe increment; per-resource within a program is not. Deleting the cleanup block <em>first</em> and then fixing the compile errors, as the hints suggest, forces completeness — the program will not build until every path is converted.</p>
+  <div class="qa-miss">Common miss: framing it as untidiness or duplication. The intermediate state is not merely ugly; it has a defect that neither endpoint has, and that defect appears only under a condition the previous design could not produce. "Worse than either" is a precise claim, not a stylistic one.</div>
+  <p><em>Covered in Prior Knowledge §3 and §8, and Requirements R10.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q6 — Answer</div>
+  <p>RAII ties a resource's release to an object's <em>lifetime</em>. That solves the memory question completely: the buffer exists as long as the region object exists, and both end at a well-defined point.</p>
+  <p>The transfer-time hazard is not a lifetime problem. During the interval between posting a work request and reaping its completion, the object is alive, the memory is valid, and the pointer is good.<span class="cite">[6]</span> What is unsafe is <em>access</em> — the adapter is reading or writing those bytes concurrently, and a destructor has nothing to contribute because nothing needs destroying. RAII manages when a thing ends; this hazard is about who may touch it in the middle.</p>
+  <p><strong>The shape of a mechanism that could work</strong> is to make the unsafe access syntactically unavailable rather than merely discouraged. Move the buffer's accessibility into the operation's result:</p>
+  <ul>
+    <li><code>post()</code> consumes the region — by value or by rvalue reference — and returns a handle representing work in flight. After the call, the caller has no name for the buffer.</li>
+    <li>The handle exposes only <code>wait()</code>, which blocks until the completion is reaped and <em>returns the region</em>.</li>
+    <li>The caller regains access only through that return value. There is no path from posting to touching the buffer that does not pass through the completion.</li>
+  </ul>
+  <p>This is the same idea as a future, and it is what Rust's borrow checker expresses natively — which is a fair observation to make, provided it comes with the recognition that the pattern is expressible in C++ by construction rather than by checking, and that expressing it costs ergonomics.</p>
+  <p>The cost is why this rung does not require it. Every operation becomes a move, the code reads less directly, and a batched interface — several buffers posted at once, as TRD-07 needs — requires the handle to represent a set rather than one region. That is a real design with real trade-offs, and it belongs where there is a reason to pay for it.</p>
+  <div class="qa-miss">Common miss: proposing a flag on the region, checked by <code>data()</code>, that reports an error if accessed while in flight. That converts a silent corruption into a runtime error, which is an improvement, but it is still a check rather than a guarantee — the flag can be forgotten in a new accessor, and the error appears at runtime rather than at compile time. The mechanism that works removes the name, not the permission.</div>
+  <p><em>Covered in Prior Knowledge §9. Revisited in TRD-07.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q7 — Answer</div>
+  <p>Because the properties this rung establishes are properties of the <em>type</em>, not of any execution. "This type cannot be copied" is either true for all programs or false; a runtime test can only observe that one particular program did not copy it. A <code>static_assert</code> checks the actual claim.</p>
+  <p>The compile-time tests are also complete in a way runtime tests cannot be. <code>!std::is_copy_constructible_v&lt;T&gt;</code> is true or false with no coverage question attached, whereas a runtime test that exercises the paths you thought of proves nothing about the paths you did not.</p>
+  <p><strong>A category a runtime test would be unlikely to catch:</strong> a wrapper that copies where it should move. The obvious symptom is a double free at exit — but a double free is undefined behaviour, and undefined behaviour frequently looks like nothing at all. Freeing an already-freed kernel handle may be silently tolerated by a driver, may corrupt state that manifests much later, or may crash. On the software provider it might do nothing observable; on hardware it might crash. A test that runs the program and sees a clean exit has established nothing.</p>
+  <p>Deleting the copy operations turns that entire class into a compile error naming the exact line. There is no equivalent runtime test, because the failure mode is precisely one that can appear to succeed.</p>
+  <p>Two further categories with the same character: a missing move operation, which silently degrades to a copy or a compile error depending on what else is declared; and a destructor that could throw, where the consequence appears only when something else is unwinding at the same moment — a coincidence no test schedules deliberately.</p>
+  <p>The general principle: prefer tests that check the property over tests that check an instance of the property, and when a defect's symptom is undefined behaviour, a passing runtime test is not evidence.</p>
+  <div class="qa-miss">Common miss: concluding runtime tests are unnecessary here. The three regression suites are the most important tests on this rung — they are what prove the refactor preserved behaviour, which no amount of type checking can establish. The claim is that compile-time tests suit the <em>ownership contract</em>, not that they suit everything.</div>
+  <p><em>Covered in Requirements R1 and R6, and Hints H1 and H6.</em></p>
+</div>
+
+<div class="qa-block">
+  <div class="qa-label">Q8 — Answer</div>
+  <p>Both are defensible and a strong answer commits with a reason and names its failure condition.</p>
+  <p><strong>Hand-written five times</strong> is defensible because the five are less identical than they appear. Three different release conventions are in play; the memory region owns a second resource and has four accessors none of the others need; the completion queue and queue pair each capture provider-granted values at construction. A template covering all of that needs a deleter policy, a variable accessor set, and constructor arguments that differ per type — at which point the template is longer than the five classes and each class is harder to read than it was.</p>
+  <p><strong>A template</strong> is defensible because the ownership machinery genuinely is identical: the five special members, the null-checked destructor, <code>std::exchange</code> in the moves, the idempotent <code>close()</code>. That is roughly thirty lines repeated five times, and every repetition is a place to get the self-assignment guard or the null check wrong. A hybrid — a small <code>Handle&lt;T, Deleter&gt;</code> base providing only the ownership machinery, with each wrapper adding its own constructor and accessors — captures most of the benefit and is the strongest answer available.</p>
+  <p><strong>What would make the choice wrong.</strong> TRD-05 introduces <code>rdma_cm_id</code>, whose lifetime does not fit simple containment: it is created through an event channel that must outlive it, it can be destroyed as a consequence of an event rather than by the owner, and its release call has yet another convention. If the hand-written choice was made, the wrong-condition is that the sixth wrapper turns out to need the same thirty lines again — at which point the duplication argument that was marginal at five becomes decisive at six, and the refactor happens later and under more pressure than if it had happened now.</p>
+  <p>If the template choice was made, the wrong-condition is the mirror image: the connection identifier does not fit the template's assumptions — because it is not solely owned, or because its destruction is externally triggered — and accommodating it requires either a special case that undermines the abstraction or a generalisation that makes the template harder than five classes would have been.</p>
+  <p>Both failure conditions are the same underlying question: <em>is the sixth resource shaped like the first five?</em> Nobody could answer that at this rung, which is why either decision is defensible and why the honest form of the answer names the uncertainty rather than claiming foresight.</p>
+  <div class="qa-miss">Common miss: defending the choice on the grounds that it is "cleaner" or "more idiomatic" without naming what would falsify it. A design decision you cannot state a failure condition for is a preference. The interesting part of this question is the second half.</div>
+  <p><em>Covered in Requirements R1, Hints H1 and H3, and revisited in TRD-05.</em></p>
+</div>
+
+<h2>References Cited in This Key</h2>
+
+<ol class="refs">
+  <li>[1] cppreference.com. <em>Destructors.</em> https://en.cppreference.com/w/cpp/language/destructor</li>
+  <li>[2] Software Engineering Institute, Carnegie Mellon University. <em>DCL57-CPP: Do not let exceptions escape from destructors or deallocation functions.</em> https://wiki.sei.cmu.edu/confluence/display/cplusplus/DCL57-CPP.+Do+not+let+exceptions+escape+from+destructors+or+deallocation+functions</li>
+  <li>[6] <em>ibv_post_send(3).</em> Linux manual page, section 3. https://man7.org/linux/man-pages/man3/ibv_post_send.3.html</li>
+</ol>
+
+<p style="font-size:9pt; font-style:italic;">Numbering matches the reference list in the TRD-04 Prior Knowledge document.</p>
+
+</div>
+
+<div class="footer">
+  TRD-04: The RAII Layer &nbsp;|&nbsp; Comprehension &nbsp;|&nbsp; Limen RDMA Transport Project
+</div>
+
+</body>
+</html>
