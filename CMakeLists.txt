@@ -14,6 +14,7 @@ message(STATUS "libibverbs: ${IBVERBS_LIB}")
 message(STATUS "librdmacm:  ${RDMACM_LIB}")
 
 # TRD-01 adds the first target here.
+include_directories(include)
 add_executable(limen_devinfo src/limen_devinfo.cpp)
 set_target_properties(limen_devinfo PROPERTIES LINKER_LANGUAGE CXX)
 target_compile_options(limen_devinfo PRIVATE -Wall -Wextra)
