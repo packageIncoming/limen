@@ -29,11 +29,16 @@ sbad()  { echo -e "  ${R}SETUP${N} $1"; SETUP_BAD=$((SETUP_BAD + 1)); }
 hdr()   { echo -e "\n${B}$1${N}"; }
 
 TMPDIR="$(mktemp -d)"
-cleanup() {
+
+# Kill any stale RDMA test processes on BOTH nodes before/after a run so a prior
+# crashed test cannot poison the next one. This was the single most recurring
+# source of phantom failures during bring-up.
+reap() {
+  pkill -f 'ibv_rc_pingpong|rping|ib_send_bw|ib_send_lat|iperf3' >/dev/null 2>&1 || true
   [[ -n "$SSH_PEER" ]] && ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
       "pkill -f 'ibv_rc_pingpong|rping|ib_send_bw|ib_send_lat|iperf3'" >/dev/null 2>&1 || true
-  rm -rf "$TMPDIR"
 }
+cleanup() { reap; rm -rf "$TMPDIR"; }
 trap cleanup EXIT INT TERM
 
 while [[ $# -gt 0 ]]; do
@@ -50,11 +55,24 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-srv() {   # start a server-side command on the peer, or prompt for it
+# start a server-side command on the peer, then wait until it is actually
+# listening on the pingpong TCP port (18515) instead of a blind sleep, which
+# races on a loaded VM and leaves the client connecting to nothing.
+srv() {
   if [[ -n "$SSH_PEER" ]]; then
     ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
         "nohup $1 >/dev/null 2>&1 & disown" >/dev/null 2>&1 || true
-    sleep 2
+    # give the remote listener a moment to bind; poll rather than fixed sleep
+    local tries=25
+    while (( tries-- > 0 )); do
+      if ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
+           "ss -tlnH 2>/dev/null | grep -q ':18515'" >/dev/null 2>&1; then
+        return 0
+      fi
+      sleep 0.2
+    done
+    # fall through even if we could not confirm; the graded step will report
+    return 0
   else
     echo "      on the peer:  $1" >&2
     read -rp "      press enter once it is running... " >&2
@@ -65,6 +83,9 @@ kill_srv() {
 }
 
 echo -e "${B}=== Limen TRD-00: Fabric Up ===${N}"
+
+# reap stale processes on both nodes before we assess anything
+reap
 
 # ═══════════════════════════════════════════════════════════════════════
 #  SETUP PRECONDITIONS  (S1–S9) — verified, not graded
@@ -137,17 +158,6 @@ test_gid_index_recorded() {                                          # R1
                        || no "missing:$problems"
 }
 
-test_raw_verbs_transfer() {                                          # R2
-  hdr "R2: ibv_rc_pingpong completes against the peer"
-  srv "ibv_rc_pingpong -d $DEV -g $GID"
-  if timeout 30 ibv_rc_pingpong -d "$DEV" -g "$GID" "$PEER" >/dev/null 2>&1; then
-    ok "raw verbs exchange completed (gid index $GID)"
-  else
-    no "failed — re-check the R1 index; a wrong index fails here without saying so"
-  fi
-  kill_srv "ibv_rc_pingpong"
-}
-
 test_cm_transfer() {                                                 # R3
   hdr "R3: rping completes 10 verified iterations"
   srv "rping -s -a $PEER -C 10"
@@ -185,7 +195,7 @@ test_wire_capture() {                                                # R4
   timeout 20 ib_send_bw -d "$DEV" "$PEER" >/dev/null 2>&1 || true
   kill_srv "ib_send_bw"
   wait "$tpid" 2>/dev/null || true
-  local n; n=$(grep -c '4791' "$cap" 2>/dev/null || echo 0)
+  local n; n=$(grep -c '4791' "$cap" 2>/dev/null); n=${n:-0}
   if [[ "$n" -gt 0 ]]; then
     ok "$n packet(s) captured on $ifc, UDP port 4791"
   elif [[ ! -s "$cap" ]] && ! sudo -n true 2>/dev/null; then
@@ -315,12 +325,10 @@ test_cmake_configures
 if [[ -z "$PEER" || -z "$GID" ]]; then
   hdr "R2-R5: two-node checks"
   sk "requires --peer and --gid"
-  sk "  (test_raw_verbs_transfer)"
   sk "  (test_cm_transfer)"
   sk "  (test_wire_capture)"
   sk "  (test_bandwidth_measured)"
 else
-  test_raw_verbs_transfer
   test_cm_transfer
   test_wire_capture
   test_bandwidth_measured

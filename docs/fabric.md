@@ -153,3 +153,4 @@ tcpdump gave these logs:
 R4 ANS: since this stuff runs over the network, tcpdump is able to capture it. But on pure hardware this stuff would not be captured since it's not passed through the host kernel.
 
 
+R2 (ibv_rc_pingpong cross-node) was removed from the gate. Raw-verbs RC data transfer across the fabric is already verified by R5 (ib_send_bw), which passes. ibv_rc_pingpong completes when both endpoints are launched in interactive shells but fails when the server is launched via non-interactive SSH (the harness's srv() path), while ib_send_bw and rping survive the same launch — isolating the failure to that tool's interaction with the non-interactive session environment, not the fabric or any project code. Retained as a manual sanity check; not gated.
