@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.16)
+project(limen LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+find_library(IBVERBS_LIB ibverbs REQUIRED)
+find_library(RDMACM_LIB  rdmacm  REQUIRED)
+find_path(IBVERBS_INCLUDE_DIR infiniband/verbs.h REQUIRED)
+find_path(RDMACM_INCLUDE_DIR  rdma/rdma_cma.h    REQUIRED)
+
+message(STATUS "libibverbs: ${IBVERBS_LIB}")
+message(STATUS "librdmacm:  ${RDMACM_LIB}")
+
+# TRD-01 adds the first target here.
