@@ -232,6 +232,9 @@ int main(int argc, char* argv[])
     ibv_context* device_context;
     ibv_device_attr device_attr;
     ibv_port_attr port_attr;
+    ibv_pd* pd;
+    ibv_mr* mr;
+    void* mr_buffer;
 
     //  handle arguments
     parsed_args args_container;
@@ -309,15 +312,38 @@ int main(int argc, char* argv[])
     
 
     //  allocate protection domain on context 
+    pd = ibv_alloc_pd(device_context);
+    if
+    (pd == nullptr)
+    {
+        std::cerr << "failed to allocate protection domain" << std::endl;
+        exit(3);
+    }
+    printf("pd: allocated\n");
+
 
     if 
     (args_container.buffer_size != 0)
     {
+        // (-s) allocate buffer 
 
+        //  register buffer against pd & print info
+        int access = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE;
+        mr_buffer =calloc(1,args_container.buffer_size);
+        mr = ibv_reg_mr(pd,mr_buffer,args_container.buffer_size,access);
+        if
+        (mr == nullptr)
+        {
+            perror("ibv_reg_mr");
+            exit(3);
+        }
+        printf(
+            "mr: addr=%p length=%zu lkey=0x%08x rkey=0x%08x ",
+            mr->addr,mr->length,mr->lkey,mr->rkey);
+        printf("access=LOCAL_WRITE|REMOTE_READ|REMOTE_WRITE\n");
+        
     }
-    // (-s) allocate buffer 
 
-    //  register buffer against pd & print info
 
     //  gracefully handle registration failure
 
