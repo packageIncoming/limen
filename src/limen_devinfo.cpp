@@ -155,7 +155,73 @@ void print_device_info(ibv_device_attr* attr)
 
 void print_port_info(ibv_port_attr* attr)
 {
-    printf("\tstate: ")
+    const char* link_layer;
+    int active_mtu_bytes;
+    const char* state;
+
+    //  figure out the state string
+    switch(attr->state)
+    {
+        case IBV_PORT_NOP:
+            state = "PORT_NOP";
+            break;
+        case IBV_PORT_DOWN:
+            state = "PORT_DOWN";
+            break;
+        case IBV_PORT_INIT:
+            state = "PORT_INIT";
+            break;
+        case IBV_PORT_ARMED:
+            state = "PORT_ARMED";
+            break;
+        case IBV_PORT_ACTIVE:
+            state = "PORT_ACTIVE";
+            break;
+        case IBV_PORT_ACTIVE_DEFER:
+            state = "PORT_ACTIVE_DEFER";
+            break;
+    }
+
+    //  figure out link layer
+    switch(attr->link_layer)
+    {
+        case IBV_LINK_LAYER_INFINIBAND:
+            link_layer = "InfiniBand";
+            break;
+        case IBV_LINK_LAYER_ETHERNET:
+            link_layer = "Ethernet";
+            break;
+        case IBV_LINK_LAYER_UNSPECIFIED:
+            link_layer = "Unspecified";
+            break;
+    }
+
+    switch (attr->active_mtu)
+    {
+        case IBV_MTU_256:
+            active_mtu_bytes = 256;
+            break;
+        case IBV_MTU_512:
+            active_mtu_bytes = 512;
+            break;
+        case IBV_MTU_1024:
+            active_mtu_bytes = 1024;
+            break;
+        case IBV_MTU_2048:
+            active_mtu_bytes = 2048;
+            break;
+        case IBV_MTU_4096:
+            active_mtu_bytes = 4096;
+            break;
+    }
+
+
+
+    printf("\tstate: %s\n",state);
+    printf("\tlink_layer: %s\n",link_layer);
+    printf("\tactive_mtu: %i\n",active_mtu_bytes);
+    printf("\tmax_msg_sz: %" PRIu32 "\n", attr->max_msg_sz);
+    printf("\tgid_tbl_len: %i\n",attr->gid_tbl_len);
 }
 
 int main(int argc, char* argv[])
@@ -238,7 +304,7 @@ int main(int argc, char* argv[])
         exit(3);
     }
 
-    printf("port: %i\n",args_container.port);
+    printf("port %lli:\n",args_container.port);
     print_port_info(&port_attr);
     
 
