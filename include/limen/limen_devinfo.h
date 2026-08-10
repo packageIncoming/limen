@@ -27,11 +27,15 @@ void print_device_info(ibv_device_attr* attr);
 
 void print_port_info(ibv_port_attr* attr);
 
-void allocate_protection_domain();
+const char* error_enumstr(int errn);
 
-void register_memregion();
-
-
-
+void graceful_exit(
+    int exit_code,
+    ibv_device** device_list=nullptr,
+    ibv_context* device_context=nullptr,
+    ibv_pd* pd=nullptr,
+    ibv_mr* mr=nullptr,
+    void* mr_buffer=nullptr
+);
 
 #endif

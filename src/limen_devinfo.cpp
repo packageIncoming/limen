@@ -6,16 +6,17 @@
 #include <inttypes.h>
 #include <infiniband/verbs.h>
 #include <endian.h>
+#include <cstring>
+#include <sys/resource.h>
 #include "limen/limen_devinfo.h"
 
 
 void parse_argv(int argc, char* argv[],parsed_args* args_container)
 {
     int opt;
-    int check_access_flag=0;
 
     static struct option long_options[] = {
-        {"check-access",no_argument,&check_access_flag,1},
+        {"check-access",no_argument,&args_container->check_access_flag,1},
         {0,0,0,0}
     };
 
@@ -224,17 +225,150 @@ void print_port_info(ibv_port_attr* attr)
     printf("\tgid_tbl_len: %i\n",attr->gid_tbl_len);
 }
 
+void print_mr_diag_block(int errn,unsigned long long int req_bytes)
+{
+
+    const char* hint;
+    struct rlimit rl;
+
+    switch (errn)
+    {
+        case ENOMEM:
+            hint = "raise the locked-memory limit with 'ulimit -l' or register a smaller region";
+            break;
+        case EINVAL:
+            hint = "check the flags you passed to ibv_reg_mr";
+            break;
+        case EFAULT:
+            hint = "the buffer + length might be outside the valid virtual address space, or the kernel might've failed to pin the physical pages of memory";
+            break;
+        default:
+            hint = "unknown error, cannot provide hint";
+    }
+
+    fprintf(stderr,"mr: registration failed: %s (%s)\n",error_enumstr(errn),std::strerror(errn));
+    fprintf(stderr,"\trequested: %llu bytes\n",req_bytes);
+    if (getrlimit(RLIMIT_MEMLOCK, &rl) == 0) {
+        if (rl.rlim_cur == RLIM_INFINITY)
+        {
+            fprintf(stderr, "  RLIMIT_MEMLOCK soft: unlimited\n");
+        }
+        else
+        {
+            fprintf(stderr, "  RLIMIT_MEMLOCK soft: %llu bytes\n",
+                    (unsigned long long)rl.rlim_cur);
+        }
+
+    }    
+    fprintf(stderr,"hint: %s\n",hint);
+
+}
+
+const char* error_enumstr(int errn)
+{
+    switch (errn)
+    {
+        case ENOMEM:
+            return "ENOMEM";
+        case EFAULT:
+            return "EFAULT";
+        case EINVAL:
+            return "EINVAL";
+        default:
+            return "UNKNOWN_ERROR";
+
+    }
+}
+
+void graceful_exit(
+    int exit_code,
+    ibv_device** device_list,
+    ibv_context* device_context,
+    ibv_pd* pd,
+    ibv_mr* mr,
+    void* mr_buffer
+)
+{
+    // order: buffer->memory_region->pd->context->device_list
+    const char* mr_str;
+    const char* pd_str;
+    const char* context_str;
+    
+    if
+    (mr_buffer != nullptr)
+    {
+        free(mr_buffer);
+    }
+
+    if
+    (mr != nullptr)
+    {
+        int mr_dereg_rc = ibv_dereg_mr(mr);
+        // dereg_mr fail
+        if 
+        (mr_dereg_rc != 0)
+        {
+            fprintf(stderr,"ibv_dereg_mr fail in graceful_exit: %s (%s)\n",error_enumstr(mr_dereg_rc),std::strerror(mr_dereg_rc));
+            exit(3);
+        }
+        //  dereg_mr success
+        mr_str = "mr=ok";
+
+    } else
+    {  
+        mr_str = "mr=n/a";
+    }
+
+    if
+    (pd != nullptr)
+    {
+        int pd_dealloc_rc = ibv_dealloc_pd(pd);
+        if
+        (pd_dealloc_rc != 0)
+        {
+            fprintf(stderr,"ibv_dealloc_pd fail in graceful_exit: %s (%s)\n",error_enumstr(pd_dealloc_rc),std::strerror(pd_dealloc_rc));
+            exit(3);
+        }
+        pd_str = "pd=ok";
+    } else
+    {
+        pd_str = "pd=n/a";
+    }
+
+    if
+    (device_context != nullptr)
+    {
+        int context_close_rc = ibv_close_device(device_context);
+        if
+        (context_close_rc != 0)
+        {
+            fprintf(stderr,"ibv_close_device fail in graceful_exit: %s (%s)\n",error_enumstr(context_close_rc),std::strerror(context_close_rc));
+            exit(3);
+        }
+        context_str = "context=ok";
+    }
+
+    if
+    (device_list != nullptr)
+    {
+        ibv_free_device_list(device_list);
+    }
+
+    printf("teardown: %s %s %s\n",mr_str,pd_str,context_str);
+    exit(exit_code);
+}
+
 int main(int argc, char* argv[])
 {
     //  VARIABLES
-    ibv_device** device_list;
-    ibv_device* device;
-    ibv_context* device_context;
+    ibv_device** device_list= nullptr;
+    ibv_device* device= nullptr;
+    ibv_context* device_context= nullptr;
     ibv_device_attr device_attr;
     ibv_port_attr port_attr;
-    ibv_pd* pd;
-    ibv_mr* mr;
-    void* mr_buffer;
+    ibv_pd* pd= nullptr;
+    ibv_mr* mr= nullptr;
+    void* mr_buffer= nullptr;
 
     //  handle arguments
     parsed_args args_container;
@@ -247,8 +381,14 @@ int main(int argc, char* argv[])
     (device_list == NULL)
     {
         perror("ibv_get_device_list");
-        //  TODO graceful exit
-        exit(3);
+        graceful_exit(
+            3,
+            device_list,
+            device_context,
+            pd,
+            mr,
+            mr_buffer
+        );
     }
 
     if
@@ -256,9 +396,15 @@ int main(int argc, char* argv[])
     {
         //  enumerate mode
         int rc = enumerate_devices(device_list,0);
-        ibv_free_device_list(device_list);
         //  TODO graceful exit
-        exit(rc);
+        graceful_exit(
+            rc,
+            device_list,
+            device_context,
+            pd,
+            mr,
+            mr_buffer
+        );
     }
 
     if 
@@ -271,9 +417,16 @@ int main(int argc, char* argv[])
         {
             // not found, enumerate & exit 2
             enumerate_devices(device_list,1);
-            ibv_free_device_list(device_list);
             //  TODO graceful exit
-            exit(2);
+            graceful_exit(
+                2,
+                device_list,
+                device_context,
+                pd,
+                mr,
+                mr_buffer
+            );
+
         }
         //  query device & print fields
         device = device_list[device_idx];
@@ -285,7 +438,14 @@ int main(int argc, char* argv[])
         {
             perror("ibv_query_device");
             //  TODO graceful exit
-            exit(3);
+            graceful_exit(
+                3,
+                device_list,
+                device_context,
+                pd,
+                mr,
+                mr_buffer
+            );
         }
         print_device_info(&device_attr);
     }
@@ -296,7 +456,14 @@ int main(int argc, char* argv[])
     {
         fprintf(stderr,"port number cannot be greater than phys_port_cnt\n");
         //  TODO graceful exit
-        exit(1);
+        graceful_exit(
+            1,
+            device_list,
+            device_context,
+            pd,
+            mr,
+            mr_buffer
+        );
     }
 
     if
@@ -304,7 +471,14 @@ int main(int argc, char* argv[])
     {
         //  TODO GRACEFUL EXIT
         perror("ibv_query_port");
-        exit(3);
+        graceful_exit(
+            3,
+            device_list,
+            device_context,
+            pd,
+            mr,
+            mr_buffer
+        );
     }
 
     printf("port %lli:\n",args_container.port);
@@ -317,7 +491,14 @@ int main(int argc, char* argv[])
     (pd == nullptr)
     {
         std::cerr << "failed to allocate protection domain" << std::endl;
-        exit(3);
+        graceful_exit(
+            3,
+            device_list,
+            device_context,
+            pd,
+            mr,
+            mr_buffer
+        );
     }
     printf("pd: allocated\n");
 
@@ -334,8 +515,15 @@ int main(int argc, char* argv[])
         if
         (mr == nullptr)
         {
-            perror("ibv_reg_mr");
-            exit(3);
+            print_mr_diag_block( errno,args_container.buffer_size);
+            graceful_exit(
+                3,
+                device_list,
+                device_context,
+                pd,
+                mr,
+                mr_buffer
+            );
         }
         printf(
             "mr: addr=%p length=%zu lkey=0x%08x rkey=0x%08x ",
@@ -344,15 +532,39 @@ int main(int argc, char* argv[])
         
     }
 
-
-    //  gracefully handle registration failure
-
     //  (--check-access) access flag constraint
+    if 
+    (args_container.check_access_flag)
+    {
+        int access = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
+        void* check_access_buffer = calloc(1,100); // small 100 byte buffer for testing
+        ibv_mr* check_access_mr = ibv_reg_mr(pd,check_access_buffer,100,access);
+        if 
+        (check_access_mr==nullptr)
+        {
+            printf("access-check: REMOTE_WRITE without LOCAL_WRITE rejected: %s (%s)\n",error_enumstr(errno),std::strerror(errno));
+        }
+        else
+        {
+            fprintf(stderr,"unexpected successful register from --check-access\n");
+            graceful_exit(
+                3,
+                device_list,
+                device_context,
+                pd,
+                mr,
+                mr_buffer
+            );
+        }
 
+    }
     //  teardown & handle errors
-
-
-
-    ibv_free_device_list(device_list);
-    return 0;
+    graceful_exit(
+        0,
+        device_list,
+        device_context,
+        pd,
+        mr,
+        mr_buffer
+    );
 }
