@@ -129,6 +129,43 @@ limen_devinfo/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_devinfo.dir/build.make CMakeFiles/limen_devinfo.dir/build
 .PHONY : limen_devinfo/fast
 
+#=============================================================================
+# Target rules for targets named limen_connect
+
+# Build rule for target.
+limen_connect: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 limen_connect
+.PHONY : limen_connect
+
+# fast build rule for target.
+limen_connect/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_connect.dir/build.make CMakeFiles/limen_connect.dir/build
+.PHONY : limen_connect/fast
+
+src/limen_connect.o: src/limen_connect.cpp.o
+.PHONY : src/limen_connect.o
+
+# target to build an object file
+src/limen_connect.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_connect.dir/build.make CMakeFiles/limen_connect.dir/src/limen_connect.cpp.o
+.PHONY : src/limen_connect.cpp.o
+
+src/limen_connect.i: src/limen_connect.cpp.i
+.PHONY : src/limen_connect.i
+
+# target to preprocess a source file
+src/limen_connect.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_connect.dir/build.make CMakeFiles/limen_connect.dir/src/limen_connect.cpp.i
+.PHONY : src/limen_connect.cpp.i
+
+src/limen_connect.s: src/limen_connect.cpp.s
+.PHONY : src/limen_connect.s
+
+# target to generate assembly for a file
+src/limen_connect.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_connect.dir/build.make CMakeFiles/limen_connect.dir/src/limen_connect.cpp.s
+.PHONY : src/limen_connect.cpp.s
+
 src/limen_devinfo.o: src/limen_devinfo.cpp.o
 .PHONY : src/limen_devinfo.o
 
@@ -161,7 +198,11 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
+	@echo "... limen_connect"
 	@echo "... limen_devinfo"
+	@echo "... src/limen_connect.o"
+	@echo "... src/limen_connect.i"
+	@echo "... src/limen_connect.s"
 	@echo "... src/limen_devinfo.o"
 	@echo "... src/limen_devinfo.i"
 	@echo "... src/limen_devinfo.s"
