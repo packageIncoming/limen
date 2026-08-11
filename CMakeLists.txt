@@ -22,7 +22,7 @@ target_link_libraries(limen_devinfo PRIVATE ${IBVERBS_LIB})
 target_include_directories(limen_devinfo PRIVATE ${IBVERBS_INCLUDE_DIR} include)
 
 # TRD-02 target for limen_connect
-add_executable(limen_connect src/limen_connect.cpp)
+add_executable(limen_connect src/limen_connect.cpp src/limen_common.cpp)
 set_target_properties(limen_connect PROPERTIES LINKER_LANGUAGE CXX)
 target_compile_options(limen_connect PRIVATE -Wall -Wextra)
 target_link_libraries(limen_connect PRIVATE ${IBVERBS_LIB})

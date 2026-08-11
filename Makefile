@@ -142,6 +142,30 @@ limen_connect/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_connect.dir/build.make CMakeFiles/limen_connect.dir/build
 .PHONY : limen_connect/fast
 
+src/limen_common.o: src/limen_common.cpp.o
+.PHONY : src/limen_common.o
+
+# target to build an object file
+src/limen_common.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_connect.dir/build.make CMakeFiles/limen_connect.dir/src/limen_common.cpp.o
+.PHONY : src/limen_common.cpp.o
+
+src/limen_common.i: src/limen_common.cpp.i
+.PHONY : src/limen_common.i
+
+# target to preprocess a source file
+src/limen_common.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_connect.dir/build.make CMakeFiles/limen_connect.dir/src/limen_common.cpp.i
+.PHONY : src/limen_common.cpp.i
+
+src/limen_common.s: src/limen_common.cpp.s
+.PHONY : src/limen_common.s
+
+# target to generate assembly for a file
+src/limen_common.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_connect.dir/build.make CMakeFiles/limen_connect.dir/src/limen_common.cpp.s
+.PHONY : src/limen_common.cpp.s
+
 src/limen_connect.o: src/limen_connect.cpp.o
 .PHONY : src/limen_connect.o
 
@@ -200,6 +224,9 @@ help:
 	@echo "... rebuild_cache"
 	@echo "... limen_connect"
 	@echo "... limen_devinfo"
+	@echo "... src/limen_common.o"
+	@echo "... src/limen_common.i"
+	@echo "... src/limen_common.s"
 	@echo "... src/limen_connect.o"
 	@echo "... src/limen_connect.i"
 	@echo "... src/limen_connect.s"
