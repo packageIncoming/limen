@@ -117,6 +117,19 @@ depend:
 .PHONY : depend
 
 #=============================================================================
+# Target rules for targets named limen_common
+
+# Build rule for target.
+limen_common: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 limen_common
+.PHONY : limen_common
+
+# fast build rule for target.
+limen_common/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_common.dir/build.make CMakeFiles/limen_common.dir/build
+.PHONY : limen_common/fast
+
+#=============================================================================
 # Target rules for targets named limen_devinfo
 
 # Build rule for target.
@@ -147,7 +160,7 @@ src/limen_common.o: src/limen_common.cpp.o
 
 # target to build an object file
 src/limen_common.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_connect.dir/build.make CMakeFiles/limen_connect.dir/src/limen_common.cpp.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_common.dir/build.make CMakeFiles/limen_common.dir/src/limen_common.cpp.o
 .PHONY : src/limen_common.cpp.o
 
 src/limen_common.i: src/limen_common.cpp.i
@@ -155,7 +168,7 @@ src/limen_common.i: src/limen_common.cpp.i
 
 # target to preprocess a source file
 src/limen_common.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_connect.dir/build.make CMakeFiles/limen_connect.dir/src/limen_common.cpp.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_common.dir/build.make CMakeFiles/limen_common.dir/src/limen_common.cpp.i
 .PHONY : src/limen_common.cpp.i
 
 src/limen_common.s: src/limen_common.cpp.s
@@ -163,7 +176,7 @@ src/limen_common.s: src/limen_common.cpp.s
 
 # target to generate assembly for a file
 src/limen_common.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_connect.dir/build.make CMakeFiles/limen_connect.dir/src/limen_common.cpp.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_common.dir/build.make CMakeFiles/limen_common.dir/src/limen_common.cpp.s
 .PHONY : src/limen_common.cpp.s
 
 src/limen_connect.o: src/limen_connect.cpp.o
@@ -222,6 +235,7 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
+	@echo "... limen_common"
 	@echo "... limen_connect"
 	@echo "... limen_devinfo"
 	@echo "... src/limen_common.o"
