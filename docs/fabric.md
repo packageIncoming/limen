@@ -76,6 +76,7 @@ n0 acts as server, n1 as client
 
 R4-
 * I assume we have to use tcpdump
+sudo rdma link add rxe0 type rxe netdev enp0s8
 had to run ```sudo rdma link add rxe0 type rxe netdev enp0s8``` on both devices again to set up rxe0 
 but then I ran ```ib_send_bw``` on node 0 and  ```ib_send_bw 10.0.0.1``` on node 1 
 

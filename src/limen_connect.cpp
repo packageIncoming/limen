@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <iostream>
+#include <algorithm> 
+
 #include <infiniband/verbs.h>
 #include "limen/limen_common.h"
 #include "limen/limen_connect.h"
@@ -24,7 +26,7 @@ void parse_argv(int argc, char* argv[],connect_parsed_args* args)
             }
             case 'g':
             {
-                int rc = parse_u64_strict(optarg,&args->gid_index);
+                int rc = parse_int_strict(optarg,&args->gid_index);
                 if (rc != 0)
                 {
                     exit(1);
@@ -33,7 +35,7 @@ void parse_argv(int argc, char* argv[],connect_parsed_args* args)
             }
             case 'p': 
             {
-                int rc = parse_u64_strict(optarg,&args->port);
+                int rc = parse_int_strict(optarg,&args->port);
                 if (rc != 0)
                 {
                     exit(1);
@@ -93,18 +95,24 @@ int main(int argc, char* argv[])
     // Misc. variables
     connect_parsed_args args;
     int rc;
+    endpoint_identity local_identity{};
+    endpoint_identity remote_identity{};
 
     //  Device-based variables
     ibv_device** devices_list;
     ibv_context* device_context;
     ibv_device_attr device_attr;
+    ibv_pd* pd;
 
     //  Port-based variables
     ibv_port_attr port_attr;
 
     //  QP-based variables
     ibv_cq* completion_queue;
-    ibv_qp queue_pair;
+    ibv_qp* queue_pair;
+    ibv_qp_cap qp_cap{};
+    ibv_qp_init_attr qp_init_attr{};
+
 
     // parse args
     parse_argv(argc,argv,&args);
@@ -116,7 +124,7 @@ int main(int argc, char* argv[])
         print_help(true); 
         exit(1);
     }
-    if (args.gid_index == UINT64_MAX )
+    if (args.gid_index == INT_MAX )
     {
         fprintf(stderr,"-g required\n");
         print_help(true); 
@@ -170,23 +178,68 @@ int main(int argc, char* argv[])
     }
 
     //  verify the GID index against gid_tbl_len
-    if (args.gid_index > port_attr.gid_tbl_len)
+    if (args.gid_index >= port_attr.gid_tbl_len)
     {
-        fprintf(stderr, "invalid gid_index: gid_index " PRIu64 " > gid_tbl_len " PRIu64 "\n",args.gid_index,port_attr.gid_tbl_len);
+        fprintf(stderr, "invalid gid_index: gid_index %i > gid_tbl_len  %i\n",args.gid_index,port_attr.gid_tbl_len);
         exit(1);
     }
 
+    //  create protection domain
+    pd = ibv_alloc_pd(device_context);
+    if (pd == NULL)
+    {
+        //  failed to create protection domain
+        perror("ibv_alloc_pd");
+        exit(1);
+    }
 
     //  create the queues
-
     //  create completion queue
-    int depth = COMPLETE_QUEUE_DEPTH;
-    completion_queue = ibv_create_cq(device_context,COMPLETE_QUEUE_DEPTH,NULL,NULL,0);
+    completion_queue = ibv_create_cq(
+        device_context,
+        std::min(COMPLETE_QUEUE_DEPTH,device_attr.max_cqe)
+        ,NULL,NULL,0
+    );
+    if (completion_queue == NULL)
+    {
+        //  failed to create completion queue
+        perror("ibv_create_cq");
+        exit(1);
+    }
     printf("cq: cqe=%i (requested %i)\n",completion_queue->cqe, COMPLETE_QUEUE_DEPTH);
 
+    //  fill qp_cap for qp_init_attr
+    qp_cap.max_send_wr = std::min(SEND_QUEUE_DEPTH,device_attr.max_qp_wr);
+    qp_cap.max_recv_wr = std::min(RECV_QUEUE_DEPTH,device_attr.max_qp_wr);
+    qp_cap.max_send_sge = 1;
+    qp_cap.max_recv_sge = 1;
+
+
     //  fill qp_init_attr to make the QP
+    qp_init_attr.send_cq = completion_queue;
+    qp_init_attr.recv_cq = completion_queue;
+    qp_init_attr.srq=NULL;
+    qp_init_attr.cap = qp_cap;
+    qp_init_attr.qp_type = IBV_QPT_RC;
+    qp_init_attr.sq_sig_all= 1;
 
     //  create reliable-connected queue pair
+    queue_pair = ibv_create_qp(pd,&qp_init_attr);
+    if (queue_pair == NULL)
+    {
+        perror("ibv_create_qp");
+        exit(1);
+    }
+
+    //  print out qp: line from filled qp_init_attr 
+    printf(
+        "qp:type=RC max_send_wr=%i max_recv_wr = %i max_send_sge=%i max_recv_sge=%i\n",
+        qp_cap.max_send_wr,
+        qp_cap.max_recv_wr,
+        qp_cap.max_send_sge,
+        qp_cap.max_recv_sge
+    );
+
 
     //  populate local identity struct
 

@@ -3,8 +3,18 @@
 #include <stdint.h>
 #include <infiniband/verbs.h>
 
+//#define EXIT_SUCCESS (0) already defined
+#define EXIT_USAGE_ERROR (1)
+#define EXIT_DEVICE_ERROR (2)
+#define EXIT_VERB_ERROR (3)
+#define EXIT_SIDE_CHANNEL_ERROR (4)
+
+
 // parses out a uint64_t value into val_addr; returns 0 on success and 1 on failure
-bool parse_u64_strict(const char* str, uint64_t* val_addr);
+int parse_u64_strict(const char* str, uint64_t* val_addr);
+
+// parses out a int value into val_addr; returns 0 on success and 1 on failure
+int parse_int_strict(const char* str, int* val_addr);
 
 //  returns the index of the first ibv_device whose name 
 //  matches device_name; returns -1 if not found

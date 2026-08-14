@@ -1,20 +1,28 @@
 #ifndef limen_connect
+
+#include <climits>
+
 #define limen_connect
 
 #define SEND_QUEUE_DEPTH 16
 #define RECV_QUEUE_DEPTH 16
 #define COMPLETE_QUEUE_DEPTH (SEND_QUEUE_DEPTH + RECV_QUEUE_DEPTH)
+#define U32_TO_U24_MASK (0x00FFFFFF)
 
 typedef struct {
     const char* device_name{nullptr};
-    uint64_t gid_index{UINT64_MAX};
-    uint64_t port{1};
+    int gid_index{INT_MAX};
+    int port{1};
     uint64_t tcp_port{18515};
     uint64_t buffer_size{4096};
     const char* addr{nullptr};
 } connect_parsed_args;
 
 typedef struct {
+    uint32_t qpn;
+    uint32_t psn;   //  MUST BE 24 BIT, SCALE WITH U32_TO_U24_MASK
+    int gid_index;
+    uint16_t lid;   //  FROM PORT ATTRIBUTES
 
 } endpoint_identity;
 
