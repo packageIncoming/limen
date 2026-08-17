@@ -139,3 +139,23 @@ void print_port_info(ibv_port_attr* attr)
     printf("\tmax_msg_sz: %" PRIu32 "\n", attr->max_msg_sz);
     printf("\tgid_tbl_len: %i\n",attr->gid_tbl_len);
 }
+
+std::string gid_to_str(ibv_gid* gid)
+{
+    std::string res = "";
+
+    //  ibv_gid has uint8_t raw[16], the pretty-print has 
+    //  8 sections to it so chunk & print as hex
+    for (int i = 0; i < 16; i+=2)
+    {
+        res+= std::format("{:02x}",gid->raw[i]);
+        res+= std::format("{:02x}",gid->raw[i+1]);
+
+        if (i%2==0)
+        {
+            res+= ":";
+        }
+    }
+
+    return res;
+}

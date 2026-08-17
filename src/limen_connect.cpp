@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <iostream>
 #include <algorithm> 
+#include <format>
 
 #include <infiniband/verbs.h>
 #include "limen/limen_common.h"
@@ -90,6 +91,43 @@ void print_help(bool to_error)
     }
 }
 
+int exchange_as_server(int tcp_port){
+    //  create socket
+    int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverSocket < 0) {
+        fprintf(stderr,"failed to create socket.\n");
+        return 1;
+    }
+
+    //  bind to socket
+    sockaddr_in sock_addr{}; 
+    sock_addr.sin_family = AF_INET;          
+    sock_addr.sin_port = htons(tcp_port);
+    sock_addr.sin_addr.s_addr = INADDR_ANY;  
+
+    if (bind(serverSocket, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) < 0) {
+        fprintf(stderr,"Bind failed. Port might already be in use.\n");
+        close(serverSocket);
+        return 1;
+    }
+
+    //  perform write to fd
+
+    //  perform read from fd
+
+    //  parse output into endpoint_identity struct
+
+    //  verify valid data in endpoint_identity struct
+
+    return 0;
+}
+
+int exchange_as_client()
+{
+    //
+    return 0;
+}
+
 int main(int argc, char* argv[])
 {
     // Misc. variables
@@ -103,6 +141,7 @@ int main(int argc, char* argv[])
     ibv_context* device_context;
     ibv_device_attr device_attr;
     ibv_pd* pd;
+    ibv_gid gid;
 
     //  Port-based variables
     ibv_port_attr port_attr;
@@ -113,9 +152,21 @@ int main(int argc, char* argv[])
     ibv_qp_cap qp_cap{};
     ibv_qp_init_attr qp_init_attr{};
 
+    // Endpoint Identity strings
+    std::string local_identity_str;
+    std::string remote_identity_str;
+
 
     // parse args
     parse_argv(argc,argv,&args);
+
+    if (args.addr != nullptr)
+    {
+        printf("role: client\n");
+    } else
+    {
+        printf("role: server\n");
+    }
 
     // make sure device_name & gid_index are supplied
     if (args.device_name == nullptr)
@@ -223,6 +274,14 @@ int main(int argc, char* argv[])
     qp_init_attr.qp_type = IBV_QPT_RC;
     qp_init_attr.sq_sig_all= 1;
 
+    //  get ibv_gid
+    if (ibv_query_gid(device_context,args.port,args.gid_index,&gid) == -1)
+    {
+        //  failed to get ibv_gid
+        fprintf(stderr,"ibv_query_gid failed\n");
+        exit(EXIT_VERB_ERROR);
+    }
+
     //  create reliable-connected queue pair
     queue_pair = ibv_create_qp(pd,&qp_init_attr);
     if (queue_pair == NULL)
@@ -233,7 +292,7 @@ int main(int argc, char* argv[])
 
     //  print out qp: line from filled qp_init_attr 
     printf(
-        "qp:type=RC max_send_wr=%i max_recv_wr = %i max_send_sge=%i max_recv_sge=%i\n",
+        "qp: type=RC max_send_wr=%i max_recv_wr=%i max_send_sge=%i max_recv_sge=%i\n",
         qp_cap.max_send_wr,
         qp_cap.max_recv_wr,
         qp_cap.max_send_sge,
@@ -242,8 +301,42 @@ int main(int argc, char* argv[])
 
 
     //  populate local identity struct
+    local_identity.qpn = queue_pair->qp_num;
+    local_identity.psn = lrand48() & U32_TO_U24_MASK;
+    
+    local_identity.gid = gid;
+    local_identity.lid = port_attr.lid;
+
+    //  print local identity string 
+    local_identity_str = std::format(
+        "local: qpn={:#x} psn={:#x} gid={} lid={:#x}",
+        local_identity.qpn,
+        local_identity.psn,
+        gid_to_str(&local_identity.gid),
+        local_identity.lid
+    );
+    std::cout << local_identity_str << std::endl;
 
     //  perform side-channel exchange (send struct as text not struct data)
+    //  perform server or client path
+    if (args.addr != nullptr)
+    {
+        //  client
+        if (exchange_as_client() != 0)
+        {
+            fprintf(stderr,"side channel exchange as client failed\n")
+            exit(EXIT_SIDE_CHANNEL_ERROR);
+        }
+
+    } else {
+        //  server
+        if (exchange_as_server() != 0)
+        {
+            fprintf(stderr,"side channel exchange as server failed\n")
+            exit(EXIT_SIDE_CHANNEL_ERROR);
+        }
+    }
+
 
     //  perform RESET->INIT transition
 

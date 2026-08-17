@@ -1,6 +1,7 @@
 #ifndef limen_connect
 
 #include <climits>
+#include <infiniband/verbs.h>
 
 #define limen_connect
 
@@ -21,7 +22,7 @@ typedef struct {
 typedef struct {
     uint32_t qpn;
     uint32_t psn;   //  MUST BE 24 BIT, SCALE WITH U32_TO_U24_MASK
-    int gid_index;
+    ibv_gid gid;
     uint16_t lid;   //  FROM PORT ATTRIBUTES
 
 } endpoint_identity;
@@ -30,15 +31,12 @@ void parse_argv(int arg, char* argv[], connect_parsed_args* args_container);
 
 void print_help(bool to_error=false);
 
-void assemble_endpoint_identity(endpoint_identity* e_id);
-
-void print_endpoint_identity(endpoint_identity* e_id,char* buffer);
 
 void generate_packet_sequence_number(uint32_t* psn);
 
-void exchange_as_server();
+int exchange_as_server();
 
-void exchange_as_client();
+int exchange_as_client();
 
 void send_endpoint_identity(int fd, endpoint_identity* e_id);
 

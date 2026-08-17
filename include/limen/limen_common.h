@@ -2,6 +2,8 @@
 #define limen_common
 #include <stdint.h>
 #include <infiniband/verbs.h>
+#include <string>
+#include <format>
 
 //#define EXIT_SUCCESS (0) already defined
 #define EXIT_USAGE_ERROR (1)
@@ -25,5 +27,8 @@ void print_device_info(ibv_device_attr* attr);
 
 //  todo docstring
 void print_port_info(ibv_port_attr* attr);
+
+//  todo docstring
+std::string gid_to_str(ibv_gid* gid);
 
 #endif
