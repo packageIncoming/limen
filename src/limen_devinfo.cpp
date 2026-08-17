@@ -410,9 +410,9 @@ int main(int argc, char* argv[])
     //  (--check-access) access flag constraint
     if (args_container.check_access_flag)
     {
-        int access = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
-        void* check_access_buffer = calloc(1,100); // small 100 byte buffer for testing
-        ibv_mr* check_access_mr = ibv_reg_mr(pd,check_access_buffer,100,access);
+        char probe[4096] = {0};
+        errno = 0;
+        struct ibv_mr *check_access_mr = ibv_reg_mr(pd, probe, sizeof probe, IBV_ACCESS_REMOTE_WRITE);
         if (check_access_mr==nullptr)
         {
             printf("access-check: REMOTE_WRITE without LOCAL_WRITE rejected: %s (%s)\n",error_enumstr(errno),std::strerror(errno));

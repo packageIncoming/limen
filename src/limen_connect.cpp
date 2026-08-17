@@ -91,42 +91,42 @@ void print_help(bool to_error)
     }
 }
 
-int exchange_as_server(int tcp_port){
-    //  create socket
-    int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (serverSocket < 0) {
-        fprintf(stderr,"failed to create socket.\n");
-        return 1;
-    }
+// int exchange_as_server(int tcp_port){
+//     //  create socket
+//     int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+//     if (serverSocket < 0) {
+//         fprintf(stderr,"failed to create socket.\n");
+//         return 1;
+//     }
 
-    //  bind to socket
-    sockaddr_in sock_addr{}; 
-    sock_addr.sin_family = AF_INET;          
-    sock_addr.sin_port = htons(tcp_port);
-    sock_addr.sin_addr.s_addr = INADDR_ANY;  
+//     //  bind to socket
+//     sockaddr_in sock_addr{}; 
+//     sock_addr.sin_family = AF_INET;          
+//     sock_addr.sin_port = htons(tcp_port);
+//     sock_addr.sin_addr.s_addr = INADDR_ANY;  
 
-    if (bind(serverSocket, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) < 0) {
-        fprintf(stderr,"Bind failed. Port might already be in use.\n");
-        close(serverSocket);
-        return 1;
-    }
+//     if (bind(serverSocket, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) < 0) {
+//         fprintf(stderr,"Bind failed. Port might already be in use.\n");
+//         close(serverSocket);
+//         return 1;
+//     }
 
-    //  perform write to fd
+//     //  perform write to fd
 
-    //  perform read from fd
+//     //  perform read from fd
 
-    //  parse output into endpoint_identity struct
+//     //  parse output into endpoint_identity struct
 
-    //  verify valid data in endpoint_identity struct
+//     //  verify valid data in endpoint_identity struct
 
-    return 0;
-}
+//     return 0;
+// }
 
-int exchange_as_client()
-{
-    //
-    return 0;
-}
+// int exchange_as_client()
+// {
+//     //
+//     return 0;
+// }
 
 int main(int argc, char* argv[])
 {
@@ -134,7 +134,7 @@ int main(int argc, char* argv[])
     connect_parsed_args args;
     int rc;
     endpoint_identity local_identity{};
-    endpoint_identity remote_identity{};
+    // endpoint_identity remote_identity{};
 
     //  Device-based variables
     ibv_device** devices_list;
@@ -319,23 +319,23 @@ int main(int argc, char* argv[])
 
     //  perform side-channel exchange (send struct as text not struct data)
     //  perform server or client path
-    if (args.addr != nullptr)
-    {
-        //  client
-        if (exchange_as_client() != 0)
-        {
-            fprintf(stderr,"side channel exchange as client failed\n")
-            exit(EXIT_SIDE_CHANNEL_ERROR);
-        }
+    // if (args.addr != nullptr)
+    // {
+    //     //  client
+    //     if (exchange_as_client() != 0)
+    //     {
+    //         fprintf(stderr,"side channel exchange as client failed\n")
+    //         exit(EXIT_SIDE_CHANNEL_ERROR);
+    //     }
 
-    } else {
-        //  server
-        if (exchange_as_server() != 0)
-        {
-            fprintf(stderr,"side channel exchange as server failed\n")
-            exit(EXIT_SIDE_CHANNEL_ERROR);
-        }
-    }
+    // } else {
+    //     //  server
+    //     if (exchange_as_server() != 0)
+    //     {
+    //         fprintf(stderr,"side channel exchange as server failed\n")
+    //         exit(EXIT_SIDE_CHANNEL_ERROR);
+    //     }
+    // }
 
 
     //  perform RESET->INIT transition

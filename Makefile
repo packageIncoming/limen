@@ -57,10 +57,10 @@ RM = /usr/bin/cmake -E rm -f
 EQUALS = =
 
 # The top-level source directory on which CMake was run.
-CMAKE_SOURCE_DIR = /home/main/limen
+CMAKE_SOURCE_DIR = /home/mert/limen
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/main/limen
+CMAKE_BINARY_DIR = /home/mert/limen
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -87,9 +87,9 @@ rebuild_cache/fast: rebuild_cache
 
 # The main all target
 all: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/main/limen/CMakeFiles /home/main/limen//CMakeFiles/progress.marks
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/mert/limen/CMakeFiles /home/mert/limen//CMakeFiles/progress.marks
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/main/limen/CMakeFiles 0
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/mert/limen/CMakeFiles 0
 .PHONY : all
 
 # The main clean target
