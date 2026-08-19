@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <cstddef>
 #include <cstdio>
 #include <getopt.h>
@@ -415,6 +418,21 @@ std::string identity_to_str(endpoint_identity* identity)
         );
 }
 
+void print_reset_init_fail(int rc, ibv_qp_attr* qp_attr)
+{
+    fprintf(stderr,"state: RESET -> INIT FAILED: %s (%s)\n", strerrorname_np(rc),std::strerror(rc));
+    fprintf(stderr,"attr_mask: IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS\n");
+    
+    //  print the fields that were changed
+    fprintf(stderr,"qp_state: %s\n",qp_state_to_str(qp_attr->qp_state).c_str());
+    fprintf(stderr,"pkey_index: %i\n",qp_attr->pkey_index);
+    fprintf(stderr,"port_num: %i\n",qp_attr->port_num);
+    fprintf(stderr,"qp_access_flags: %i\n",qp_attr->qp_access_flags);
+
+
+}
+
+
 
 int main(int argc, char* argv[])
 {
@@ -440,9 +458,13 @@ int main(int argc, char* argv[])
     ibv_qp_cap qp_cap{};
     ibv_qp_init_attr qp_init_attr{};
 
-    // Endpoint Identity strings
+    //  Endpoint Identity strings
     std::string local_identity_str;
     std::string remote_identity_str;
+
+    //  QP transition variables
+    ibv_qp_attr qp_attr{};
+    int attr_mask=0;
 
 
     // parse args
@@ -621,8 +643,32 @@ int main(int argc, char* argv[])
 
 
     //  perform RESET->INIT transition
+    
+    //  fill qp_attr
+    qp_attr.qp_state        =   IBV_QPS_INIT;
+    qp_attr.pkey_index      =   0;
+    qp_attr.port_num        =   1;
+    qp_attr.qp_access_flags =   IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE;
+    //  set flags for attr_mask
+    attr_mask = IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS;
+    //  execute ibv_modify_qp
+    rc = ibv_modify_qp(queue_pair, &qp_attr, attr_mask);
+    if (rc!=0)
+    {
+        //  failed to perform RESET->INIT transition
+        print_reset_init_fail(rc,&qp_attr);
+        exit(3);
+    }
+
+    printf("state: RESET -> INIT ok\n");
 
     //  perform INIT->RTR transition
+    //  clear qp_attr & attr_mask
+    qp_attr = {};
+    attr_mask = 0;
+
+    qp_attr.qp_state = IBV_QPS_RTR;
+
 
     //  perform RTR->RTS transition
 

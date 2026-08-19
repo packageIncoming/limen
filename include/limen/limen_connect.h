@@ -54,7 +54,11 @@ int send_endpoint_identity(int fd, endpoint_identity* local_identity);
 
 int recv_endpoint_identity(int fd, endpoint_identity* remote_identity);
 
+void print_reset_init_fail(int rc, ibv_qp_attr* qp_attr);
 
+void print_init_rtr_fail();
+
+void print_rtr_rts_fail();
 
 
 
