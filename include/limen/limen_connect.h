@@ -1,3 +1,4 @@
+#include <string>
 #ifndef limen_connect
 
 #include <climits>
@@ -9,6 +10,7 @@
 #define RECV_QUEUE_DEPTH 16
 #define COMPLETE_QUEUE_DEPTH (SEND_QUEUE_DEPTH + RECV_QUEUE_DEPTH)
 #define U32_TO_U24_MASK (0x00FFFFFF)
+#define SIDE_CHANNEL_MSG_SZ (sizeof("qpn=0xffffffff psn=0xffffff gid=0000:0000:0000:0000:0000:ffff:ffff:ffff lid=0xffff") - 1)
 
 typedef struct {
     const char* device_name{nullptr};
@@ -34,11 +36,23 @@ void print_help(bool to_error=false);
 
 void generate_packet_sequence_number(uint32_t* psn);
 
-int exchange_as_server();
+int exchange_as_server(endpoint_identity* remote_identity,
+    endpoint_identity* local_identity,
+    int tcp_port
+);
 
-int exchange_as_client();
+int exchange_as_client(endpoint_identity* remote_identity,
+    endpoint_identity* local_identity,
+    int tcp_port,
+    const char* server_addr
+);
 
-void send_endpoint_identity(int fd, endpoint_identity* e_id);
+// turns it into "qpn={qpn in hex} psn={psn in hex } gid={gid string} lid={lid in hex}"
+std::string identity_to_str(endpoint_identity* identity);
+
+int send_endpoint_identity(int fd, endpoint_identity* local_identity);
+
+int recv_endpoint_identity(int fd, endpoint_identity* remote_identity);
 
 
 

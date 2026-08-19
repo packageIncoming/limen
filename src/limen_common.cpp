@@ -151,11 +151,32 @@ std::string gid_to_str(ibv_gid* gid)
         res+= std::format("{:02x}",gid->raw[i]);
         res+= std::format("{:02x}",gid->raw[i+1]);
 
-        if (i%2==0)
+        if (i%2==0 && i!=14)
         {
             res+= ":";
         }
     }
 
     return res;
+}
+int str_to_gid(std::string str, ibv_gid* gid)
+{
+    // "0000:0000:0000:0000:0000:ffff:c0a8:6401"
+    unsigned int g[16];
+
+    if (sscanf(str.c_str(),
+        "%2x%2x:%2x%2x:%2x%2x:%2x%2x:%2x%2x:%2x%2x:%2x%2x:%2x%2x",
+        &g[0],&g[1],&g[2],&g[3],&g[4],&g[5],&g[6],&g[7],
+        &g[8],&g[9],&g[10],&g[11],&g[12],&g[13],&g[14],&g[15]) != 16)
+    {
+        //  did not parse enough values
+        return 1;
+    }
+
+    //  pack into gid
+    for (int i = 0; i < 16; i++)
+    {
+        gid->raw[i] = g[i];
+    }
+    return 0;
 }

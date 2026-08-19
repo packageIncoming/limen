@@ -1,425 +1,389 @@
-# Limen Fabric
+# Limen Fabric Reference
 
-**Live environment document.** Describes the fabric all Limen code builds and runs
-against. Last updated 2026-08-16.
+Host: `mert-OptiPlex-7050` (Dell OptiPlex 7050 MT, Ubuntu 24.04 Desktop)
+Last verified: 2026-08-18
 
-The soft-RoCE VM setup is superseded and archived in `baseline-rxe.md`. It remains usable
-for development without hardware access, but no number from it is quotable.
-
----
-
-## 1. Concepts
-
-Notes from TRD-00 prior knowledge, kept because they are the vocabulary everything
-downstream assumes.
-
-**Conventional networking** has the device interrupt the CPU to move data into and out of
-RAM through socket buffers. Every byte is touched by the kernel at least once.
-
-**RDMA rests on three bypasses:**
-
-- **Kernel bypass.** Work queues and completion queues are mapped into process memory. The
-  kernel participates at setup — securing memory, creating queues — and then leaves the
-  data path entirely.
-- **Zero copy.** The adapter is given addresses and DMAs directly to and from them. No
-  socket buffers. The kernel's job is to guarantee those addresses stay valid, which is
-  what pinning accomplishes.
-- **Remote CPU bypass.** Unique to RDMA. In a one-sided operation the initiator supplies
-  both the data and the destination address; the responding adapter performs the write with
-  no interrupt and no notification. The remote CPU does not know a transfer occurred. In
-  two-sided operation the receiver posts a receive, chooses the buffer, and reaps a
-  completion.
-
-**Objects:** device context, protection domain, memory region, completion queue, queue
-pair, work request, completion.
-
-**The verbs model:** post a work request to a queue, reap a completion later. Everything
-is asynchronous by construction.
-
-**RoCE.** RDMA was built for InfiniBand. RDMA over Converged Ethernet carries it on
-ordinary Ethernet. Limen uses **RoCE v2**, which encapsulates in UDP on **port 4791**.
-RoCE v1 is a different encapsulation (Ethertype 0x8915) and is not routable; selecting a
-v1 GID by accident is a real failure mode — see §5.
-
-**Addressing** is by GID, a 128-bit value.
-
-**Lossless fabric.** RoCE v2 conventionally requires PFC and ECN because retransmission is
-expensive. This fabric is direct-attach back-to-back with no switch, so there is no
-oversubscription and no congestion to manage, and none of that is configured. That is a
-limitation to disclose, not a result to claim — see §8.
-
-**TRD-00's tools map to the build:**
-
-| Tool | Question it answers |
-|---|---|
-| `ibv_devinfo` | Does a device exist, and is its port up? |
-| `ibv_rc_pingpong` | Can two endpoints complete a transfer? |
-| `rping` | Does the connection manager path work? |
-| `perftest` | How does this fabric perform? |
+Single-host, two-card RoCE v2 fabric. Two Mellanox ConnectX-4 Lx (CX4121C) adapters
+cross-connected by a 10Gtek 25G SFP28 passive DAC. Both endpoints run on the same
+machine, split across network namespaces.
 
 ---
 
-## 2. Topology
+## 1. Topology
 
-Single host, two physically separate HCAs joined by a direct-attach copper cable.
-
-**This is not loopback.** Each transfer crosses two independent PCIe links, two ASICs, and
-a 25G SerDes wire. The two RDMA devices have separate contexts, separate protection
-domains, and separate queue pairs, exactly as two hosts would.
-
-| | |
-|---|---|
-| Host | Dell OptiPlex 7050 MT, Ubuntu 24.04 Desktop, UEFI boot |
-| Card A | ConnectX-4 Lx, Dell OEM CX4121C, PCI `01:00.0`, SLOT2 |
-| Card B | ConnectX-4 Lx, Dell OEM CX4121C, PCI `04:00.0`, SLOT4 |
-| Cable | 10Gtek CAB-ZSP/ZSP-P0.3M, 25G SFP28 passive DAC, 0.3 m, 30 AWG |
-| Link | Card A port 0 ↔ Card B port 0 |
-
----
-
-## 3. PCIe
-
-Card A: `LnkSta: Speed 8GT/s, Width x8` — Gen3 x8, CPU-attached.
-Card B: SLOT4 is x16 mechanical, x4 electrical, PCH-attached behind DMI.
-
-Verify with:
-
-```bash
-sudo lspci -vvv -s 01:00.0 | grep -i lnksta
+```
+         root namespace                      namespace  limen-b
+    +--------------------------+        +--------------------------+
+    |  rocep1s0f0              |        |  rocep4s0f0              |
+    |  enp1s0f0np0             |        |  enp4s0f0np0             |
+    |  192.168.100.1/24        |        |  192.168.100.2/24        |
+    |  04:3f:72:e8:46:5a       |        |  04:3f:72:d5:46:c4       |
+    +-----------+--------------+        +--------------+-----------+
+                |                                      |
+                +--------  25G SFP28 passive DAC  -----+
 ```
 
-`sudo` is required. Without it `lspci` prints `Capabilities: <access denied>` and the
-`LnkSta` line is absent entirely rather than wrong.
+Server side conventionally runs in the root namespace on `.1`.
+Client side runs in `limen-b` on `.2`.
 
-**Known asymmetry.** Card A has roughly 63 Gb/s of PCIe budget, card B roughly 31.5 Gb/s.
-Neither binds at 25G line rate for the message sizes measured, but the endpoints are not
-equivalent and this belongs in any writeup.
+### Why namespaces are required
+
+Both fabric addresses are in `192.168.100.0/24` on the same host. With both interfaces
+in the root namespace the kernel resolves the peer address as **local**, routes it via
+`lo`, and the neighbor entry never populates (`ip neigh` shows `FAILED`). RoCE resolves
+the destination MAC from the destination GID through the ordinary route and neighbor
+path, so with no neighbor entry there is no dmac, and the queue pair transition to RTR
+fails:
+
+```
+Failed to modify QP to RTR
+Couldn't connect to remote QP
+```
+
+That error is misleading. It reads like a peer or cabling problem and is actually a
+local routing problem. Moving one card into its own network namespace makes the peer
+address non-local, which restores ARP, which restores dmac resolution.
+
+Side effect worth knowing: with the namespace split, the TCP side channel between two
+processes now genuinely traverses the DAC rather than loopback, so
+`tcpdump -i enp1s0f0np0` sees both the side channel and the RoCE traffic.
 
 ---
 
-## 4. Cards: firmware and configuration
+## 2. GID selection
 
-| | Card A | Card B |
+Both devices: **GID index 3**, RoCE v2, IPv4-mapped.
+
+```
+index 3  ->  ::ffff:192.168.100.1   (rocep1s0f0)
+index 3  ->  ::ffff:192.168.100.2   (rocep4s0f0)
+```
+
+Rejected entries: the lower indices are RoCE v1, which encapsulate directly in Ethernet
+with their own EtherType and cannot be routed; the IPv6 link-local entries address the
+`fe80::` scope rather than the fabric subnet. Index 0 is RoCE v1 on these cards, which
+is why defaulting to it fails with an error that never mentions GIDs.
+
+The GID table is rebuilt when a device moves between namespaces. Re-derive the index
+after any namespace change rather than assuming it carried over. `limen-verify` prints
+both.
+
+Flag inconsistency across tools: `ibv_rc_pingpong` takes `-g <index>`, perftest tools
+(`ib_send_lat`, `ib_send_bw`) take `-x <index>`.
+
+---
+
+## 3. Link parameters
+
+| Property | Value | Note |
 |---|---|---|
-| PCI | `01:00.0` / `01:00.1` | `04:00.0` / `04:00.1` |
-| FW version | 14.27.6122 | 14.28.4512 |
-| FW release | 2020-08-12 | 2020-01-10 |
-| PSID | DEL2420110034 | DEL2420110034 |
-| UEFI ROM | 14.20.27 | 14.22.15 |
-| PXE ROM | 3.5.903 | 3.6.203 |
-| Base MAC | `04:3f:72:d5:46:c4` | `04:3f:72:e8:46:5a` |
+| Link layer | Ethernet | |
+| Port state | PORT_ACTIVE | |
+| Line rate | 25 Gb/s | SFP28 |
+| Netdev MTU | 1500 | |
+| Path MTU | 1024 B | capped by the 1500 B netdev MTU |
+| Max inline | 236 B (latency test), 0 B (bandwidth test) | |
 
-**Known asymmetry.** One minor revision apart. Same PSID, so both accept the same Dell
-image if matching ever becomes necessary. Deliberately not matched: flashing a working card
-carries brick risk for no observed benefit. Revisit only if endpoint behaviour diverges in
-a way application code does not explain.
-
-**Tooling.** Ubuntu ships `mstflint`, which provides `mstflint` and `mstconfig` — the
-open-source equivalents of MFT's `flint` and `mlxconfig`. No tarball download, no kernel
-module, and devices are addressed by PCI address rather than through `/dev/mst`.
-
-```bash
-sudo apt install -y mstflint
-sudo mstflint  -d 01:00.0 query
-sudo mstconfig -d 01:00.0 query
-```
-
-**Changes applied:**
-
-```bash
-sudo mstconfig -d 04:00.0 set EXP_ROM_PXE_ENABLE=0 EXP_ROM_UEFI_x86_ENABLE=0
-```
-
-Card A's older firmware does not expose those tokens. Settings apply on **cold power
-cycle**, not on reboot. All `mstconfig` changes are reversible with
-`sudo mstconfig -d <addr> reset`.
-
-**SR-IOV was already disabled** on both cards out of the box (`SRIOV_EN False(0)`,
-`NUM_OF_VFS 0`), contrary to the ConnectX-4 Lx default documented by Red Hat.
-
-**`mstflint drom` is unavailable on these cards.** Dell builds the firmware with a unified
-FW/ROM product version:
-
-```
--E- Remove ROM failed: The device FW contains common FW/ROM Product Version -
-    The ROM cannot be updated separately.
-```
-
-The expansion ROM can be disabled but not removed. Card configuration is a flag; the ROM
-image stays in flash and the 1 MB expansion ROM BAR is still advertised.
+**Open item.** ConnectX-4 Lx supports a 4096 B path MTU. Reaching it requires raising
+the netdev MTU to 9000 on both interfaces. That would measurably change the bandwidth
+figures and invalidates section 4. Either do it and re-measure once, or record the
+decision not to. Do not discover the gap later.
 
 ---
 
-## 5. Devices, addressing, GIDs
+## 4. Baseline measurements
 
-### Naming
+Taken 2026-08-18 over the namespace-split topology above, endpoints pinned to separate
+cores so they do not contend for one.
 
-Inbox `rdma-core` on 24.04 uses persistent PCI-based names, **not** `mlx5_N`:
-
-| RDMA device | netdev | IP | Status |
-|---|---|---|---|
-| `rocep1s0f0` | `enp1s0f0np0` | 192.168.100.1/24 | PORT_ACTIVE, cabled |
-| `rocep1s0f1` | `enp1s0f1np1` | — | PORT_DOWN |
-| `rocep4s0f0` | `enp4s0f0np0` | 192.168.100.2/24 | PORT_ACTIVE, cabled |
-| `rocep4s0f1` | `enp4s0f1np1` | — | PORT_DOWN |
-
-**`rdma link add` does not apply.** The mlx5 driver creates devices automatically at probe.
-Any TRD step carried over from the rxe setup that creates a device by hand is obsolete.
-
-### GID selection
-
-`show_gids` is not present — it ships with MLNX_OFED, not inbox `rdma-core`. Enumerate via
-sysfs:
+### 4.1 Bandwidth, `ib_send_bw`
 
 ```bash
-for d in /sys/class/infiniband/*/ports/1/gids/*; do
-  gid=$(cat $d)
-  [ "$gid" = "0000:0000:0000:0000:0000:0000:0000:0000" ] && continue
-  idx=$(basename $d)
-  dev=$(echo $d | cut -d/ -f5)
-  type=$(cat /sys/class/infiniband/$dev/ports/1/gid_attrs/types/$idx 2>/dev/null)
-  ndev=$(cat /sys/class/infiniband/$dev/ports/1/gid_attrs/ndevs/$idx 2>/dev/null)
-  echo "$dev idx=$idx type=$type ndev=$ndev gid=$gid"
+# server, root namespace
+sudo taskset -c 2 ib_send_bw -d rocep1s0f0 -x 3 -F --report_gbits
+
+# client, limen-b
+sudo limen-b taskset -c 6 ib_send_bw -d rocep4s0f0 -x 3 -F --report_gbits 192.168.100.1
+```
+
+65536 byte messages, 1000 iterations, TX depth 128, CQ moderation 1.
+Ten consecutive runs across two batches, client-side average column, sorted:
+
+```
+22.18  22.34  22.48  22.48  22.51  22.54  22.59  22.64  22.71  22.72
+```
+
+**Median 22.53 Gb/s, range 22.18 to 22.72, spread 2.4%.**
+That is **90.1% of 25G line rate** at the median.
+
+Report the median and the range together. A single run is a sample, not a measurement.
+
+Column identity confirmed against the unit-independent message rate:
+`0.042602 Mpps x 65536 B x 8 = 22.34 Gb/s`, matching that run's reported average
+exactly. The reported average is a true average, not a peak.
+
+### 4.2 Startup transients, and the peak-versus-average check
+
+Two earlier single runs the same day reported **19.66** and **19.68 Gb/s**, roughly 13%
+below the block above. Resolved: in the 19.66 run the **peak column read 22.54**,
+identical to the steady-state average of every clean run. The hardware reached full
+speed during that run and the average was dragged down by a slow portion of it.
+
+That is a startup transient, not a fabric limit. Most likely CPU frequency ramp, since
+that run launched immediately after a `sudo` password prompt on an otherwise idle core.
+Clean runs show peak and average within 0.15 Gb/s of each other.
+
+**Standing sanity check: compare peak against average on every run.** A large gap means
+the run was contaminated and should be discarded. A small gap means the number is real.
+Do not average contaminated runs into a baseline, and do not report a depressed average
+as a fabric characteristic.
+
+### 4.3 Units, resolved
+
+perftest's default **`MB/sec` column is mebibytes per second**, not megabytes. It
+divides by `0x100000`. Verify from the unit-independent `MsgRate` column:
+
+```
+0.039650 Mpps x 65536 B = 2,598,502,400 B/s
+  / 1048576  = 2478.1   -> matches the reported 2478.13 MB/sec
+  / 1e6      = 2598.5   -> matches nothing
+```
+
+So converting a perftest `MB/sec` figure with `x 8 / 1000` under-reports by about 4.9%.
+**Always pass `--report_gbits`** and skip the conversion entirely. Every figure in this
+document uses it.
+
+The previously recorded **19.70 Gb/s / 78.8% of line rate** came from that conversion
+error applied to a transient-contaminated run, so it was wrong twice over. Superseded by
+the 22.53 Gb/s median in section 4.1. Do not quote it.
+
+### 4.4 Latency, `ib_send_lat`
+
+```bash
+sudo taskset -c 2 ib_send_lat -d rocep1s0f0 -x 3 -F
+sudo limen-b taskset -c 6 ib_send_lat -d rocep4s0f0 -x 3 -F 192.168.100.1
+```
+
+2 byte messages, 1000 iterations. Microseconds.
+
+| | t_min | typical (p50) | avg | stdev | p99 | p99.9 | t_max |
+|---|---|---|---|---|---|---|---|
+| server (`.1`) | 1.11 | **1.17** | 1.29 | 0.40 | 3.93 | 8.00 | 8.00 |
+| client (`.2`) | 1.10 | **1.17** | 1.30 | 0.48 | 3.78 | 8.35 | 8.35 |
+
+Quote p50, p99, and p99.9 together, never p50 alone. Ignore the mean: the tail drags it
+and it carries nothing the percentiles do not.
+
+The tail runs about 3.3x the median. Cause is host contention from both endpoints
+sharing one machine's cores and cache. That is a property of the single-host topology,
+not of the fabric, and it is the correct thing to say when asked.
+
+**Not yet multi-run.** Given what section 4.2 showed for bandwidth, these single-run
+latency figures deserve the same five-run treatment before being quoted anywhere that
+matters.
+
+### 4.5 Sanity check, `ibv_rc_pingpong`
+
+```bash
+sudo ibv_rc_pingpong -d rocep1s0f0 -g 3
+sudo limen-b ibv_rc_pingpong -d rocep4s0f0 -g 3 192.168.100.1
+```
+
+Result: 8,192,000 bytes in 0.01 s, 1000 iters at 9.81 usec/iter, reported as
+6683.94 Mbit/sec.
+
+Two of those numbers mislead:
+
+- Default message size is 4096 B. 1000 iters x 4096 B x 2 directions = 8,192,000 B,
+  confirming the byte count counts round trips.
+- **9.81 usec is a round trip**, ping plus pong. One way is roughly 4.9 usec.
+- The **6683.94 Mbit/sec is not a bandwidth measurement.** `rc_pingpong` is strictly
+  synchronous, one message in flight, nothing pipelined, so that figure is message size
+  divided by round-trip latency. It is a latency number in bandwidth clothing, and it is
+  not comparable to `ib_send_bw`, which keeps 128 work requests outstanding.
+
+Of the ~4.9 usec one way, 1.31 usec is unavoidable serialization (4096 B at 25 Gb/s).
+The rest is host stack, CQ polling, and same-box CPU contention.
+
+---
+
+## 5. Bringup
+
+Three scripts plus a systemd unit. Verified surviving a cold boot on 2026-08-18.
+
+| Path | Purpose |
+|---|---|
+| `/usr/local/sbin/limen-fabric-up.sh` | full bringup, idempotent, self-elevating |
+| `/usr/local/bin/limen-verify` | check both namespaces, print both GID indices, ping across the DAC |
+| `/usr/local/bin/limen-b` | run a command inside the `limen-b` namespace |
+| `/etc/systemd/system/limen-fabric.service` | bringup at boot, ordered before the desktop stack |
+
+### What does and does not survive a power cycle
+
+Survives: the scripts, the systemd unit,
+`/etc/NetworkManager/conf.d/99-limen-unmanaged.conf`.
+
+Does **not** survive, and is rebuilt by the unit on every boot: `netns exclusive` mode
+(kernel state, resets to `shared`), the `limen-b` namespace, the device placement, and
+both IP addresses.
+
+### The EBUSY trap
+
+`rdma system set netns exclusive` returns `Device or resource busy` when **any** network
+namespace other than init exists on the system. Not when a device is in use, which is
+what the message implies. The kernel walks its registered-namespace list and bails on
+the first non-init entry.
+
+Blockers found on this box: sixteen Firefox snap sandboxes (one net namespace per
+content process), `accounts-daemon`, `rtkit-daemon`, and a stale `limen-b` from a
+previous run.
+
+The check applies **only at the moment of the mode change**. Once exclusive is set,
+namespaces may return freely. The requirement is one clean window, not a permanently
+clean system, which is why the boot-time ordering works.
+
+Manual recovery:
+
+```bash
+sudo ip netns del limen-b          # it blocks the very change needed to create it
+pkill -f firefox
+sudo systemctl stop accounts-daemon rtkit-daemon
+sudo lsns -t net                   # must show exactly one line
+sudo rdma system set netns exclusive
+```
+
+Use `lsns -t net`, not `ip netns list`. The latter only shows namespaces with a bind
+mount under `/var/run/netns` and misses every snap sandbox.
+
+### Ordering constraints
+
+- Delete any stale `limen-b` **before** setting exclusive mode. The reverse order works
+  on a first run and fails on every subsequent one.
+- The unit's `Before=` list exists to win the boot race against `snapd`,
+  `display-manager`, `accounts-daemon` and `rtkit-daemon`. The script also retries five
+  times, stopping dbus-activated daemons between attempts, because `Before=` only orders
+  against units systemd pulls into the boot transaction.
+- Installing Docker, containerd, or libvirt on this host will break boot-time bringup.
+  Each creates a net namespace early.
+- Moving a netdev into a namespace **wipes its IP configuration**. The script re-adds it.
+- Both interfaces carry `noprefixroute`, meaning NetworkManager owns them by default.
+  They are marked unmanaged, otherwise NM reclaims and reconfigures them.
+- If a boot ever fails, `sudo limen-fabric-up.sh --force` also kills Firefox and fixes it
+  in one command. The journal will name the offending namespaces.
+
+---
+
+## 6. Known issues
+
+**Startup transients depress single-run bandwidth averages.** Explained in section 4.2.
+Check peak against average before trusting any run.
+
+**Latency not multi-run.** See section 4.4.
+
+**Path MTU capped at 1024.** See section 3.
+
+**Test harness and namespaces.** `trd-02-tests.sh --ssh` cannot reach a namespace; the
+harness invokes the client binary directly. Either start servers by hand and use the
+interactive prompt, or wrap the binary path in `limen-b`.
+
+**Fat tail latency.** p99 at roughly 3.3x p50, from both endpoints sharing one host.
+Inherent to the topology, not a defect.
+
+---
+
+## 7. Quick reference
+
+### Devices
+
+| RDMA device | Netdev | Namespace | Address | MAC | Node GUID |
+|---|---|---|---|---|---|
+| `rocep1s0f0` | `enp1s0f0np0` | root | 192.168.100.1/24 | 04:3f:72:e8:46:5a | 043f720300e8465a |
+| `rocep4s0f0` | `enp4s0f0np0` | `limen-b` | 192.168.100.2/24 | 04:3f:72:d5:46:c4 | (run `limen-b ibv_devices`) |
+| `rocep1s0f1` | unused | root | | | 043f720300e8465b |
+| `rocep4s0f1` | unused | root | | | 043f720300d546c5 |
+
+Only the `f0` port of each card is cabled. The `f1` ports are idle.
+
+### Constants
+
+```
+subnet          192.168.100.0/24
+server addr     192.168.100.1
+client addr     192.168.100.2
+GID index       3          (both sides, RoCE v2, IPv4-mapped)
+RoCE UDP port   4791
+side channel    18515      (ibv_rc_pingpong default)
+harness ports   18515 (TRD-02), 18600+ (TRD-03)
+namespace       limen-b
+CPU pins        core 2 (server), core 6 (client)
+```
+
+### Commands
+
+```bash
+# bring the fabric up by hand (the systemd unit does this at boot)
+sudo limen-fabric-up.sh                # add --force to also kill Firefox
+
+# check both namespaces, print both GID indices, ping across the DAC
+sudo limen-verify
+
+# run anything inside the client namespace
+sudo limen-b <command>
+
+# confirm the boot-time bringup worked
+journalctl -u limen-fabric -b
+
+# ---- verification pair, raw verbs ----
+sudo ibv_rc_pingpong -d rocep1s0f0 -g 3
+sudo limen-b ibv_rc_pingpong -d rocep4s0f0 -g 3 192.168.100.1
+
+# ---- latency ----
+sudo taskset -c 2 ib_send_lat -d rocep1s0f0 -x 3 -F
+sudo limen-b taskset -c 6 ib_send_lat -d rocep4s0f0 -x 3 -F 192.168.100.1
+
+# ---- bandwidth, always with --report_gbits ----
+sudo taskset -c 2 ib_send_bw -d rocep1s0f0 -x 3 -F --report_gbits
+sudo limen-b taskset -c 6 ib_send_bw -d rocep4s0f0 -x 3 -F --report_gbits 192.168.100.1
+
+# ---- five-run bandwidth, prints the full labeled data row ----
+for i in 1 2 3 4 5; do
+  sudo taskset -c 2 ib_send_bw -d rocep1s0f0 -x 3 -F --report_gbits >/dev/null 2>&1 &
+  sleep 1
+  sudo limen-b taskset -c 6 ib_send_bw -d rocep4s0f0 -x 3 -F --report_gbits 192.168.100.1 \
+    2>/dev/null | awk '/^ 65536/ {printf "peak=%s avg=%s msgrate=%s\n", $3, $4, $5}'
+  sleep 2
 done
+
+# ---- connection manager path ----
+sudo rping -s -a 192.168.100.1 -v -C 10
+sudo limen-b rping -c -a 192.168.100.1 -v -C 10
+
+# ---- own binaries, TRD-02 onward ----
+sudo ./build/limen_connect -d rocep1s0f0 -g 3
+sudo limen-b ./build/limen_connect -d rocep4s0f0 -g 3 192.168.100.1
 ```
 
-Current table for the two cabled ports:
-
-```
-rocep1s0f0 idx=0 IB/RoCE v1  fe80::63f:72ff:fee8:465a
-rocep1s0f0 idx=1 RoCE v2     fe80::63f:72ff:fee8:465a
-rocep1s0f0 idx=2 IB/RoCE v1  ::ffff:192.168.100.1
-rocep1s0f0 idx=3 RoCE v2     ::ffff:192.168.100.1
-rocep4s0f0 idx=0 IB/RoCE v1  fe80::63f:72ff:fed5:46c4
-rocep4s0f0 idx=1 RoCE v2     fe80::63f:72ff:fed5:46c4
-rocep4s0f0 idx=2 IB/RoCE v1  ::ffff:192.168.100.2
-rocep4s0f0 idx=3 RoCE v2     ::ffff:192.168.100.2
-```
-
-**Use index 3 on both cards.** RoCE v2 with the IPv4-mapped GID.
-
-Index 1 is also RoCE v2 but carries the link-local IPv6 GID. Indices 0 and 2 are RoCE v1 —
-a different encapsulation entirely, and not to be used. This is the substantive difference
-from rxe, which reported every entry as RoCE v2 and made the choice free.
-
-**RoCE v2 requires** `ah_attr.is_global = 1` with the GRH populated (`sgid_index`, remote
-`dgid`). Omitting it is a leading cause of `EINVAL` on the INIT → RTR transition.
-
-### Wire inspection
-
-**`tcpdump` captures nothing.** Kernel bypass means the host stack never sees the frames.
-TRD-00 R4 predicted this correctly. Alternatives:
+### Diagnostics
 
 ```bash
-ethtool -S enp1s0f0np0 | grep -iE 'rx_packets|tx_packets|rx_bytes|tx_bytes'
+ibv_devices                                  # devices visible in this namespace
+ibv_devinfo -d rocep1s0f0                    # port state, link layer, MTU
+rdma system show                             # netns mode: shared or exclusive
+sudo lsns -t net                             # every net namespace, snaps included
+ip neigh show dev enp1s0f0np0                # FAILED means no dmac, RTR will fail
+ip route get 192.168.100.1                   # 'local' or 'dev lo' means the split is gone
+show_gids                                    # GID table, if installed
+sudo tcpdump -i enp1s0f0np0 -n udp port 4791 -c 20
 ```
 
-Adapter counters confirm traffic moved. Actual wire-format inspection would need a switch
-mirror or a tap, neither of which exists here. For wire-format questions, use the rxe VMs —
-that is the one thing they do better than the hardware.
+### Symptom to cause
 
----
-
-## 6. Baseline measurements
-
-Recorded 2026-08-16. `perftest` from Ubuntu 24.04 inbox packages. All runs `-x 3 -F`,
-MTU 1024, RC, 1 QP.
-
-```bash
-# server
-ib_send_lat -d rocep1s0f0 -x 3 -F
-# client
-ib_send_lat -d rocep4s0f0 -x 3 -F 192.168.100.1
-```
-
-### Latency — `ib_send_lat`, 2 bytes, 1000 iterations, max inline 236 B
-
-| | t_min | t_typical | t_avg | stdev | p99 | p99.9 |
-|---|---|---|---|---|---|---|
-| A → B | 1.05 µs | **1.12 µs** | 1.23 µs | 0.13 | 2.43 µs | 3.48 µs |
-| B → A | 1.05 µs | **1.13 µs** | 1.23 µs | 0.12 | 2.35 µs | 3.64 µs |
-
-`Max inline data: 236[B]` — sends under 236 bytes ride inside the work request itself and
-the adapter never issues a separate DMA read for the payload. That is why the 2-byte
-number is as low as it is, and it is the correct thing to say when asked.
-
-### Bandwidth — `ib_send_bw`, 64 KB, 1000 iterations
-
-| | BW avg | Gb/s | % of 25G line rate |
-|---|---|---|---|
-| A → B | 2462.21 MB/s | 19.70 | 78.8% |
-| B → A | 2467.89 MB/s | 19.74 | 79.0% |
-
-Symmetric in both directions, confirming the PCIe asymmetry in §3 is not binding at this
-message size.
-
----
-
-## 7. Hardware vs soft-RoCE
-
-| | soft-RoCE (VMs) | Hardware | Ratio |
-|---|---|---|---|
-| Latency, typical | 724 µs | 1.13 µs | ~640x |
-| Latency, p99.9 | 37,858 µs | 3.64 µs | ~10,400x |
-| Bandwidth | 3.06 MB/s | 2462 MB/s | ~805x |
-
-**Do not quote these ratios without the caveat.** More than one variable changed: the rxe
-numbers came from VirtualBox guests on a laptop over a host-only adapter, so hypervisor
-scheduling contributes a large and unquantified share of that 640x. A fair claim is
-"hardware RoCE at 1.1 µs typical against a soft-RoCE development setup in the hundreds of
-microseconds." Presenting 640x as the RDMA-versus-emulation figure will draw a correct
-objection from anyone who knows the field.
-
-### Device limits: hardware is *smaller* in places
-
-| Attribute | rxe0 | ConnectX-4 Lx | Note |
-|---|---|---|---|
-| `max_qp_wr` | 1,048,576 | **8,192** | 128x smaller |
-| `max_sge` | 32 | **30** | |
-| `max_qp_rd_atom` | 128 | **16** | 8x smaller |
-| `max_msg_sz` | 2 GiB | **1 GiB** | half |
-| `max_cqe` | 32,767 | 4,194,303 | larger |
-| `max_cq` | 1,048,576 | 16,777,216 | larger |
-| `max_mr` | 524,287 | 16,777,216 | larger |
-
-**This is a trap.** Any queue depth, SGE count, or outstanding-read count sized against
-rxe's advertised maxima will fail on real hardware. `max_qp_rd_atom` matters from TRD-06,
-where outstanding RDMA READs are limited by responder resources. Query the device and size
-against what it reports; never hardcode.
-
----
-
-## 8. Caveats on all numbers from this fabric
-
-**Single host.** Both endpoints share CPU cores and one memory controller. Median latency
-is representative of a true two-node fabric; **tail latency is not**. p99 sits near 2x the
-median and p99.9 near 3x, wider than two hosts with core pinning would produce. State this
-whenever the numbers are presented.
-
-**MTU 1024.** The netdev MTU is at its default, so the RoCE path MTU is 1024 B. Raising the
-netdev MTU to 4200 permits a 4096 B path MTU and should recover part of the gap to line
-rate. Not yet done.
-
-**No PFC, DCB, or ECN.** Direct-attach back-to-back, no switch, no oversubscription. This
-sidesteps the hardest part of production RoCE deployment. A limitation, not a result.
-
-**No CPU isolation.** No `taskset`, no `isolcpus`, governor not pinned to performance.
-Doing these should tighten the tail.
-
-**Firmware asymmetry** between the two endpoints, per §4.
-
----
-
-## 9. Host setup
-
-### Packages
-
-```bash
-sudo apt install -y rdma-core ibverbs-utils rdmacm-utils perftest \
-  libibverbs-dev librdmacm-dev build-essential cmake ninja-build git \
-  gdb clang clang-format clang-tidy valgrind tmux tcpdump iperf3 \
-  mstflint linux-headers-$(uname -r) openssh-server
-```
-
-### Persistent addressing
-
-`/etc/netplan/99-limen.yaml`, mode 600:
-
-```yaml
-network:
-  version: 2
-  ethernets:
-    enp1s0f0np0:
-      addresses: [192.168.100.1/24]
-    enp4s0f0np0:
-      addresses: [192.168.100.2/24]
-```
-
-```bash
-sudo chmod 600 /etc/netplan/*.yaml
-sudo netplan apply
-```
-
-Note: `sudo echo "..." >> /etc/file` does not work — the shell opens the redirect as your
-user before `sudo` runs. Use `sudo tee` with a heredoc.
-
-### Locked memory
-
-Registration pins pages and the default `RLIMIT_MEMLOCK` will cause `ibv_reg_mr` failures
-that read as application bugs. In `/etc/security/limits.conf`:
-
-```
-mert soft memlock unlimited
-mert hard memlock unlimited
-```
-
-Log out and back in; confirm with `ulimit -l`.
-
-### Firewall
-
-Not relevant. RDMA traffic bypasses the kernel network stack and netfilter never sees it.
-The `ufw disable` step from the rxe setup exists only because rxe ran over the kernel's own
-UDP path.
-
-### Internet
-
-Via iPhone USB tethering — `ipheth`, interface `enx*`. The onboard Intel NIC
-(`enp0s31f6`) has no cable. `dhclient` was removed in 24.04; use
-`nmcli device connect <iface>`. The tether interface shows `NO-CARRIER` until Personal
-Hotspot is toggled on with the phone unlocked.
-
-### Verification sequence
-
-```bash
-lspci | grep -i Mellanox                       # 4 functions
-sudo lspci -vvv -s 01:00.0 | grep -i lnksta    # 8GT/s x8
-ip -br link                                    # both cabled ports UP
-sudo ethtool enp1s0f0np0 | grep -E "Speed|Link detected"   # 25000Mb/s, yes
-ibv_devices                                    # 4 roce* devices
-ibv_devinfo | grep -E "hca_id|state|link_layer"            # 2x PORT_ACTIVE
-ib_send_lat -d rocep1s0f0 -x 3 -F              # + client, see §6
-```
-
----
-
-## 10. Failed: HP Z240 SFF as a second node
-
-The Z240 will not POST with a ConnectX-4 Lx installed. HP diagnostic code **3.2** — three
-red blinks, two white, repeating — meaning the embedded controller timed out waiting for
-BIOS to return from memory initialisation.
-
-Ruled out, one variable per boot:
-
-- Both cards, both full-length slots (x16 electrical and x4 electrical)
-- BIOS 01.35 and 01.92 (latest, Aug 2024, SoftPaq `sp154266`, image `N51_0192.bin`)
-- Early PCIe Delay enabled
-- Legacy Support / CSM disabled, pure UEFI
-- Slot 1 Option ROM Download unchecked
-- Slot 1 Speed forced to Gen1
-- Expansion ROMs disabled card-side via `mstconfig`
-- SR-IOV confirmed already disabled
-
-**Leading hypothesis:** the SMBus pins, B5 (SMCLK) and B6 (SMDAT). ConnectX-4 Lx supports
-BMC manageability over MCTP on SMBus, and HP's embedded controller owns that bus. A Z240
-owner with a different multi-port NIC reported the identical code and resolved it by
-masking B5/B6 with tape. Not attempted — physical modification of the cards is out of
-scope.
-
-HP's own Z240 SFF spec sheet states that when the x16 slot is not driving graphics, only
-cards certified as after-market options for the platform are supported.
-
-**Resolution:** a second node will be a used OptiPlex 7050, or a 7040/7060/7070 with a
-CPU-attached x16 slot, where this card is confirmed working. The Z240 remains a Windows
-workstation and SSH client.
-
-**Migration to two hosts,** when that happens: change the device name and the peer IP.
-Nothing else. The code is identical.
-
-### BIOS notes worth keeping
-
-- Dell 7050: F2 for setup, F12 for the one-time boot menu. Boot List Option must be UEFI,
-  not Legacy, or a UEFI Ubuntu install is invisible and the machine falls through to PXE
-  (`PXE-E61: Media test failure` is the onboard NIC with no cable, not the Mellanox card).
-- HP Z240: F10 for setup. BIOS images must sit at `Hewlett-Packard\BIOS\New\`,
-  `EFI\HP\BIOS\New\`, or the `Previous` equivalents on a FAT32 stick. `HP\BIOS\New\` is
-  not searched.
+| Symptom | Cause |
+|---|---|
+| `Failed to modify QP to RTR` | namespace split gone, peer address resolving as local |
+| `client read/write: No space left on device` | downstream of the above; the server died before writing its dest back |
+| `Device or resource busy` on `netns exclusive` | a non-init net namespace exists (Firefox snaps, stale `limen-b`, daemons) |
+| `setting the network namespace failed: Operation not permitted` | missing `sudo`; `ip netns exec` requires root |
+| GID prints all zeroes | index selects an unpopulated table entry |
+| ping works one direction only | firewall on the silent side |
+| address gone after reboot | NetworkManager reclaimed the interface, or the unit lost the boot race |
