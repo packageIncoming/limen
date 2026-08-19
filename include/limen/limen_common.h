@@ -22,6 +22,9 @@ int parse_int_strict(const char* str, int* val_addr);
 //  matches device_name; returns -1 if not found
 int find_device_by_name(ibv_device** devices_list, const char* device_name);
 
+//  turns the MTU enum into its bytes 
+int port_mtu_enum_to_bytes(ibv_mtu mtu);
+
 //  todo docstring
 void print_device_info(ibv_device_attr* attr);
 

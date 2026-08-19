@@ -432,6 +432,27 @@ void print_reset_init_fail(int rc, ibv_qp_attr* qp_attr)
 
 }
 
+void print_init_rtr_fail(int rc, ibv_qp_attr* qp_attr)
+{
+    fprintf(stderr,"state: INIT -> RTR FAILED: %s (%s)\n", strerrorname_np(rc),std::strerror(rc));
+    fprintf(stderr,"attr_mask: IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER\n");
+    
+    //  print the fields that were changed
+    fprintf(stderr, "qp_state: %s\n", qp_state_to_str(qp_attr->qp_state).c_str());
+    fprintf(stderr, "path_mtu: %i\n", qp_attr->path_mtu);
+    fprintf(stderr, "dest_qp_num: %#010x\n", qp_attr->dest_qp_num);
+    fprintf(stderr, "rq_psn: %#08x\n", qp_attr->rq_psn);
+    fprintf(stderr, "max_dest_rd_atomic: %i\n", qp_attr->max_dest_rd_atomic);
+    fprintf(stderr, "min_rnr_timer: %i\n", qp_attr->min_rnr_timer);
+    fprintf(stderr, "ah_attr: is_global=%i dlid=%#06x sl=%i src_path_bits=%i\n",
+        qp_attr->ah_attr.is_global, qp_attr->ah_attr.dlid,
+        qp_attr->ah_attr.sl, qp_attr->ah_attr.src_path_bits);
+    fprintf(stderr, "dgid: %s\n", gid_to_str(&qp_attr->ah_attr.grh.dgid).c_str());
+    fprintf(stderr, "sgid_index: %i\n", qp_attr->ah_attr.grh.sgid_index);
+    fprintf(stderr, "hint: if dgid is all zero or is_global=0, GRH was never populated\n");
+
+}
+
 
 
 int main(int argc, char* argv[])
@@ -667,9 +688,40 @@ int main(int argc, char* argv[])
     qp_attr = {};
     attr_mask = 0;
 
-    qp_attr.qp_state = IBV_QPS_RTR;
+    //  fill qp_attr
+    qp_attr.qp_state            =       IBV_QPS_RTR;
+    //  NOTE: this is a simplifcation since it assumes the MTU is the same on both ends; 
+    //  a hardened implementation would check for the minimum between the two ports
+    qp_attr.path_mtu            =       port_attr.active_mtu;
+    qp_attr.dest_qp_num         =       remote_identity.qpn;
+    qp_attr.rq_psn              =       remote_identity.psn;
+    qp_attr.max_dest_rd_atomic  =       1;
+    qp_attr.min_rnr_timer       =       12; //  corresponds to 0.64ms
+    //  fill ah_attr directly on qp_attr
+    //  since we're running RoCEv2 we fill the grh
+    qp_attr.ah_attr.dlid        =   0;   //  not used in RoCEv2
+    qp_attr.ah_attr.is_global   =   1;
+    qp_attr.ah_attr.grh.dgid    =   remote_identity.gid;
+    qp_attr.ah_attr.grh.hop_limit   =   2;
+    qp_attr.ah_attr.grh.sgid_index  =   args.gid_index;
+    qp_attr.ah_attr.port_num    =   args.port;
 
 
+    //  set flags for attr_mask
+    attr_mask = 	IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER;
+
+    //  execute ibv_modify_qp
+    rc = ibv_modify_qp(queue_pair, &qp_attr, attr_mask);
+    if (rc!=0)
+    {
+        //  failed to perform RESET->INIT transition
+        print_init_rtr_fail(rc,&qp_attr);
+        exit(3);
+    }
+
+    printf("state: INIT -> RTR ok\n");
+
+    
     //  perform RTR->RTS transition
 
     //  Verify QPs are both RTS

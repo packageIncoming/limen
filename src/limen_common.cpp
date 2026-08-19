@@ -112,24 +112,7 @@ void print_port_info(ibv_port_attr* attr)
             break;
     }
 
-    switch (attr->active_mtu)
-    {
-        case IBV_MTU_256:
-            active_mtu_bytes = 256;
-            break;
-        case IBV_MTU_512:
-            active_mtu_bytes = 512;
-            break;
-        case IBV_MTU_1024:
-            active_mtu_bytes = 1024;
-            break;
-        case IBV_MTU_2048:
-            active_mtu_bytes = 2048;
-            break;
-        case IBV_MTU_4096:
-            active_mtu_bytes = 4096;
-            break;
-    }
+    active_mtu_bytes = port_mtu_enum_to_bytes(attr->active_mtu);
 
 
 
@@ -177,6 +160,24 @@ int str_to_gid(std::string str, ibv_gid* gid)
     for (int i = 0; i < 16; i++)
     {
         gid->raw[i] = g[i];
+    }
+    return 0;
+}
+
+int port_mtu_enum_to_bytes(ibv_mtu mtu)
+{
+    switch (mtu)
+    {
+        case IBV_MTU_256:
+            return 256;
+        case IBV_MTU_512:
+            return 512;
+        case IBV_MTU_1024:
+            return 1024;
+        case IBV_MTU_2048:
+            return 2048;
+        case IBV_MTU_4096:
+            return 4096;
     }
     return 0;
 }
