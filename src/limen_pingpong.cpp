@@ -1,5 +1,6 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#include <cstdint>
 #endif
 #include <cstdlib>
 #include <cstddef>
@@ -539,6 +540,10 @@ int main(int argc, char* argv[])
 {
     // Misc. variables
     pingpong_parsed_args args{};
+    // parse args
+    parse_argv(argc,argv,&args);
+
+
     int rc = 0;
     int exit_rc=0;
     endpoint_identity local_identity{};
@@ -578,8 +583,7 @@ int main(int argc, char* argv[])
     int attr_mask=0;
 
 
-    // parse args
-    parse_argv(argc,argv,&args);
+
 
     if (args.addr != nullptr)
     {
@@ -673,6 +677,57 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
 
+    //  create the queues
+    //  create completion queue
+    completion_queue = ibv_create_cq(
+        device_context,
+        std::min(COMPLETE_QUEUE_DEPTH,device_attr.max_cqe)
+        ,NULL,NULL,0
+    );
+    if (completion_queue == NULL)
+    {
+        //  failed to create completion queue
+        perror("ibv_create_cq");
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
+    }
+
+    //  fill qp_cap for qp_init_attr
+    qp_cap.max_send_wr = std::min(SEND_QUEUE_DEPTH,device_attr.max_qp_wr);
+    qp_cap.max_recv_wr = std::min(RECV_QUEUE_DEPTH,device_attr.max_qp_wr);
+    qp_cap.max_send_sge = 1;
+    qp_cap.max_recv_sge = 1;
+
+
+    //  fill qp_init_attr to make the QP
+    qp_init_attr.send_cq = completion_queue;
+    qp_init_attr.recv_cq = completion_queue;
+    qp_init_attr.srq=NULL;
+    qp_init_attr.cap = qp_cap;
+    qp_init_attr.qp_type = IBV_QPT_RC;
+    qp_init_attr.sq_sig_all= 1;
+
+    //  get ibv_gid
+    if (ibv_query_gid(device_context,args.port,args.gid_index,&gid) == -1)
+    {
+        //  failed to get ibv_gid
+        fprintf(stderr,"ibv_query_gid failed\n");
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
+    }
+
+    //  create reliable-connected queue pair
+    queue_pair = ibv_create_qp(pd,&qp_init_attr);
+    if (queue_pair == NULL)
+    {
+        perror("ibv_create_qp");
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
+    }
+
+    //  clamp rx_depth 
+    args.rx_depth = std::min(args.rx_depth,static_cast<uint64_t>(qp_cap.max_recv_wr));
+
     //  allocate buffers
     send_buf = aligned_alloc(4096,send_buf_size);
     if (send_buf == NULL)
@@ -713,54 +768,8 @@ int main(int argc, char* argv[])
     printf("recv: posted=%zu depth=%lu size=%zu\n",recv_memory_region->length / send_buf_size,args.rx_depth,recv_memory_region->length);
 
 
-    //  create the queues
-    //  create completion queue
-    completion_queue = ibv_create_cq(
-        device_context,
-        std::min(COMPLETE_QUEUE_DEPTH,device_attr.max_cqe)
-        ,NULL,NULL,0
-    );
-    if (completion_queue == NULL)
-    {
-        //  failed to create completion queue
-        perror("ibv_create_cq");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
+
     printf("cq: cqe=%i (requested %i)\n",completion_queue->cqe, COMPLETE_QUEUE_DEPTH);
-
-    //  fill qp_cap for qp_init_attr
-    qp_cap.max_send_wr = std::min(SEND_QUEUE_DEPTH,device_attr.max_qp_wr);
-    qp_cap.max_recv_wr = std::min(RECV_QUEUE_DEPTH,device_attr.max_qp_wr);
-    qp_cap.max_send_sge = 1;
-    qp_cap.max_recv_sge = 1;
-
-
-    //  fill qp_init_attr to make the QP
-    qp_init_attr.send_cq = completion_queue;
-    qp_init_attr.recv_cq = completion_queue;
-    qp_init_attr.srq=NULL;
-    qp_init_attr.cap = qp_cap;
-    qp_init_attr.qp_type = IBV_QPT_RC;
-    qp_init_attr.sq_sig_all= 1;
-
-    //  get ibv_gid
-    if (ibv_query_gid(device_context,args.port,args.gid_index,&gid) == -1)
-    {
-        //  failed to get ibv_gid
-        fprintf(stderr,"ibv_query_gid failed\n");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
-
-    //  create reliable-connected queue pair
-    queue_pair = ibv_create_qp(pd,&qp_init_attr);
-    if (queue_pair == NULL)
-    {
-        perror("ibv_create_qp");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
 
     //  print out qp: line from filled qp_init_attr 
     printf(
@@ -914,25 +923,25 @@ int main(int argc, char* argv[])
 
     printf("verify: qp_state=RTS\n");
 
-cleanup: {
-    const char *qp_s = "n/a", *cq_s = "n/a", *mr_send_s = "n/a", *mr_recv_s = "n/a",
-               *pd_s = "n/a", *ctx_s = "n/a";
-    int e;
+    cleanup: {
+        const char *qp_s = "n/a", *cq_s = "n/a", *mr_send_s = "n/a", *mr_recv_s = "n/a",
+                *pd_s = "n/a", *ctx_s = "n/a";
+        int e;
 
-    if (queue_pair)  { e = ibv_destroy_qp(queue_pair);  qp_s = e ? strerrorname_np(e) : "ok"; }
-    if (completion_queue)  { e = ibv_destroy_cq(completion_queue);  cq_s = e ? strerrorname_np(e) : "ok"; }
-    if (send_buf)   {free(send_buf);}
-    if (recv_buf)   {free(recv_buf);}
-    if (send_memory_region)  { e = ibv_dereg_mr(send_memory_region);    mr_send_s = e ? strerrorname_np(e) : "ok"; }
-    if (recv_memory_region)  { e = ibv_dereg_mr(recv_memory_region);    mr_recv_s = e ? strerrorname_np(e) : "ok"; }
-    if (pd)  { e = ibv_dealloc_pd(pd);  pd_s = e ? strerrorname_np(e) : "ok"; }
-    if (device_context) { ctx_s = ibv_close_device(device_context) ? "failed" : "ok"; }
-    if (devices_list) ibv_free_device_list(devices_list);
+        if (queue_pair)  { e = ibv_destroy_qp(queue_pair);  qp_s = e ? strerrorname_np(e) : "ok"; }
+        if (completion_queue)  { e = ibv_destroy_cq(completion_queue);  cq_s = e ? strerrorname_np(e) : "ok"; }
+        if (send_buf)   {free(send_buf);}
+        if (recv_buf)   {free(recv_buf);}
+        if (send_memory_region)  { e = ibv_dereg_mr(send_memory_region);    mr_send_s = e ? strerrorname_np(e) : "ok"; }
+        if (recv_memory_region)  { e = ibv_dereg_mr(recv_memory_region);    mr_recv_s = e ? strerrorname_np(e) : "ok"; }
+        if (pd)  { e = ibv_dealloc_pd(pd);  pd_s = e ? strerrorname_np(e) : "ok"; }
+        if (device_context) { ctx_s = ibv_close_device(device_context) ? "failed" : "ok"; }
+        if (devices_list) ibv_free_device_list(devices_list);
 
-    printf("teardown: qp=%s cq=%s mr_send=%s mr_recv=%s pd=%s context=%s\n",
-           qp_s, cq_s, mr_send_s, mr_recv_s, pd_s, ctx_s);
-    return exit_rc;
-}
+        printf("teardown: qp=%s cq=%s mr_send=%s mr_recv=%s pd=%s context=%s\n",
+            qp_s, cq_s, mr_send_s, mr_recv_s, pd_s, ctx_s);
+        return exit_rc;
+    }
 
 
 }
