@@ -12,7 +12,7 @@
 #define U32_TO_U24_MASK (0x00FFFFFF)
 #define SIDE_CHANNEL_MSG_SZ (sizeof("qpn=0xffffffff psn=0xffffff gid=0000:0000:0000:0000:0000:ffff:ffff:ffff lid=0xffff") - 1)
 
-typedef struct {
+typedef struct connect_parsed_args {
     const char* device_name{nullptr};
     int gid_index{INT_MAX};
     int port{1};

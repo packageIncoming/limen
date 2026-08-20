@@ -1,5 +1,6 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#include <cstdlib>
 #endif
 #include <cstddef>
 #include <cstdio>
@@ -145,6 +146,7 @@ int exchange_as_server(endpoint_identity* remote_identity,
     int opt = 1;
     if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         perror("exchange_as_server:setsockopt");
+        close(socket_fd);
         return 1;
     }
 
@@ -183,6 +185,8 @@ int exchange_as_server(endpoint_identity* remote_identity,
     if (send_endpoint_identity(client_fd, local_identity) != 0)
     {
         fprintf(stderr,"exchange_as_server:send_endpoint_identity");
+        close(socket_fd);
+        close(client_fd);        
         return 1;
     }
 
@@ -191,6 +195,8 @@ int exchange_as_server(endpoint_identity* remote_identity,
     if (recv_endpoint_identity(client_fd,remote_identity) != 0)
     {
         fprintf(stderr,"exchange_as_server:recv_endpoint_identity");
+        close(socket_fd);
+        close(client_fd);        
         return 1;
     }
 
@@ -204,7 +210,8 @@ int exchange_as_server(endpoint_identity* remote_identity,
 
 
 
-
+    close(socket_fd);
+    close(client_fd);
 
     return 0;
 }
@@ -232,6 +239,7 @@ int exchange_as_client(endpoint_identity* remote_identity,
     int opt = 1;
     if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         perror("exchange_as_server:setsockopt");
+        close(socket_fd);
         return 1;
     }
 
@@ -242,6 +250,7 @@ int exchange_as_client(endpoint_identity* remote_identity,
     if (inet_pton(AF_INET, server_addr, &server_sockaddr.sin_addr) != 1)
     {
         perror("exchange_as_client:inet_pton");
+        close(socket_fd);
         return 1;
     }
 
@@ -254,6 +263,7 @@ int exchange_as_client(endpoint_identity* remote_identity,
     if (crc != 0 && errno != EINPROGRESS)
     {
         perror("exchange_as_client:connect");
+        close(socket_fd);
         return 1;
     }
 
@@ -267,11 +277,13 @@ int exchange_as_client(endpoint_identity* remote_identity,
         if (prc == 0)
         {
             fprintf(stderr, "exchange_as_client:connect timed out\n");
+            close(socket_fd);
             return 1;
         }
         if (prc < 0)
         {
             perror("exchange_as_client:poll");
+            close(socket_fd);
             return 1;
         }
 
@@ -282,6 +294,7 @@ int exchange_as_client(endpoint_identity* remote_identity,
         if (so_error != 0)
         {
             fprintf(stderr, "exchange_as_client:connect failed: %s\n", strerror(so_error));
+            close(socket_fd);
             return 1;
         }
     }
@@ -294,6 +307,7 @@ int exchange_as_client(endpoint_identity* remote_identity,
     if (send_endpoint_identity(socket_fd, local_identity) != 0)
     {
         fprintf(stderr,"exchange_as_server:send_endpoint_identity");
+        close(socket_fd);
         return 1;
     }
 
@@ -303,6 +317,7 @@ int exchange_as_client(endpoint_identity* remote_identity,
     if (recv_endpoint_identity(socket_fd,remote_identity) != 0)
     {
         fprintf(stderr,"exchange_as_server:recv_endpoint_identity");
+        close(socket_fd);
         return 1;
     }
 
@@ -313,8 +328,7 @@ int exchange_as_client(endpoint_identity* remote_identity,
     remote_identity_str = "remote: " + identity_to_str(remote_identity);
     std::cout << remote_identity_str << std::endl;
 
-
-
+    close(socket_fd);
     return 0;
 }
 
@@ -481,24 +495,28 @@ void print_rtr_rts_fail(int rc, ibv_qp_attr* qp_attr)
 int main(int argc, char* argv[])
 {
     // Misc. variables
-    connect_parsed_args args;
-    int rc;
+    connect_parsed_args args{};
+    int rc = 0;
+    int exit_rc=0;
     endpoint_identity local_identity{};
     endpoint_identity remote_identity{};
 
     //  Device-based variables
-    ibv_device** devices_list;
-    ibv_context* device_context;
-    ibv_device_attr device_attr;
-    ibv_pd* pd;
-    ibv_gid gid;
+    ibv_device** devices_list = nullptr;
+    ibv_context* device_context = nullptr;
+    ibv_device_attr device_attr{};
+    ibv_pd* pd = nullptr;
+    ibv_gid gid{};
+    int device_idx = 0;
+    ibv_mr* memory_region = nullptr;
+    // char buf[4096];
 
     //  Port-based variables
-    ibv_port_attr port_attr;
+    ibv_port_attr port_attr{};
 
     //  QP-based variables
-    ibv_cq* completion_queue;
-    ibv_qp* queue_pair;
+    ibv_cq* completion_queue = nullptr;
+    ibv_qp* queue_pair = nullptr;
     ibv_qp_cap qp_cap{};
     ibv_qp_init_attr qp_init_attr{};
 
@@ -527,13 +545,15 @@ int main(int argc, char* argv[])
     {
         fprintf(stderr,"-d required\n");
         print_help(true); 
-        exit(EXIT_USAGE_ERROR);
+        exit_rc = EXIT_USAGE_ERROR;
+        goto cleanup;
     }
     if (args.gid_index == INT_MAX )
     {
         fprintf(stderr,"-g required\n");
         print_help(true); 
-        exit(EXIT_USAGE_ERROR);
+        exit_rc = EXIT_USAGE_ERROR;
+        goto cleanup;
     }
 
     //  open devices list
@@ -542,17 +562,18 @@ int main(int argc, char* argv[])
     {
         //  failed to open device list
         perror("ibv_get_device_list");
-        exit(EXIT_USAGE_ERROR);
-
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     //  figure out index of associated device (-d)
-    int device_idx = find_device_by_name(devices_list,args.device_name);
+    device_idx = find_device_by_name(devices_list,args.device_name);
     if (device_idx == -1)
     {
         //  did not find device, exit early
         fprintf(stderr,"did not find device %s\n",args.device_name);
-        exit(EXIT_USAGE_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     //  get device context
@@ -561,7 +582,8 @@ int main(int argc, char* argv[])
     {
         //  failed to open device context
         perror("ibv_open_device");
-        exit(EXIT_USAGE_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     //  get device attributes
@@ -570,7 +592,8 @@ int main(int argc, char* argv[])
     {
         //  failed to get device attributes
         perror("ibv_query_device");
-        exit(EXIT_USAGE_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     //  get port attributes
@@ -579,14 +602,16 @@ int main(int argc, char* argv[])
     {
         //  failed to get port attributes
         perror("ibv_query_port");
-        exit(EXIT_USAGE_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     //  verify the GID index against gid_tbl_len
     if (args.gid_index >= port_attr.gid_tbl_len)
     {
         fprintf(stderr, "invalid gid_index: gid_index %i > gid_tbl_len  %i\n",args.gid_index,port_attr.gid_tbl_len);
-        exit(EXIT_USAGE_ERROR);
+        exit_rc = EXIT_USAGE_ERROR;
+        goto cleanup;
     }
 
     //  create protection domain
@@ -595,7 +620,8 @@ int main(int argc, char* argv[])
     {
         //  failed to create protection domain
         perror("ibv_alloc_pd");
-        exit(EXIT_USAGE_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     //  create the queues
@@ -609,7 +635,8 @@ int main(int argc, char* argv[])
     {
         //  failed to create completion queue
         perror("ibv_create_cq");
-        exit(EXIT_USAGE_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
     printf("cq: cqe=%i (requested %i)\n",completion_queue->cqe, COMPLETE_QUEUE_DEPTH);
 
@@ -633,7 +660,8 @@ int main(int argc, char* argv[])
     {
         //  failed to get ibv_gid
         fprintf(stderr,"ibv_query_gid failed\n");
-        exit(EXIT_VERB_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     //  create reliable-connected queue pair
@@ -641,7 +669,8 @@ int main(int argc, char* argv[])
     if (queue_pair == NULL)
     {
         perror("ibv_create_qp");
-        exit(EXIT_USAGE_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     //  print out qp: line from filled qp_init_attr 
@@ -674,7 +703,8 @@ int main(int argc, char* argv[])
         if (exchange_as_client(&remote_identity,&local_identity,args.tcp_port,args.addr) != 0)
         {
             fprintf(stderr,"side channel exchange as client failed\n");
-            exit(EXIT_SIDE_CHANNEL_ERROR);
+            exit_rc = EXIT_SIDE_CHANNEL_ERROR;
+            goto cleanup;
         }
 
     } else {
@@ -682,7 +712,8 @@ int main(int argc, char* argv[])
         if (exchange_as_server(&remote_identity, &local_identity, args.tcp_port)!=0)
         {
             fprintf(stderr,"side channel exchange as server failed\n");
-            exit(EXIT_SIDE_CHANNEL_ERROR);
+            exit_rc = EXIT_SIDE_CHANNEL_ERROR;
+            goto cleanup;
         }
     }
 
@@ -702,7 +733,8 @@ int main(int argc, char* argv[])
     {
         //  failed to perform RESET->INIT transition
         print_reset_init_fail(rc,&qp_attr);
-        exit(EXIT_VERB_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     printf("state: RESET -> INIT ok\n");
@@ -745,7 +777,8 @@ int main(int argc, char* argv[])
     {
         //  failed to perform RESET->INIT transition
         print_init_rtr_fail(rc,&qp_attr);
-        exit(EXIT_VERB_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     printf("state: INIT -> RTR ok\n");
@@ -771,7 +804,8 @@ int main(int argc, char* argv[])
     {
         //  failed to perform RESET->INIT transition
         print_rtr_rts_fail(rc,&qp_attr);
-        exit(EXIT_VERB_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     printf("state: RTR -> RTS ok\n");
@@ -783,21 +817,35 @@ int main(int argc, char* argv[])
     {
         //  failed to query
         perror("main:ibv_query_qp");
-        exit(EXIT_VERB_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     if (qp_attr.qp_state != IBV_QPS_RTS)
     {
         fprintf(stderr,"local qp not in state IBV_QPS_RTS after RTR -> RTS transition\n");
-        exit(EXIT_VERB_ERROR);
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
     }
 
     printf("verify: qp_state=RTS\n");
 
+cleanup: {
+    const char *qp_s = "n/a", *cq_s = "n/a", *mr_s = "ok",
+               *pd_s = "n/a", *ctx_s = "n/a";
+    int e;
+
+    if (queue_pair)  { e = ibv_destroy_qp(queue_pair);  qp_s = e ? strerrorname_np(e) : "ok"; }
+    if (completion_queue)  { e = ibv_destroy_cq(completion_queue);  cq_s = e ? strerrorname_np(e) : "ok"; }
+    if (memory_region)  { e = ibv_dereg_mr(memory_region);    mr_s = e ? strerrorname_np(e) : "ok"; }
+    if (pd)  { e = ibv_dealloc_pd(pd);  pd_s = e ? strerrorname_np(e) : "ok"; }
+    if (device_context) { ctx_s = ibv_close_device(device_context) ? "failed" : "ok"; }
+    if (devices_list) ibv_free_device_list(devices_list);
+
+    printf("teardown: qp=%s cq=%s mr=%s pd=%s context=%s\n",
+           qp_s, cq_s, mr_s, pd_s, ctx_s);
+    return exit_rc;
+}
 
 
-
-
-
-    return 0;
 }

@@ -3,7 +3,6 @@
 #include <stdint.h>
 #include <infiniband/verbs.h>
 #include <string>
-#include <format>
 
 //#define EXIT_SUCCESS (0) already defined
 #define EXIT_USAGE_ERROR (1)
