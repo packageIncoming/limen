@@ -20,10 +20,15 @@
 #include "limen/limen_common.h"
 #include "limen/limen_connect.h"
 
-void parse_argv(int argc, char* argv[],connect_parsed_args* args)
+void parse_argv(int argc, char* argv[], connect_parsed_args* args)
 {
+    static struct option long_opts[] = {
+        {"force-rtr-fail", no_argument, nullptr, 'F'},
+        {nullptr, 0, nullptr, 0}
+    };
+
     int opt;
-    while ((opt = getopt(argc, argv, "d:g:p:t:s:h")) != -1)
+    while ((opt = getopt_long(argc, argv, "d:g:p:t:s:h", long_opts, nullptr)) != -1)
     {
         switch (opt)
         {
@@ -78,6 +83,11 @@ void parse_argv(int argc, char* argv[],connect_parsed_args* args)
                 }
                 break;
 
+            }
+            case 'F':
+            {
+                args->force_rtr_fail = true;
+                break;
             }
             case '?':
             {
@@ -646,6 +656,7 @@ int main(int argc, char* argv[])
 
     //  populate local identity struct
     local_identity.qpn = queue_pair->qp_num;
+    srand48(time(nullptr));
     local_identity.psn = lrand48() & U32_TO_U24_MASK;
     
     local_identity.gid = gid;
@@ -723,6 +734,11 @@ int main(int argc, char* argv[])
     //  set flags for attr_mask
     attr_mask = 	IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER;
 
+    if (args.force_rtr_fail)
+    {
+        qp_attr.ah_attr.is_global   =   0;
+    }
+
     //  execute ibv_modify_qp
     rc = ibv_modify_qp(queue_pair, &qp_attr, attr_mask);
     if (rc!=0)
@@ -778,7 +794,7 @@ int main(int argc, char* argv[])
 
     printf("verify: qp_state=RTS\n");
 
-    
+
 
 
 

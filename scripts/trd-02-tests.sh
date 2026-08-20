@@ -251,8 +251,19 @@ test_verify_rts() {                                                 # R8
 
 test_failure_diagnostic() {                                         # R10
   hdr "R10: a forced transition failure prints mask and attribute values"
+  local port=$((TCP_PORT + 1))
+  if [[ -n "$SSH_PEER" ]]; then
+    ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
+      "cd '$(pwd)' && nohup $BIN -d $DEV -g $GID -t $port >/dev/null 2>&1 & disown" \
+      >/dev/null 2>&1 || true
+    SERVER_STARTED=1
+    sleep 2
+  else
+    echo "      start on the peer:  $BIN -d $DEV -g $GID -t $port"
+    read -rp "      press enter once it is listening... "
+  fi
   local out rc
-  out=$(timeout 30 "$BIN" -d "$DEV" -g "$GID" -t "$((TCP_PORT + 1))" \
+  out=$(timeout 30 "$BIN" -d "$DEV" -g "$GID" -t "$port" \
         --force-rtr-fail "$PEER" 2>&1); rc=$?
   if [[ "$rc" -eq 0 ]]; then
     sk "--force-rtr-fail not implemented, or it did not fail (see Hints H10)"

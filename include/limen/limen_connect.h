@@ -19,6 +19,7 @@ typedef struct {
     uint64_t tcp_port{18515};
     uint64_t buffer_size{4096};
     const char* addr{nullptr};
+    bool force_rtr_fail{false};
 } connect_parsed_args;
 
 typedef struct {
@@ -34,7 +35,6 @@ void parse_argv(int arg, char* argv[], connect_parsed_args* args_container);
 void print_help(bool to_error=false);
 
 
-void generate_packet_sequence_number(uint32_t* psn);
 
 int exchange_as_server(endpoint_identity* remote_identity,
     endpoint_identity* local_identity,
