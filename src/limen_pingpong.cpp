@@ -19,17 +19,25 @@
 
 #include <infiniband/verbs.h>
 #include "limen/limen_common.h"
-#include "limen/limen_connect.h"
+#include "limen/limen_pingpong.h"
 
-void parse_argv(int argc, char* argv[], connect_parsed_args* args)
+enum {
+    OPT_RNR_RETRY = 256,   //  no short letter given for these three, per TRD-03's interface
+    OPT_NO_RECV,
+    OPT_UNSIGNALED,
+};
+
+void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
 {
     static struct option long_opts[] = {
-        {"force-rtr-fail", no_argument, nullptr, 'F'},
+        {"rnr-retry",  required_argument, nullptr, OPT_RNR_RETRY},
+        {"no-recv",    no_argument,       nullptr, OPT_NO_RECV},
+        {"unsignaled", no_argument,       nullptr, OPT_UNSIGNALED},
         {nullptr, 0, nullptr, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "d:g:p:t:s:h", long_opts, nullptr)) != -1)
+    while ((opt = getopt_long(argc, argv, "d:g:p:t:s:n:r:h", long_opts, nullptr)) != -1)
     {
         switch (opt)
         {
@@ -69,6 +77,24 @@ void parse_argv(int argc, char* argv[], connect_parsed_args* args)
                 }
                 break;
             }
+            case 'n':
+            {
+                int rc = parse_u64_strict(optarg,&args->iterations);
+                if (rc != 0)
+                {
+                    exit(EXIT_USAGE_ERROR);
+                }
+                break;
+            }
+            case 'r':
+            {
+                int rc = parse_u64_strict(optarg,&args->rx_depth);
+                if (rc != 0)
+                {
+                    exit(EXIT_USAGE_ERROR);
+                }
+                break;
+            }
             case 'h':
             {
                 print_help(false);
@@ -85,9 +111,23 @@ void parse_argv(int argc, char* argv[], connect_parsed_args* args)
                 break;
 
             }
-            case 'F':
+            case OPT_RNR_RETRY:
             {
-                args->force_rtr_fail = true;
+                int rc = parse_int_strict(optarg, &args->rnr_retry);
+                if (rc != 0)
+                {
+                    exit(EXIT_USAGE_ERROR);
+                }
+                break;
+            }
+            case OPT_NO_RECV:
+            {
+                args->no_recv = true;
+                break;
+            }
+            case OPT_UNSIGNALED:
+            {
+                args->unsignaled = true;
                 break;
             }
             case '?':
@@ -112,13 +152,16 @@ void parse_argv(int argc, char* argv[], connect_parsed_args* args)
 
 void print_help(bool to_error)
 {
+    const char* str = "./build/limen_pingpong -d <device> -g <gid_index> [-p <port>] [-t <tcp_port>]\n"
+                       "\t[-s <bytes>] [-n <iterations>] [-r <rx_depth>]\n"
+                       "\t[--rnr-retry <n>] [--no-recv] [--unsignaled] [<peer>]\n";
     if (to_error)
     {
-        fprintf(stderr, "./build/limen_connect -d <device> -g <gid_index> [-p <port>] [-t <tcp_port>] [-s <bytes>] [<peer>]\n");
+        fprintf(stderr, "%s", str);
     }
     else
     {
-        printf("./build/limen_connect -d <device> -g <gid_index> [-p <port>] [-t <tcp_port>] [-s <bytes>] [<peer>]\n");
+        printf("%s", str);
 
     }
 }
@@ -495,7 +538,7 @@ void print_rtr_rts_fail(int rc, ibv_qp_attr* qp_attr)
 int main(int argc, char* argv[])
 {
     // Misc. variables
-    connect_parsed_args args{};
+    pingpong_parsed_args args{};
     int rc = 0;
     int exit_rc=0;
     endpoint_identity local_identity{};
@@ -508,8 +551,14 @@ int main(int argc, char* argv[])
     ibv_pd* pd = nullptr;
     ibv_gid gid{};
     int device_idx = 0;
-    ibv_mr* memory_region = nullptr;
-    // char buf[4096];
+    //  Memory region variables
+    ibv_mr* send_memory_region = nullptr;
+    ibv_mr* recv_memory_region = nullptr;
+    const int send_buf_size = args.buffer_size;
+    const int recv_buf_size = args.buffer_size * args.rx_depth;
+    void* send_buf = nullptr;
+    void* recv_buf = nullptr;
+    int mr_access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
 
     //  Port-based variables
     ibv_port_attr port_attr{};
@@ -623,6 +672,46 @@ int main(int argc, char* argv[])
         exit_rc = EXIT_VERB_ERROR;
         goto cleanup;
     }
+
+    //  allocate buffers
+    send_buf = aligned_alloc(4096,send_buf_size);
+    if (send_buf == NULL)
+    {
+        perror("main:malloc send_buf");
+        exit_rc = EXIT_DEVICE_ERROR;
+        goto cleanup;
+    }
+    memset(send_buf, 0, send_buf_size);
+
+
+    recv_buf = aligned_alloc(4096,recv_buf_size);
+    if (recv_buf == NULL)
+    {
+        perror("main:malloc recv_buf");
+        exit_rc = EXIT_DEVICE_ERROR;
+        goto cleanup;
+    }
+    memset(recv_buf, 0, recv_buf_size);
+
+
+    //  register send memory region
+    send_memory_region = ibv_reg_mr(pd, send_buf, send_buf_size, mr_access_flags);
+    if (send_memory_region == NULL)
+    {
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
+    }
+
+    //  register recv memory region
+    recv_memory_region = ibv_reg_mr(pd, recv_buf, recv_buf_size, mr_access_flags);
+    if (recv_memory_region == NULL)
+    {
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
+    }
+
+    printf("recv: posted=%zu depth=%lu size=%zu\n",recv_memory_region->length / send_buf_size,args.rx_depth,recv_memory_region->length);
+
 
     //  create the queues
     //  create completion queue
@@ -766,11 +855,6 @@ int main(int argc, char* argv[])
     //  set flags for attr_mask
     attr_mask = 	IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER;
 
-    if (args.force_rtr_fail)
-    {
-        qp_attr.ah_attr.is_global   =   0;
-    }
-
     //  execute ibv_modify_qp
     rc = ibv_modify_qp(queue_pair, &qp_attr, attr_mask);
     if (rc!=0)
@@ -831,19 +915,22 @@ int main(int argc, char* argv[])
     printf("verify: qp_state=RTS\n");
 
 cleanup: {
-    const char *qp_s = "n/a", *cq_s = "n/a", *mr_s = "ok",
+    const char *qp_s = "n/a", *cq_s = "n/a", *mr_send_s = "n/a", *mr_recv_s = "n/a",
                *pd_s = "n/a", *ctx_s = "n/a";
     int e;
 
     if (queue_pair)  { e = ibv_destroy_qp(queue_pair);  qp_s = e ? strerrorname_np(e) : "ok"; }
     if (completion_queue)  { e = ibv_destroy_cq(completion_queue);  cq_s = e ? strerrorname_np(e) : "ok"; }
-    if (memory_region)  { e = ibv_dereg_mr(memory_region);    mr_s = e ? strerrorname_np(e) : "ok"; }
+    if (send_buf)   {free(send_buf);}
+    if (recv_buf)   {free(recv_buf);}
+    if (send_memory_region)  { e = ibv_dereg_mr(send_memory_region);    mr_send_s = e ? strerrorname_np(e) : "ok"; }
+    if (recv_memory_region)  { e = ibv_dereg_mr(recv_memory_region);    mr_recv_s = e ? strerrorname_np(e) : "ok"; }
     if (pd)  { e = ibv_dealloc_pd(pd);  pd_s = e ? strerrorname_np(e) : "ok"; }
     if (device_context) { ctx_s = ibv_close_device(device_context) ? "failed" : "ok"; }
     if (devices_list) ibv_free_device_list(devices_list);
 
-    printf("teardown: qp=%s cq=%s mr=%s pd=%s context=%s\n",
-           qp_s, cq_s, mr_s, pd_s, ctx_s);
+    printf("teardown: qp=%s cq=%s mr_send=%s mr_recv=%s pd=%s context=%s\n",
+           qp_s, cq_s, mr_send_s, mr_recv_s, pd_s, ctx_s);
     return exit_rc;
 }
 

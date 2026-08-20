@@ -9,6 +9,9 @@
 #define EXIT_DEVICE_ERROR (2)
 #define EXIT_VERB_ERROR (3)
 #define EXIT_SIDE_CHANNEL_ERROR (4)
+#define EXIT_COMPLETION_STATUS_ERROR (5)
+#define EXIT_PAYLOAD_VERIFICATION_ERROR (6)
+
 
 
 // parses out a uint64_t value into val_addr; returns 0 on success and 1 on failure

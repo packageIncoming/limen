@@ -35,3 +35,8 @@ target_link_libraries(limen_devinfo PRIVATE limen_common)
 add_executable(limen_connect src/limen_connect.cpp)
 target_compile_options(limen_connect PRIVATE -Wall -Wextra)
 target_link_libraries(limen_connect PRIVATE limen_common)
+
+# Executable 3: limen_pingpong
+add_executable(limen_pingpong src/limen_pingpong.cpp)
+target_compile_options(limen_pingpong PRIVATE -Wall -Wextra)
+target_link_libraries(limen_pingpong PRIVATE limen_common)

@@ -155,6 +155,19 @@ limen_connect/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_connect.dir/build.make CMakeFiles/limen_connect.dir/build
 .PHONY : limen_connect/fast
 
+#=============================================================================
+# Target rules for targets named limen_pingpong
+
+# Build rule for target.
+limen_pingpong: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 limen_pingpong
+.PHONY : limen_pingpong
+
+# fast build rule for target.
+limen_pingpong/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_pingpong.dir/build.make CMakeFiles/limen_pingpong.dir/build
+.PHONY : limen_pingpong/fast
+
 src/limen_common.o: src/limen_common.cpp.o
 .PHONY : src/limen_common.o
 
@@ -227,6 +240,30 @@ src/limen_devinfo.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_devinfo.dir/build.make CMakeFiles/limen_devinfo.dir/src/limen_devinfo.cpp.s
 .PHONY : src/limen_devinfo.cpp.s
 
+src/limen_pingpong.o: src/limen_pingpong.cpp.o
+.PHONY : src/limen_pingpong.o
+
+# target to build an object file
+src/limen_pingpong.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_pingpong.dir/build.make CMakeFiles/limen_pingpong.dir/src/limen_pingpong.cpp.o
+.PHONY : src/limen_pingpong.cpp.o
+
+src/limen_pingpong.i: src/limen_pingpong.cpp.i
+.PHONY : src/limen_pingpong.i
+
+# target to preprocess a source file
+src/limen_pingpong.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_pingpong.dir/build.make CMakeFiles/limen_pingpong.dir/src/limen_pingpong.cpp.i
+.PHONY : src/limen_pingpong.cpp.i
+
+src/limen_pingpong.s: src/limen_pingpong.cpp.s
+.PHONY : src/limen_pingpong.s
+
+# target to generate assembly for a file
+src/limen_pingpong.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/limen_pingpong.dir/build.make CMakeFiles/limen_pingpong.dir/src/limen_pingpong.cpp.s
+.PHONY : src/limen_pingpong.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -238,6 +275,7 @@ help:
 	@echo "... limen_common"
 	@echo "... limen_connect"
 	@echo "... limen_devinfo"
+	@echo "... limen_pingpong"
 	@echo "... src/limen_common.o"
 	@echo "... src/limen_common.i"
 	@echo "... src/limen_common.s"
@@ -247,6 +285,9 @@ help:
 	@echo "... src/limen_devinfo.o"
 	@echo "... src/limen_devinfo.i"
 	@echo "... src/limen_devinfo.s"
+	@echo "... src/limen_pingpong.o"
+	@echo "... src/limen_pingpong.i"
+	@echo "... src/limen_pingpong.s"
 .PHONY : help
 
 
