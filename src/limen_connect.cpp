@@ -41,7 +41,7 @@ void parse_argv(int argc, char* argv[],connect_parsed_args* args)
                 int rc = parse_int_strict(optarg,&args->gid_index);
                 if (rc != 0)
                 {
-                    exit(1);
+                    exit(EXIT_USAGE_ERROR);
                 }
                 break;
             }
@@ -50,7 +50,7 @@ void parse_argv(int argc, char* argv[],connect_parsed_args* args)
                 int rc = parse_int_strict(optarg,&args->port);
                 if (rc != 0)
                 {
-                    exit(1);
+                    exit(EXIT_USAGE_ERROR);
                 }
                 break;
             }
@@ -59,7 +59,7 @@ void parse_argv(int argc, char* argv[],connect_parsed_args* args)
                 int rc = parse_u64_strict(optarg,&args->buffer_size);
                 if (rc != 0)
                 {
-                    exit(1);
+                    exit(EXIT_USAGE_ERROR);
                 }
                 break;
             }
@@ -74,14 +74,14 @@ void parse_argv(int argc, char* argv[],connect_parsed_args* args)
                 int rc = parse_u64_strict(optarg, &args->tcp_port);
                 if (rc != 0)
                 {
-                    exit(1);
+                    exit(EXIT_USAGE_ERROR);
                 }
                 break;
 
             }
             case '?':
             {
-                exit(1);
+                exit(EXIT_USAGE_ERROR);
                 break;
             }
             default:
@@ -453,6 +453,19 @@ void print_init_rtr_fail(int rc, ibv_qp_attr* qp_attr)
 
 }
 
+void print_rtr_rts_fail(int rc, ibv_qp_attr* qp_attr)
+{
+    fprintf(stderr, "state: RTR -> RTS FAILED: %s (%s)\n", strerrorname_np(rc), std::strerror(rc));
+    fprintf(stderr, "attr_mask: IBV_QP_STATE | IBV_QP_SQ_PSN | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_MAX_QP_RD_ATOMIC\n");
+    fprintf(stderr, "qp_state: %s\n", qp_state_to_str(qp_attr->qp_state).c_str());
+    fprintf(stderr, "sq_psn: %#08x\n", qp_attr->sq_psn);
+    fprintf(stderr, "timeout: %i\n", qp_attr->timeout);
+    fprintf(stderr, "retry_cnt: %i\n", qp_attr->retry_cnt);
+    fprintf(stderr, "rnr_retry: %i\n", qp_attr->rnr_retry);
+    fprintf(stderr, "max_rd_atomic: %i\n", qp_attr->max_rd_atomic);
+}
+
+
 
 
 int main(int argc, char* argv[])
@@ -504,13 +517,13 @@ int main(int argc, char* argv[])
     {
         fprintf(stderr,"-d required\n");
         print_help(true); 
-        exit(1);
+        exit(EXIT_USAGE_ERROR);
     }
     if (args.gid_index == INT_MAX )
     {
         fprintf(stderr,"-g required\n");
         print_help(true); 
-        exit(1);
+        exit(EXIT_USAGE_ERROR);
     }
 
     //  open devices list
@@ -519,7 +532,7 @@ int main(int argc, char* argv[])
     {
         //  failed to open device list
         perror("ibv_get_device_list");
-        exit(1);
+        exit(EXIT_USAGE_ERROR);
 
     }
 
@@ -529,7 +542,7 @@ int main(int argc, char* argv[])
     {
         //  did not find device, exit early
         fprintf(stderr,"did not find device %s\n",args.device_name);
-        exit(1);
+        exit(EXIT_USAGE_ERROR);
     }
 
     //  get device context
@@ -538,7 +551,7 @@ int main(int argc, char* argv[])
     {
         //  failed to open device context
         perror("ibv_open_device");
-        exit(1);
+        exit(EXIT_USAGE_ERROR);
     }
 
     //  get device attributes
@@ -547,7 +560,7 @@ int main(int argc, char* argv[])
     {
         //  failed to get device attributes
         perror("ibv_query_device");
-        exit(1);
+        exit(EXIT_USAGE_ERROR);
     }
 
     //  get port attributes
@@ -556,14 +569,14 @@ int main(int argc, char* argv[])
     {
         //  failed to get port attributes
         perror("ibv_query_port");
-        exit(1);
+        exit(EXIT_USAGE_ERROR);
     }
 
     //  verify the GID index against gid_tbl_len
     if (args.gid_index >= port_attr.gid_tbl_len)
     {
         fprintf(stderr, "invalid gid_index: gid_index %i > gid_tbl_len  %i\n",args.gid_index,port_attr.gid_tbl_len);
-        exit(1);
+        exit(EXIT_USAGE_ERROR);
     }
 
     //  create protection domain
@@ -572,7 +585,7 @@ int main(int argc, char* argv[])
     {
         //  failed to create protection domain
         perror("ibv_alloc_pd");
-        exit(1);
+        exit(EXIT_USAGE_ERROR);
     }
 
     //  create the queues
@@ -586,7 +599,7 @@ int main(int argc, char* argv[])
     {
         //  failed to create completion queue
         perror("ibv_create_cq");
-        exit(1);
+        exit(EXIT_USAGE_ERROR);
     }
     printf("cq: cqe=%i (requested %i)\n",completion_queue->cqe, COMPLETE_QUEUE_DEPTH);
 
@@ -618,7 +631,7 @@ int main(int argc, char* argv[])
     if (queue_pair == NULL)
     {
         perror("ibv_create_qp");
-        exit(1);
+        exit(EXIT_USAGE_ERROR);
     }
 
     //  print out qp: line from filled qp_init_attr 
@@ -678,7 +691,7 @@ int main(int argc, char* argv[])
     {
         //  failed to perform RESET->INIT transition
         print_reset_init_fail(rc,&qp_attr);
-        exit(3);
+        exit(EXIT_VERB_ERROR);
     }
 
     printf("state: RESET -> INIT ok\n");
@@ -716,15 +729,56 @@ int main(int argc, char* argv[])
     {
         //  failed to perform RESET->INIT transition
         print_init_rtr_fail(rc,&qp_attr);
-        exit(3);
+        exit(EXIT_VERB_ERROR);
     }
 
     printf("state: INIT -> RTR ok\n");
 
     
     //  perform RTR->RTS transition
+    //  clear qp_attr & attr_mask
+    qp_attr = {};
+    attr_mask = 0;
 
-    //  Verify QPs are both RTS
+    qp_attr.qp_state = IBV_QPS_RTS;
+    qp_attr.sq_psn = local_identity.psn;
+    qp_attr.timeout = 14;
+    qp_attr.retry_cnt = 7;
+    qp_attr.rnr_retry = 7;
+    qp_attr.max_rd_atomic = std::min(1,device_attr.max_qp_rd_atom);
+
+    attr_mask = 	IBV_QP_STATE | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_TIMEOUT;
+
+    //  execute ibv_modify_qp
+    rc = ibv_modify_qp(queue_pair, &qp_attr, attr_mask);
+    if (rc!=0)
+    {
+        //  failed to perform RESET->INIT transition
+        print_rtr_rts_fail(rc,&qp_attr);
+        exit(EXIT_VERB_ERROR);
+    }
+
+    printf("state: RTR -> RTS ok\n");
+
+    //  Verify QP in RTS
+    attr_mask = IBV_QP_STATE | IBV_QP_AV;
+    rc = ibv_query_qp(queue_pair, &qp_attr, attr_mask, &qp_init_attr);
+    if (rc !=0)
+    {
+        //  failed to query
+        perror("main:ibv_query_qp");
+        exit(EXIT_VERB_ERROR);
+    }
+
+    if (qp_attr.qp_state != IBV_QPS_RTS)
+    {
+        fprintf(stderr,"local qp not in state IBV_QPS_RTS after RTR -> RTS transition\n");
+        exit(EXIT_VERB_ERROR);
+    }
+
+    printf("verify: qp_state=RTS\n");
+
+    
 
 
 
