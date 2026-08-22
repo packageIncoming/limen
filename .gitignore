@@ -8,4 +8,5 @@ limen_connect
 limen_devinfo
 limen_pingpong
 CMakeCache.txt
-limen_connect
+cmake_install.cmake
+Makefile

@@ -13,6 +13,8 @@
 #define SIDE_CHANNEL_MSG_SZ (sizeof("qpn=0xffffffff psn=0xffffff gid=0000:0000:0000:0000:0000:ffff:ffff:ffff lid=0xffff") - 1)
 
 constexpr uint64_t RECV_WRID_TAG  = 0x1ULL << 63;
+constexpr uint64_t SEND_WRID_TAG  = 0x1ULL << 62;
+
 
 
 typedef struct pingpong_parsed_args {
@@ -74,5 +76,6 @@ void print_rtr_rts_fail(int rc, ibv_qp_attr* qp_attr);
 
 int post_recv(uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t message_size, uint32_t lkey);
 
+int post_send(bool signaled, uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t message_size, uint32_t lkey);
 
 #endif

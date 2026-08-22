@@ -1,8 +1,11 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
-#include <array>
-#include <cstdint>
 #endif
+
+
+#include <array>
+#include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstddef>
 #include <cstdio>
@@ -560,6 +563,36 @@ int post_recv(uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t m
     return rc;
 }
 
+int post_send(bool signaled, uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t message_size, uint32_t lkey)
+{
+    //  create the ibv_send_wr
+    ibv_send_wr wr{};
+    ibv_sge sge{};
+    ibv_send_wr* bad = nullptr;
+
+    //  for now each entry has a single SGE
+    //  slot[i] has address &(buffer) + ([i]* [message_size])
+    sge.addr = buff_addr + (slot * message_size);
+    sge.length = message_size;
+    sge.lkey = lkey;
+
+    wr.num_sge = 1;
+    wr.sg_list = &sge;
+    wr.next = nullptr;
+    wr.wr_id = slot | SEND_WRID_TAG;
+    wr.opcode = IBV_WR_SEND;
+    wr.send_flags =   IBV_SEND_FENCE ;
+    if (signaled) 
+    {
+        wr.send_flags = wr.send_flags | IBV_SEND_SIGNALED;
+    }
+
+    int rc = 0;
+
+    rc = ibv_post_send(queue_pair, &wr, &bad);
+
+    return rc;
+}
 
 int main(int argc, char* argv[])
 {
@@ -610,6 +643,7 @@ int main(int argc, char* argv[])
     //  Side Channel-based variables
     int local_socket_fd = -1;
     int remote_socket_fd = -1;
+    char ready;
 
     if (args.addr != nullptr)
     {
@@ -949,19 +983,60 @@ int main(int argc, char* argv[])
     printf("verify: qp_state=RTS\n");
 
     //  post work requests
-    //  create work requests 
-
     for (uint32_t slot =0; slot < args.rx_depth; slot++)
     {
-        if (post_recv(slot, args.message_size,  recv_memory_region->lkey) !=0)
+        rc = post_recv(slot, (uint64_t)(uintptr_t)recv_memory_region->addr, queue_pair, args.message_size,  recv_memory_region->lkey);
+        if (rc !=0)
         {
             //  failed to allocate slot
-            fprintf(stderr,"main:post_recv failed to allocate slot #%i\n",slot);
+            fprintf(stderr,"main:post_recv %s (%s)\n",strerrorname_np(rc),strerror(rc));
             exit_rc = EXIT_VERB_ERROR;
             goto cleanup;
         }
     }
     
+    //  send ready signal (single byte 'R')
+    ready  ='R';
+    {
+        int socket;
+        if (args.addr)
+        {
+            socket  = local_socket_fd;   
+        }
+        else
+        {
+            socket = remote_socket_fd;
+        }
+        if (send(socket, &ready, 1, MSG_NOSIGNAL) != 1)
+        {
+            perror("ready_exchange:send");
+            return 1;
+        }
+        if (recv(socket, &ready, 1, 0) != 1)
+        {
+            perror("ready_exchange:recv");
+            return 1;
+        }
+    }
+
+    //  post the send work request
+
+    rc = post_send(!(args.unsignaled),0, (uint64_t)(uintptr_t)send_memory_region->addr, queue_pair, args.message_size, send_memory_region->lkey);
+    if (rc !=0)
+    {
+        //  failed to allocate slot
+        fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
+        exit_rc = EXIT_VERB_ERROR;
+        goto cleanup;
+    }
+
+    //  poll for completion in a loop w/ 10 second timeout
+    std::array<ibv_wc, COMPLETE_QUEUE_DEPTH> wc_arr;
+    {
+        std::chrono::time_point last_valid_check = std::chrono::system_clock::now();
+        
+    }
+
 
 
 
