@@ -1,5 +1,6 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#include <array>
 #include <cstdint>
 #endif
 #include <cstdlib>
@@ -71,7 +72,7 @@ void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
             }
             case 's':
             {
-                int rc = parse_u64_strict(optarg,&args->buffer_size);
+                int rc = parse_u64_strict(optarg,&args->message_size);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -167,7 +168,10 @@ void print_help(bool to_error)
     }
 }
 
-int exchange_as_server(endpoint_identity* remote_identity,
+int exchange_as_server(
+    int* local_socket_fd,
+    int* remote_socket_fd,
+    endpoint_identity* remote_identity,
     endpoint_identity* local_identity,
     int tcp_port
 )
@@ -175,22 +179,20 @@ int exchange_as_server(endpoint_identity* remote_identity,
 
     // variables
     std::string remote_identity_str{};
-    int socket_fd;
     sockaddr_in sock_addr{}; 
-    int client_fd;
 
     //  create socket
-    socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (socket_fd < 0) {
+    *local_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (*local_socket_fd < 0) {
         fprintf(stderr,"failed to create socket.\n");
         return 1;
     }
 
     // set so_reuseaddr
     int opt = 1;
-    if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+    if (setsockopt(*local_socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         perror("exchange_as_server:setsockopt");
-        close(socket_fd);
+        // close(*local_socket_fd);
         return 1;
     }
 
@@ -199,48 +201,48 @@ int exchange_as_server(endpoint_identity* remote_identity,
     sock_addr.sin_port = htons(tcp_port);
     sock_addr.sin_addr.s_addr = INADDR_ANY;  
 
-    if (bind(socket_fd, (struct sockaddr*)&sock_addr, sizeof(sock_addr)) < 0) {
+    if (bind(*local_socket_fd, (struct sockaddr*)&sock_addr, sizeof(sock_addr)) < 0) {
         perror("exchange_as_server:bind");
-        close(socket_fd);
+        // close(*local_socket_fd);
         return 1;
     }
 
     //  listen on that socket
-    if (listen(socket_fd,1) < 0)
+    if (listen(*local_socket_fd,1) < 0)
     {
         //  failed to listen on server socket
         perror("exchange_as_server:listen");
-        close(socket_fd);
+        // close(*local_socket_fd);
         return 1;
     }
 
     //  accept a single connection
-    client_fd = accept(socket_fd, nullptr, nullptr);
+    *remote_socket_fd = accept(*local_socket_fd, nullptr, nullptr);
 
-    if (client_fd <0)
+    if (*remote_socket_fd <0)
     {
         //  failed to accept client
         perror("exchange_as_server:accept");
-        close(socket_fd);
+        // close(*local_socket_fd);
         return 1; 
     }
 
     //  execute send_endpoint_identity
-    if (send_endpoint_identity(client_fd, local_identity) != 0)
+    if (send_endpoint_identity(*remote_socket_fd, local_identity) != 0)
     {
         fprintf(stderr,"exchange_as_server:send_endpoint_identity");
-        close(socket_fd);
-        close(client_fd);        
+        // close(*local_socket_fd);
+        // close(*remote_socket_fd);        
         return 1;
     }
 
 
     //  execute recv_endpoint_identity
-    if (recv_endpoint_identity(client_fd,remote_identity) != 0)
+    if (recv_endpoint_identity(*remote_socket_fd,remote_identity) != 0)
     {
         fprintf(stderr,"exchange_as_server:recv_endpoint_identity");
-        close(socket_fd);
-        close(client_fd);        
+        // close(*local_socket_fd);
+        // close(*remote_socket_fd);        
         return 1;
     }
 
@@ -254,39 +256,40 @@ int exchange_as_server(endpoint_identity* remote_identity,
 
 
 
-    close(socket_fd);
-    close(client_fd);
+    // close(*local_socket_fd);
+    // close(*remote_socket_fd);
 
     return 0;
 }
 
-int exchange_as_client(endpoint_identity* remote_identity,
+int exchange_as_client(
+    int* local_socket_fd,
+    endpoint_identity* remote_identity,
     endpoint_identity* local_identity,
     int tcp_port,
     const char* server_addr
 )
 {
+
     // variables
     std::string local_identity_str{};
     std::string remote_identity_str{};
-    int socket_fd;
     sockaddr_in server_sockaddr{}; 
 
     //  create socket
-    socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (socket_fd < 0) {
+    *local_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (*local_socket_fd < 0) {
         fprintf(stderr,"failed to create socket.\n");
         return 1;
     }
 
     // set so_reuseaddr
     int opt = 1;
-    if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+    if (setsockopt(*local_socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         perror("exchange_as_server:setsockopt");
-        close(socket_fd);
+        // close(*local_socket_fd);
         return 1;
     }
-
 
     //  construct the sockaddr_in struct that points to the server
     server_sockaddr.sin_family = AF_INET;
@@ -294,74 +297,73 @@ int exchange_as_client(endpoint_identity* remote_identity,
     if (inet_pton(AF_INET, server_addr, &server_sockaddr.sin_addr) != 1)
     {
         perror("exchange_as_client:inet_pton");
-        close(socket_fd);
+        // close(*local_socket_fd);
         return 1;
     }
 
     //  set non-blocking so connect() can be bounded by a timeout
-    int flags = fcntl(socket_fd, F_GETFL, 0);
-    fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK);
+    int flags = fcntl(*local_socket_fd, F_GETFL, 0);
+    fcntl(*local_socket_fd, F_SETFL, flags | O_NONBLOCK);
 
     //  connect to the server
-    int crc = connect(socket_fd, (struct sockaddr*)&server_sockaddr, sizeof(server_sockaddr));
+    int crc = connect(*local_socket_fd, (struct sockaddr*)&server_sockaddr, sizeof(server_sockaddr));
     if (crc != 0 && errno != EINPROGRESS)
     {
         perror("exchange_as_client:connect");
-        close(socket_fd);
+        // close(*local_socket_fd);
         return 1;
     }
 
     if (crc != 0)  //  EINPROGRESS: handshake in flight, wait for it
     {
         struct pollfd pfd{};
-        pfd.fd = socket_fd;
+        pfd.fd = *local_socket_fd;
         pfd.events = POLLOUT;
 
         int prc = poll(&pfd, 1, 3000);  //  3s timeout
         if (prc == 0)
         {
             fprintf(stderr, "exchange_as_client:connect timed out\n");
-            close(socket_fd);
+            close(*local_socket_fd);
             return 1;
         }
         if (prc < 0)
         {
             perror("exchange_as_client:poll");
-            close(socket_fd);
+            close(*local_socket_fd);
             return 1;
         }
 
         //  poll fired, but that includes connection failure, check SO_ERROR
         int so_error = 0;
         socklen_t len = sizeof(so_error);
-        getsockopt(socket_fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
+        getsockopt(*local_socket_fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
         if (so_error != 0)
         {
             fprintf(stderr, "exchange_as_client:connect failed: %s\n", strerror(so_error));
-            close(socket_fd);
+            // close(*local_socket_fd);
             return 1;
         }
     }
 
     //  restore blocking mode so send/recv loops behave normally
-    fcntl(socket_fd, F_SETFL, flags);
+    fcntl(*local_socket_fd, F_SETFL, flags);
 
     //  execute send_endpoint_identity
 
-    if (send_endpoint_identity(socket_fd, local_identity) != 0)
+    if (send_endpoint_identity(*local_socket_fd, local_identity) != 0)
     {
         fprintf(stderr,"exchange_as_server:send_endpoint_identity");
-        close(socket_fd);
+        // close(*local_socket_fd);
         return 1;
     }
 
 
     //  execute recv_endpoint_identity
-
-    if (recv_endpoint_identity(socket_fd,remote_identity) != 0)
+    if (recv_endpoint_identity(*local_socket_fd,remote_identity) != 0)
     {
         fprintf(stderr,"exchange_as_server:recv_endpoint_identity");
-        close(socket_fd);
+        // close(*local_socket_fd);
         return 1;
     }
 
@@ -372,7 +374,7 @@ int exchange_as_client(endpoint_identity* remote_identity,
     remote_identity_str = "remote: " + identity_to_str(remote_identity);
     std::cout << remote_identity_str << std::endl;
 
-    close(socket_fd);
+    // close(*local_socket_fd);
     return 0;
 }
 
@@ -533,7 +535,30 @@ void print_rtr_rts_fail(int rc, ibv_qp_attr* qp_attr)
     fprintf(stderr, "max_rd_atomic: %i\n", qp_attr->max_rd_atomic);
 }
 
+int post_recv(uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t message_size, uint32_t lkey)
+{
+    //  create the ibv_recv_wr
+    ibv_recv_wr wr{};
+    ibv_sge sge{};
+    ibv_recv_wr* bad = nullptr;
 
+    //  for now each entry has a single SGE
+    //  slot[i] has address &(buffer) + ([i]* [message_size])
+    sge.addr = buff_addr + (slot * message_size);
+    sge.length = message_size;
+    sge.lkey = lkey;
+
+    wr.num_sge = 1;
+    wr.sg_list = &sge;
+    wr.next = nullptr;
+    wr.wr_id = slot | RECV_WRID_TAG;
+
+    int rc = 0;
+
+    rc = ibv_post_recv(queue_pair, &wr,  &bad);
+
+    return rc;
+}
 
 
 int main(int argc, char* argv[])
@@ -543,7 +568,7 @@ int main(int argc, char* argv[])
     // parse args
     parse_argv(argc,argv,&args);
 
-
+    //  Variables:
     int rc = 0;
     int exit_rc=0;
     endpoint_identity local_identity{};
@@ -559,8 +584,8 @@ int main(int argc, char* argv[])
     //  Memory region variables
     ibv_mr* send_memory_region = nullptr;
     ibv_mr* recv_memory_region = nullptr;
-    const int send_buf_size = args.buffer_size;
-    const int recv_buf_size = args.buffer_size * args.rx_depth;
+    const int send_buf_size = args.message_size;
+    const int recv_buf_size = args.message_size * args.rx_depth;
     void* send_buf = nullptr;
     void* recv_buf = nullptr;
     int mr_access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
@@ -582,8 +607,9 @@ int main(int argc, char* argv[])
     ibv_qp_attr qp_attr{};
     int attr_mask=0;
 
-
-
+    //  Side Channel-based variables
+    int local_socket_fd = -1;
+    int remote_socket_fd = -1;
 
     if (args.addr != nullptr)
     {
@@ -768,7 +794,6 @@ int main(int argc, char* argv[])
     printf("recv: posted=%zu depth=%lu size=%zu\n",recv_memory_region->length / send_buf_size,args.rx_depth,recv_memory_region->length);
 
 
-
     printf("cq: cqe=%i (requested %i)\n",completion_queue->cqe, COMPLETE_QUEUE_DEPTH);
 
     //  print out qp: line from filled qp_init_attr 
@@ -798,7 +823,7 @@ int main(int argc, char* argv[])
     if (args.addr != nullptr)
     {
         //  client
-        if (exchange_as_client(&remote_identity,&local_identity,args.tcp_port,args.addr) != 0)
+        if (exchange_as_client(&local_socket_fd,&remote_identity,&local_identity,args.tcp_port,args.addr) != 0)
         {
             fprintf(stderr,"side channel exchange as client failed\n");
             exit_rc = EXIT_SIDE_CHANNEL_ERROR;
@@ -807,7 +832,7 @@ int main(int argc, char* argv[])
 
     } else {
         //  server
-        if (exchange_as_server(&remote_identity, &local_identity, args.tcp_port)!=0)
+        if (exchange_as_server(&local_socket_fd,&remote_socket_fd,&remote_identity, &local_identity, args.tcp_port)!=0)
         {
             fprintf(stderr,"side channel exchange as server failed\n");
             exit_rc = EXIT_SIDE_CHANNEL_ERROR;
@@ -923,6 +948,24 @@ int main(int argc, char* argv[])
 
     printf("verify: qp_state=RTS\n");
 
+    //  post work requests
+    //  create work requests 
+
+    for (uint32_t slot =0; slot < args.rx_depth; slot++)
+    {
+        if (post_recv(slot, args.message_size,  recv_memory_region->lkey) !=0)
+        {
+            //  failed to allocate slot
+            fprintf(stderr,"main:post_recv failed to allocate slot #%i\n",slot);
+            exit_rc = EXIT_VERB_ERROR;
+            goto cleanup;
+        }
+    }
+    
+
+
+
+
     cleanup: {
         const char *qp_s = "n/a", *cq_s = "n/a", *mr_send_s = "n/a", *mr_recv_s = "n/a",
                 *pd_s = "n/a", *ctx_s = "n/a";
@@ -937,6 +980,8 @@ int main(int argc, char* argv[])
         if (pd)  { e = ibv_dealloc_pd(pd);  pd_s = e ? strerrorname_np(e) : "ok"; }
         if (device_context) { ctx_s = ibv_close_device(device_context) ? "failed" : "ok"; }
         if (devices_list) ibv_free_device_list(devices_list);
+        if (local_socket_fd>0) close(local_socket_fd);
+        if (remote_socket_fd >0) close(local_socket_fd);
 
         printf("teardown: qp=%s cq=%s mr_send=%s mr_recv=%s pd=%s context=%s\n",
             qp_s, cq_s, mr_send_s, mr_recv_s, pd_s, ctx_s);
