@@ -10,3 +10,5 @@ limen_pingpong
 CMakeCache.txt
 cmake_install.cmake
 Makefile
+src/limen_pingpong.cpp
+liblimen_common.so

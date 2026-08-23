@@ -41,4 +41,10 @@ int str_to_gid(std::string str, ibv_gid* gid);
 
 std::string qp_state_to_str(ibv_qp_state state);
 
+const char* ibv_wc_opcode_str(enum ibv_wc_opcode opcode);
+
+inline uint64_t slot_addr(uint64_t base_addr, uint32_t slot, uint32_t message_size) {
+    return base_addr + (uint64_t)slot * message_size;
+}
+
 #endif

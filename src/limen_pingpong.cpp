@@ -2,7 +2,6 @@
 #define _GNU_SOURCE
 #endif
 
-
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -547,7 +546,7 @@ int post_recv(uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t m
 
     //  for now each entry has a single SGE
     //  slot[i] has address &(buffer) + ([i]* [message_size])
-    sge.addr = buff_addr + (slot * message_size);
+    sge.addr = slot_addr(buff_addr, slot, message_size);
     sge.length = message_size;
     sge.lkey = lkey;
 
@@ -572,7 +571,7 @@ int post_send(bool signaled, uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pa
 
     //  for now each entry has a single SGE
     //  slot[i] has address &(buffer) + ([i]* [message_size])
-    sge.addr = buff_addr + (slot * message_size);
+    sge.addr = slot_addr(buff_addr, slot, message_size);
     sge.length = message_size;
     sge.lkey = lkey;
 
@@ -594,6 +593,97 @@ int post_send(bool signaled, uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pa
     return rc;
 }
 
+static const char* wc_status_name(enum ibv_wc_status s)
+{
+    switch (s) {
+    case IBV_WC_SUCCESS:            return "SUCCESS";
+    case IBV_WC_LOC_LEN_ERR:        return "LOC_LEN_ERR";
+    case IBV_WC_LOC_QP_OP_ERR:      return "LOC_QP_OP_ERR";
+    case IBV_WC_LOC_EEC_OP_ERR:     return "LOC_EEC_OP_ERR";
+    case IBV_WC_LOC_PROT_ERR:       return "LOC_PROT_ERR";
+    case IBV_WC_WR_FLUSH_ERR:       return "WR_FLUSH_ERR";
+    case IBV_WC_MW_BIND_ERR:        return "MW_BIND_ERR";
+    case IBV_WC_BAD_RESP_ERR:       return "BAD_RESP_ERR";
+    case IBV_WC_LOC_ACCESS_ERR:     return "LOC_ACCESS_ERR";
+    case IBV_WC_REM_INV_REQ_ERR:    return "REM_INV_REQ_ERR";
+    case IBV_WC_REM_ACCESS_ERR:     return "REM_ACCESS_ERR";
+    case IBV_WC_REM_OP_ERR:         return "REM_OP_ERR";
+    case IBV_WC_RETRY_EXC_ERR:      return "RETRY_EXC_ERR";
+    case IBV_WC_RNR_RETRY_EXC_ERR:  return "RNR_RETRY_EXC_ERR";
+    case IBV_WC_LOC_RDD_VIOL_ERR:   return "LOC_RDD_VIOL_ERR";
+    case IBV_WC_REM_INV_RD_REQ_ERR: return "REM_INV_RD_REQ_ERR";
+    case IBV_WC_REM_ABORT_ERR:      return "REM_ABORT_ERR";
+    case IBV_WC_INV_EECN_ERR:       return "INV_EECN_ERR";
+    case IBV_WC_INV_EEC_STATE_ERR:  return "INV_EEC_STATE_ERR";
+    case IBV_WC_FATAL_ERR:          return "FATAL_ERR";
+    case IBV_WC_RESP_TIMEOUT_ERR:   return "RESP_TIMEOUT_ERR";
+    case IBV_WC_GENERAL_ERR:        return "GENERAL_ERR";
+    case IBV_WC_TM_ERR:             return "TM_ERR";
+    case IBV_WC_TM_RNDV_INCOMPLETE: return "TM_RNDV_INCOMPLETE";
+    }
+    return "UNKNOWN";
+}
+
+std::string wc_to_str(ibv_wc *wc)
+{
+    if (wc->status == IBV_WC_SUCCESS)
+    {
+        //  successful
+        if (wc->opcode == IBV_WC_RECV)
+        {
+            return std::format(
+                "completion: wr_id={:#016x} opcode={} status={} byte_len={}",
+                wc->wr_id,
+                ibv_wc_opcode_str(wc->opcode),
+                wc_status_name(wc->status),
+                wc->byte_len
+            );
+        }
+        else {
+            return std::format(
+                "completion: wr_id={:#016x} opcode={} status={}",
+                wc->wr_id,
+                ibv_wc_opcode_str(wc->opcode),
+                wc_status_name(wc->status)
+            );
+        }
+    }
+    else 
+    {
+        //  unsuccessful
+        return std::format(
+            "completion: wr_id={:#016x} status={} vendor_err={:#08x}", 
+            wc->wr_id,
+            wc_status_name(wc->status),
+            wc->vendor_err
+        );
+    }
+
+}
+
+static void fill_pattern(void *buf, size_t len, unsigned iter)
+{
+    unsigned char *p = static_cast<unsigned char*>(buf);
+    for (size_t i = 0; i < len; i++)
+        p[i] = (unsigned char)((i * 31u + iter * 131u) & 0xff);
+}
+
+static size_t verify_pattern(const void *buf, size_t len, unsigned iter)
+{
+    const unsigned char *p = static_cast<const unsigned char*>(buf);
+    for (size_t i = 0; i < len; i++) {
+        unsigned char want = (unsigned char)((i * 31u + iter * 131u) & 0xff);
+        if (p[i] != want) {
+            fprintf(stderr, "mismatch at offset %zu: expected 0x%02x got 0x%02x "
+                            "(iteration %u)\n", i, want, p[i], iter);
+            return i + 1;                 /* non-zero = mismatch, and where */
+        }
+    }
+    return 0;
+}
+
+
+
 int main(int argc, char* argv[])
 {
     // Misc. variables
@@ -604,6 +694,7 @@ int main(int argc, char* argv[])
     //  Variables:
     int rc = 0;
     int exit_rc=0;
+    bool is_client = false;
     endpoint_identity local_identity{};
     endpoint_identity remote_identity{};
 
@@ -648,6 +739,7 @@ int main(int argc, char* argv[])
     if (args.addr != nullptr)
     {
         printf("role: client\n");
+        is_client = true;
     } else
     {
         printf("role: server\n");
@@ -753,7 +845,7 @@ int main(int argc, char* argv[])
     }
 
     //  fill qp_cap for qp_init_attr
-    qp_cap.max_send_wr = std::min(SEND_QUEUE_DEPTH,device_attr.max_qp_wr);
+    qp_cap.max_send_wr = std::min((uint32_t)args.iterations,(uint32_t)device_attr.max_qp_wr);
     qp_cap.max_recv_wr = std::min(RECV_QUEUE_DEPTH,device_attr.max_qp_wr);
     qp_cap.max_send_sge = 1;
     qp_cap.max_recv_sge = 1;
@@ -765,7 +857,7 @@ int main(int argc, char* argv[])
     qp_init_attr.srq=NULL;
     qp_init_attr.cap = qp_cap;
     qp_init_attr.qp_type = IBV_QPT_RC;
-    qp_init_attr.sq_sig_all= 1;
+    qp_init_attr.sq_sig_all= 0;
 
     //  get ibv_gid
     if (ibv_query_gid(device_context,args.port,args.gid_index,&gid) == -1)
@@ -825,7 +917,7 @@ int main(int argc, char* argv[])
         goto cleanup;
     }
 
-    printf("recv: posted=%zu depth=%lu size=%zu\n",recv_memory_region->length / send_buf_size,args.rx_depth,recv_memory_region->length);
+    printf("recv: posted=%zu depth=%lu size=%zu\n",recv_memory_region->length / send_buf_size,args.rx_depth,args.message_size);
 
 
     printf("cq: cqe=%i (requested %i)\n",completion_queue->cqe, COMPLETE_QUEUE_DEPTH);
@@ -854,7 +946,7 @@ int main(int argc, char* argv[])
 
     //  perform side-channel exchange (send struct as text not struct data)
     //  perform server or client path
-    if (args.addr != nullptr)
+    if (is_client)
     {
         //  client
         if (exchange_as_client(&local_socket_fd,&remote_identity,&local_identity,args.tcp_port,args.addr) != 0)
@@ -945,7 +1037,7 @@ int main(int argc, char* argv[])
     qp_attr.sq_psn = local_identity.psn;
     qp_attr.timeout = 14;
     qp_attr.retry_cnt = 7;
-    qp_attr.rnr_retry = 7;
+    qp_attr.rnr_retry = args.rnr_retry;
     qp_attr.max_rd_atomic = std::min(1,device_attr.max_qp_rd_atom);
 
     attr_mask = 	IBV_QP_STATE | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_TIMEOUT;
@@ -983,23 +1075,25 @@ int main(int argc, char* argv[])
     printf("verify: qp_state=RTS\n");
 
     //  post work requests
-    for (uint32_t slot =0; slot < args.rx_depth; slot++)
+    if (!args.no_recv)
     {
-        rc = post_recv(slot, (uint64_t)(uintptr_t)recv_memory_region->addr, queue_pair, args.message_size,  recv_memory_region->lkey);
-        if (rc !=0)
+        for (uint32_t slot =0; slot < args.rx_depth; slot++)
         {
-            //  failed to allocate slot
-            fprintf(stderr,"main:post_recv %s (%s)\n",strerrorname_np(rc),strerror(rc));
-            exit_rc = EXIT_VERB_ERROR;
-            goto cleanup;
+            rc = post_recv(slot, (uint64_t)(uintptr_t)recv_memory_region->addr, queue_pair, args.message_size,  recv_memory_region->lkey);
+            if (rc !=0)
+            {
+                //  failed to allocate slot
+                fprintf(stderr,"main:post_recv %s (%s)\n",strerrorname_np(rc),strerror(rc));
+                exit_rc = EXIT_VERB_ERROR;
+                goto cleanup;
+            }
         }
     }
-    
     //  send ready signal (single byte 'R')
     ready  ='R';
     {
         int socket;
-        if (args.addr)
+        if (is_client)
         {
             socket  = local_socket_fd;   
         }
@@ -1019,23 +1113,145 @@ int main(int argc, char* argv[])
         }
     }
 
-    //  post the send work request
 
-    rc = post_send(!(args.unsignaled),0, (uint64_t)(uintptr_t)send_memory_region->addr, queue_pair, args.message_size, send_memory_region->lkey);
-    if (rc !=0)
-    {
-        //  failed to allocate slot
-        fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
 
     //  poll for completion in a loop w/ 10 second timeout
     std::array<ibv_wc, COMPLETE_QUEUE_DEPTH> wc_arr;
+    int bad_wc_idx; //  also acts as first error index 
+    uint32_t send_count;
+    uint32_t send_completions;
+    uint32_t recv_count;
+    uint32_t mismatch_count;
+
     {
-        std::chrono::time_point last_valid_check = std::chrono::system_clock::now();
-        
+        send_completions=0;
+        bad_wc_idx = -1;
+        send_count = 0;
+        recv_count = 0;
+        mismatch_count = 0;
+        //  post the initial send work request only if you're the client
+        if (is_client)
+        {
+            void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)send_memory_region->addr, 0, args.message_size));
+            fill_pattern(send_addr, args.message_size, send_count);
+            rc = post_send(!(args.unsignaled),0, (uint64_t)(uintptr_t)send_memory_region->addr, queue_pair, args.message_size, send_memory_region->lkey);
+            if (rc !=0)
+            {
+                //  failed to allocate slot
+                fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
+                exit_rc = EXIT_VERB_ERROR;
+                goto cleanup;
+            }
+            send_count++;
+        }
+
+        std::chrono::time_point last_valid_check = std::chrono::steady_clock::now();
+        while (true)
+        {
+            int cqe_count = ibv_poll_cq(completion_queue,COMPLETE_QUEUE_DEPTH,wc_arr.data());
+            if (cqe_count < 0)
+            {
+                //  error
+                fprintf(stderr,"main:ibv_poll_cq error\n");
+                exit_rc = EXIT_VERB_ERROR;
+                goto cleanup;
+            }
+            if (cqe_count > 0)
+            {
+                //  completions reported, handle them
+                for (int i =0; i < cqe_count; i++)
+                {
+                    ibv_wc* wc = &wc_arr[i];
+                    std::cout << wc_to_str(wc) << std::endl;
+
+                    if (wc_arr[i].status != IBV_WC_SUCCESS)
+                    {
+                        //  if the status is not successful then WCs from this one onward
+                        //  are bad & have to be flushed accordingly
+                        std::cout << std::format("qp_num={:#08x}\n",queue_pair->qp_num);
+                        std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
+                        ibv_query_qp(queue_pair, &qp_attr, IBV_QP_STATE, &qp_init_attr);
+                        std::cout << "qp_state_after_error: ERR"  << std::endl;
+                        bad_wc_idx = i;
+                        break;
+                    }
+                    else
+                    {
+                        //  successful, increment counters
+                        if (wc->opcode == IBV_WC_SEND)
+                        {
+                            send_completions++;
+                        }
+                        else if(wc->opcode == IBV_WC_RECV)
+                        {
+                            uint32_t slot_num = wc->wr_id & ~(RECV_WRID_TAG);
+
+                            //  verify the payload
+                            void* recv_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)recv_memory_region->addr,slot_num,args.message_size));
+                            if (verify_pattern(recv_addr, wc->byte_len, recv_count) > 0)
+                            {
+                                mismatch_count++;
+                            }
+                            //  post replacement recv
+                            rc = post_recv(slot_num, (uint64_t)(uintptr_t)recv_memory_region->addr, queue_pair, args.message_size, recv_memory_region->lkey);
+                            if (rc !=0)
+                            {
+                                //  failed to allocate slot
+                                fprintf(stderr,"main:post_recv %s (%s)\n",strerrorname_np(rc),strerror(rc));
+                                exit_rc = EXIT_VERB_ERROR;
+                                goto cleanup;
+                            }
+                            recv_count++;
+
+                            //  post reply
+                            //  the client will execute (n+1) SENDs since it executed the initial
+                            //  SEND before the loop; this prevents sending that n+1th 
+                            if ((uint64_t)send_count < args.iterations)
+                            {
+                                void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)send_memory_region->addr,0,args.message_size));
+                                fill_pattern(send_addr, args.message_size, send_count);
+                                rc = post_send(!(args.unsignaled), 0, (uint64_t)(uintptr_t) send_memory_region->addr, queue_pair, args.message_size, send_memory_region->lkey);
+                                if (rc != 0)
+                                {
+                                    fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
+                                    exit_rc = EXIT_VERB_ERROR;
+                                    goto cleanup;
+                                }
+                                send_count++;
+                            }
+                        }
+                    }
+                }
+                //  update last_valid check
+                if (bad_wc_idx > -1) break;
+                if ((uint64_t)recv_count >= args.iterations
+                    && (args.unsignaled || send_completions >= send_count)) break;
+                last_valid_check = std::chrono::steady_clock::now();
+            }
+            //  if its been more than 10sec without a valid (cqe_count>0) check then break as timeout
+            if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - last_valid_check) > std::chrono::seconds(10))
+            {
+                fprintf(stderr,"main:ibv_poll_cq loop timeout (10sec)\n");
+                exit_rc = EXIT_COMPLETION_STATUS_ERROR;
+                goto cleanup;
+            }
+        }
     }
+
+
+    std::cout << std::format(
+        "result: iterations={} sent={} received={} mismatches={} send_completions={}",
+        args.iterations,
+        send_count,
+        recv_count,
+        mismatch_count,
+        send_completions
+    );
+    if (bad_wc_idx > -1)
+    {
+        std::cout << std::format(" first_error={}",wc_status_name(wc_arr[bad_wc_idx].status));
+    }
+    std::cout << std::endl;
 
 
 
@@ -1048,17 +1264,17 @@ int main(int argc, char* argv[])
 
         if (queue_pair)  { e = ibv_destroy_qp(queue_pair);  qp_s = e ? strerrorname_np(e) : "ok"; }
         if (completion_queue)  { e = ibv_destroy_cq(completion_queue);  cq_s = e ? strerrorname_np(e) : "ok"; }
-        if (send_buf)   {free(send_buf);}
-        if (recv_buf)   {free(recv_buf);}
         if (send_memory_region)  { e = ibv_dereg_mr(send_memory_region);    mr_send_s = e ? strerrorname_np(e) : "ok"; }
         if (recv_memory_region)  { e = ibv_dereg_mr(recv_memory_region);    mr_recv_s = e ? strerrorname_np(e) : "ok"; }
+        if (send_buf)   {free(send_buf);}
+        if (recv_buf)   {free(recv_buf);}
         if (pd)  { e = ibv_dealloc_pd(pd);  pd_s = e ? strerrorname_np(e) : "ok"; }
         if (device_context) { ctx_s = ibv_close_device(device_context) ? "failed" : "ok"; }
         if (devices_list) ibv_free_device_list(devices_list);
         if (local_socket_fd>0) close(local_socket_fd);
         if (remote_socket_fd >0) close(local_socket_fd);
 
-        printf("teardown: qp=%s cq=%s mr_send=%s mr_recv=%s pd=%s context=%s\n",
+        printf("teardown: qp=%s cq=%s tx_mr=%s rx_mr=%s pd=%s context=%s\n",
             qp_s, cq_s, mr_send_s, mr_recv_s, pd_s, ctx_s);
         return exit_rc;
     }

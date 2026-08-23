@@ -197,3 +197,19 @@ std::string qp_state_to_str(ibv_qp_state state)
         default:            return "UNKNOWN";
     }
 }
+const char* ibv_wc_opcode_str(enum ibv_wc_opcode opcode)
+{
+    switch (opcode) {
+        case IBV_WC_SEND:                     return "SEND";
+        case IBV_WC_RDMA_WRITE:               return "RDMA_WRITE";
+        case IBV_WC_RDMA_READ:                return "RDMA_READ";
+        case IBV_WC_COMP_SWAP:                return "COMP_SWAP";
+        case IBV_WC_FETCH_ADD:                return "FETCH_ADD";
+        case IBV_WC_BIND_MW:                  return "BIND_MW";
+        case IBV_WC_LOCAL_INV:                return "LOCAL_INV";
+        case IBV_WC_TSO:                      return "TSO";
+        case IBV_WC_RECV:                     return "RECV";
+        case IBV_WC_RECV_RDMA_WITH_IMM:       return "RECV_RDMA_WITH_IMM";
+        default:                              return "UNKNOWN_OPCODE";
+    }
+}

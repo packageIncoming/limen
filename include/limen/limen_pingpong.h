@@ -1,10 +1,10 @@
 #include <string>
-#ifndef limen_connect
+#ifndef limen_pingpong
 
 #include <climits>
 #include <infiniband/verbs.h>
 
-#define limen_connect
+#define limen_pingpong
 
 #define SEND_QUEUE_DEPTH 16
 #define RECV_QUEUE_DEPTH 16
@@ -77,5 +77,7 @@ void print_rtr_rts_fail(int rc, ibv_qp_attr* qp_attr);
 int post_recv(uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t message_size, uint32_t lkey);
 
 int post_send(bool signaled, uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t message_size, uint32_t lkey);
+
+std::string wc_to_str(ibv_wc *wc);
 
 #endif
