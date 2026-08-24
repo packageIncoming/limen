@@ -21,7 +21,7 @@ message(STATUS "libibverbs: ${IBVERBS_LIB}")
 message(STATUS "librdmacm: ${RDMACM_LIB}")
 
 # Create the shared library for common logic
-add_library(limen_common SHARED src/limen_common.cpp)
+add_library(limen_common SHARED src/limen_common.cpp src/verbs.cpp)
 target_compile_options(limen_common PRIVATE -Wall -Wextra)
 
 # PUBLIC includes make sure dependent binaries find headers
