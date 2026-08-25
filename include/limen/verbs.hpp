@@ -12,6 +12,8 @@ class VerbsError : public std::runtime_error {
 public:
     VerbsError(const char *op, int err);
     int error() const noexcept;
+private:
+    int _err;
 };
 
 //  template for resource handles, each class has a _h which is an instance of one of these
@@ -54,23 +56,23 @@ public:
     DeviceList(DeviceList&&) noexcept            = delete;
     DeviceList& operator=(DeviceList&&) noexcept = delete;
 
-    ibv_device** get()   const noexcept;              
+    ibv_device** get()   const noexcept {return _device_list;}              
 private:
-    ibv_device** device_list = nullptr;
+    ibv_device** _device_list = nullptr;
 };
 
 class Context {
 public:
     Context() noexcept = default;
     explicit Context(const char *device_name);        
-    ~Context() noexcept;                              
+    ~Context() noexcept {close();};                              
     Context(const Context&)                = delete;
     Context& operator=(const Context&)     = delete;
     Context(Context&&) noexcept            = default;
     Context& operator=(Context&&) noexcept = default;
 
-    ibv_context *get()   const noexcept;              
-    explicit operator bool() const noexcept;
+    ibv_context *get()   const noexcept {return _h.get();}              
+    explicit operator bool() const noexcept{ return static_cast<bool>(_h);}
     int close() noexcept;       
 private:
     limen::ResourceHandle<ibv_context, ibv_close_device> _h;               
@@ -80,15 +82,15 @@ private:
 class ProtectionDomain {
 public:
     ProtectionDomain() noexcept = default;
-    explicit ProtectionDomain(ibv_context* device_context);        
-    ~ProtectionDomain() noexcept;                              
+    explicit ProtectionDomain(const Context& device_context);        
+    ~ProtectionDomain() noexcept {close();}                              
     ProtectionDomain(const ProtectionDomain&)                = delete;
     ProtectionDomain& operator=(const ProtectionDomain&)     = delete;
     ProtectionDomain(ProtectionDomain&&) noexcept            = default;
     ProtectionDomain& operator=(ProtectionDomain&&) noexcept = default;
 
-    ibv_pd *get()   const noexcept;              
-    explicit operator bool() const noexcept;
+    ibv_pd *get()   const noexcept {return _h.get();}              
+    explicit operator bool() const noexcept { return static_cast<bool>(_h);}
     int close() noexcept;       
 private:
     limen::ResourceHandle<ibv_pd, ibv_dealloc_pd> _h;               
@@ -97,17 +99,19 @@ private:
 class CompletionQueue {
 public:
     CompletionQueue() noexcept = default;
-    explicit CompletionQueue(ibv_context* device_context, int cqe, void* cq_context, ibv_comp_channel* channel, int comp_vector);        
-    ~CompletionQueue() noexcept;                              
+    explicit CompletionQueue(const Context& device_context, int cqe, void* cq_context, ibv_comp_channel* channel, int comp_vector);        
+    ~CompletionQueue() noexcept {close();}                              
     CompletionQueue(const CompletionQueue&)                = delete;
     CompletionQueue& operator=(const CompletionQueue&)     = delete;
     CompletionQueue(CompletionQueue&&) noexcept            = default;
     CompletionQueue& operator=(CompletionQueue&&) noexcept = default;
 
-    ibv_cq *get()   const noexcept;              
-    explicit operator bool() const noexcept;
+    ibv_cq *get()   const noexcept {return _h.get();}        
+    int size() const noexcept {return _h.get()->cqe;}      
+    explicit operator bool() const noexcept { return static_cast<bool>(_h);}
     int close() noexcept;       
 private:
+    int _cqe;
     limen::ResourceHandle<ibv_cq, ibv_destroy_cq> _h;               
 };
 
@@ -115,15 +119,15 @@ private:
 class QueuePair {
 public:
     QueuePair() noexcept = default;
-    explicit QueuePair(ibv_pd* pd, ibv_qp_init_attr* qp_init_attr);        
-    ~QueuePair() noexcept;                              
+    explicit QueuePair(const ProtectionDomain& pd, ibv_qp_init_attr* qp_init_attr);        
+    ~QueuePair() noexcept {close();}                              
     QueuePair(const QueuePair&)                = delete;
     QueuePair& operator=(const QueuePair&)     = delete;
     QueuePair(QueuePair&&) noexcept            = default;
     QueuePair& operator=(QueuePair&&) noexcept = default;
 
-    ibv_qp *get()   const noexcept;              
-    explicit operator bool() const noexcept;
+    ibv_qp *get()   const noexcept {return _h.get();}              
+    explicit operator bool() const noexcept { return static_cast<bool>(_h);}
     int close() noexcept;       
 private:
     limen::ResourceHandle<ibv_qp, ibv_destroy_qp> _h;               
@@ -134,22 +138,71 @@ class MemoryRegion {
 public:
     MemoryRegion() noexcept = default;
     MemoryRegion(ProtectionDomain& pd, std::size_t bytes, int access);
-    ~MemoryRegion() noexcept;                              
+    ~MemoryRegion() noexcept {close();}                              
     MemoryRegion(const MemoryRegion&)                = delete;
     MemoryRegion& operator=(const MemoryRegion&)     = delete;
     MemoryRegion(MemoryRegion&&) noexcept            = default;
     MemoryRegion& operator=(MemoryRegion&&) noexcept = default;
 
-    ibv_mr     *get()    const noexcept;
-    void       *data()   const noexcept;              /* the owned buffer */
-    std::size_t size()   const noexcept;
+    ibv_mr     *get()    const noexcept {return _h.get();}
+    void       *data()   const noexcept {return _buf;}              /* the owned buffer */
+    std::size_t size()   const noexcept {return _buf_size;}
     int close() noexcept;
-    uint32_t lkey() const noexcept;
-    uint32_t rkey() const noexcept;
+    uint32_t lkey() const noexcept {return _h.get()->lkey;}
+    uint32_t rkey() const noexcept {return _h.get()->rkey;}
+    explicit operator bool() const noexcept { return static_cast<bool>(_h) && (_buf!=nullptr);}
+
 private:
-    void* buf;
+    void* _buf;
+    size_t _buf_size;
     ResourceHandle<ibv_mr, ibv_dereg_mr> _h;
 
+};
+
+class Endpoint {
+public:
+    Endpoint() noexcept = default;
+
+    Endpoint(
+            const char* device_name,
+            int cqe, 
+            void* cq_context,
+            ibv_comp_channel* channel,
+            int comp_vector,
+            ibv_qp_init_attr* qp_init_attr,
+            std::size_t buffer_size,
+            int buffer_access_flags
+    ): 
+    _ctx(device_name),
+    _pd(_ctx),
+    _recv_mr(_pd,buffer_size,buffer_access_flags),
+    _send_mr(_pd,buffer_size,buffer_access_flags),
+    _cq(_ctx,cqe,cq_context,channel,comp_vector),
+    _qp(_pd,qp_init_attr) {};
+
+    ~Endpoint() noexcept                     = default;                            
+    Endpoint(const Endpoint&)                = delete;
+    Endpoint& operator=(const Endpoint&)     = delete;
+    Endpoint(Endpoint&&) noexcept            = default;
+    Endpoint& operator=(Endpoint&&) noexcept = default;
+
+    //  accessors
+    ibv_context* get_ctx() const noexcept {return _ctx.get();}
+    ibv_pd* pd() const noexcept {return _pd.get();}
+    ibv_mr* get_recv_mr() const noexcept {return _recv_mr.get();}
+    ibv_mr* get_send_mr() const noexcept {return _send_mr.get();}
+    ibv_cq* get_cq() const noexcept {return _cq.get();}
+    ibv_qp* get_qp() const noexcept {return _qp.get();}
+
+
+
+private:
+    Context _ctx;
+    ProtectionDomain _pd;
+    MemoryRegion _recv_mr;
+    MemoryRegion _send_mr;
+    CompletionQueue _cq;
+    QueuePair _qp;
 };
 
 } /* namespace limen */

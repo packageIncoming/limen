@@ -24,6 +24,7 @@
 #include <infiniband/verbs.h>
 #include "limen/limen_common.h"
 #include "limen/limen_pingpong.h"
+#include "limen/verbs.hpp"
 
 enum {
     OPT_RNR_RETRY = 256,   //  no short letter given for these three, per TRD-03's interface
@@ -699,12 +700,8 @@ int main(int argc, char* argv[])
     endpoint_identity remote_identity{};
 
     //  Device-based variables
-    ibv_device** devices_list = nullptr;
-    ibv_context* device_context = nullptr;
     ibv_device_attr device_attr{};
-    ibv_pd* pd = nullptr;
     ibv_gid gid{};
-    int device_idx = 0;
     //  Memory region variables
     ibv_mr* send_memory_region = nullptr;
     ibv_mr* recv_memory_region = nullptr;
@@ -718,8 +715,8 @@ int main(int argc, char* argv[])
     ibv_port_attr port_attr{};
 
     //  QP-based variables
-    ibv_cq* completion_queue = nullptr;
-    ibv_qp* queue_pair = nullptr;
+
+    // ibv_qp* queue_pair = nullptr;
     ibv_qp_cap qp_cap{};
     ibv_qp_init_attr qp_init_attr{};
 
@@ -751,64 +748,39 @@ int main(int argc, char* argv[])
         fprintf(stderr,"-d required\n");
         print_help(true); 
         exit_rc = EXIT_USAGE_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
     if (args.gid_index == INT_MAX )
     {
         fprintf(stderr,"-g required\n");
         print_help(true); 
         exit_rc = EXIT_USAGE_ERROR;
-        goto cleanup;
-    }
-
-    //  open devices list
-    devices_list = ibv_get_device_list(NULL);
-    if (devices_list == NULL)
-    {
-        //  failed to open device list
-        perror("ibv_get_device_list");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
-
-    //  figure out index of associated device (-d)
-    device_idx = find_device_by_name(devices_list,args.device_name);
-    if (device_idx == -1)
-    {
-        //  did not find device, exit early
-        fprintf(stderr,"did not find device %s\n",args.device_name);
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     //  get device context
-    device_context = ibv_open_device(devices_list[device_idx]);
-    if (device_context == NULL)
-    {
-        //  failed to open device context
-        perror("ibv_open_device");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
+    limen::Context device_context(args.device_name);
 
     //  get device attributes
-    rc = ibv_query_device(device_context,&device_attr);
+    rc = ibv_query_device(device_context.get(),&device_attr);
     if (rc != 0)
     {
         //  failed to get device attributes
         perror("ibv_query_device");
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
+        // goto cleanup;
     }
 
     //  get port attributes
-    rc = ibv_query_port(device_context,args.port,&port_attr);
+    rc = ibv_query_port(device_context.get(),args.port,&port_attr);
     if (rc != 0)
     {
         //  failed to get port attributes
         perror("ibv_query_port");
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
+        // goto cleanup;
     }
 
     //  verify the GID index against gid_tbl_len
@@ -816,33 +788,22 @@ int main(int argc, char* argv[])
     {
         fprintf(stderr, "invalid gid_index: gid_index %i > gid_tbl_len  %i\n",args.gid_index,port_attr.gid_tbl_len);
         exit_rc = EXIT_USAGE_ERROR;
-        goto cleanup;
+        return exit_rc;
+        // goto cleanup;
     }
 
     //  create protection domain
-    pd = ibv_alloc_pd(device_context);
-    if (pd == NULL)
-    {
-        //  failed to create protection domain
-        perror("ibv_alloc_pd");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
+    limen::ProtectionDomain pd(device_context);
 
     //  create the queues
     //  create completion queue
-    completion_queue = ibv_create_cq(
+    limen::CompletionQueue completion_queue(
         device_context,
-        std::min(COMPLETE_QUEUE_DEPTH,device_attr.max_cqe)
-        ,NULL,NULL,0
+        std::min(COMPLETE_QUEUE_DEPTH,device_attr.max_cqe),
+        nullptr,
+        nullptr,
+        0
     );
-    if (completion_queue == NULL)
-    {
-        //  failed to create completion queue
-        perror("ibv_create_cq");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
 
     //  fill qp_cap for qp_init_attr
     qp_cap.max_send_wr = std::min((uint32_t)args.iterations,(uint32_t)device_attr.max_qp_wr);
@@ -852,30 +813,31 @@ int main(int argc, char* argv[])
 
 
     //  fill qp_init_attr to make the QP
-    qp_init_attr.send_cq = completion_queue;
-    qp_init_attr.recv_cq = completion_queue;
+    qp_init_attr.send_cq = completion_queue.get();
+    qp_init_attr.recv_cq = completion_queue.get();
     qp_init_attr.srq=NULL;
     qp_init_attr.cap = qp_cap;
     qp_init_attr.qp_type = IBV_QPT_RC;
     qp_init_attr.sq_sig_all= 0;
 
     //  get ibv_gid
-    if (ibv_query_gid(device_context,args.port,args.gid_index,&gid) == -1)
+    if (ibv_query_gid(device_context.get(),args.port,args.gid_index,&gid) == -1)
     {
         //  failed to get ibv_gid
         fprintf(stderr,"ibv_query_gid failed\n");
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     //  create reliable-connected queue pair
-    queue_pair = ibv_create_qp(pd,&qp_init_attr);
-    if (queue_pair == NULL)
-    {
-        perror("ibv_create_qp");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
+    limen::QueuePair queue_pair(pd,&qp_init_attr);
+    // queue_pair = ibv_create_qp(pd.get(),&qp_init_attr);
+    // if (queue_pair == NULL)
+    // {
+    //     perror("ibv_create_qp");
+    //     exit_rc = EXIT_VERB_ERROR;
+    //     goto cleanup;
+    // }
 
     //  clamp rx_depth 
     args.rx_depth = std::min(args.rx_depth,static_cast<uint64_t>(qp_cap.max_recv_wr));
@@ -902,7 +864,7 @@ int main(int argc, char* argv[])
 
 
     //  register send memory region
-    send_memory_region = ibv_reg_mr(pd, send_buf, send_buf_size, mr_access_flags);
+    send_memory_region = ibv_reg_mr(pd.get(), send_buf, send_buf_size, mr_access_flags);
     if (send_memory_region == NULL)
     {
         exit_rc = EXIT_VERB_ERROR;
@@ -910,7 +872,7 @@ int main(int argc, char* argv[])
     }
 
     //  register recv memory region
-    recv_memory_region = ibv_reg_mr(pd, recv_buf, recv_buf_size, mr_access_flags);
+    recv_memory_region = ibv_reg_mr(pd.get(), recv_buf, recv_buf_size, mr_access_flags);
     if (recv_memory_region == NULL)
     {
         exit_rc = EXIT_VERB_ERROR;
@@ -920,7 +882,7 @@ int main(int argc, char* argv[])
     printf("recv: posted=%zu depth=%lu size=%zu\n",recv_memory_region->length / send_buf_size,args.rx_depth,args.message_size);
 
 
-    printf("cq: cqe=%i (requested %i)\n",completion_queue->cqe, COMPLETE_QUEUE_DEPTH);
+    printf("cq: cqe=%i (requested %i)\n",completion_queue.size(), COMPLETE_QUEUE_DEPTH);
 
     //  print out qp: line from filled qp_init_attr 
     printf(
@@ -933,7 +895,7 @@ int main(int argc, char* argv[])
 
 
     //  populate local identity struct
-    local_identity.qpn = queue_pair->qp_num;
+    local_identity.qpn = queue_pair.get()->qp_num;
     srand48(time(nullptr));
     local_identity.psn = lrand48() & U32_TO_U24_MASK;
     
@@ -977,7 +939,7 @@ int main(int argc, char* argv[])
     //  set flags for attr_mask
     attr_mask = IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS;
     //  execute ibv_modify_qp
-    rc = ibv_modify_qp(queue_pair, &qp_attr, attr_mask);
+    rc = ibv_modify_qp(queue_pair.get(), &qp_attr, attr_mask);
     if (rc!=0)
     {
         //  failed to perform RESET->INIT transition
@@ -1016,7 +978,7 @@ int main(int argc, char* argv[])
     attr_mask = 	IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER;
 
     //  execute ibv_modify_qp
-    rc = ibv_modify_qp(queue_pair, &qp_attr, attr_mask);
+    rc = ibv_modify_qp(queue_pair.get(), &qp_attr, attr_mask);
     if (rc!=0)
     {
         //  failed to perform RESET->INIT transition
@@ -1043,7 +1005,7 @@ int main(int argc, char* argv[])
     attr_mask = 	IBV_QP_STATE | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_TIMEOUT;
 
     //  execute ibv_modify_qp
-    rc = ibv_modify_qp(queue_pair, &qp_attr, attr_mask);
+    rc = ibv_modify_qp(queue_pair.get(), &qp_attr, attr_mask);
     if (rc!=0)
     {
         //  failed to perform RESET->INIT transition
@@ -1056,7 +1018,7 @@ int main(int argc, char* argv[])
 
     //  Verify QP in RTS
     attr_mask = IBV_QP_STATE | IBV_QP_AV;
-    rc = ibv_query_qp(queue_pair, &qp_attr, attr_mask, &qp_init_attr);
+    rc = ibv_query_qp(queue_pair.get(), &qp_attr, attr_mask, &qp_init_attr);
     if (rc !=0)
     {
         //  failed to query
@@ -1079,7 +1041,7 @@ int main(int argc, char* argv[])
     {
         for (uint32_t slot =0; slot < args.rx_depth; slot++)
         {
-            rc = post_recv(slot, (uint64_t)(uintptr_t)recv_memory_region->addr, queue_pair, args.message_size,  recv_memory_region->lkey);
+            rc = post_recv(slot, (uint64_t)(uintptr_t)recv_memory_region->addr, queue_pair.get(), args.message_size,  recv_memory_region->lkey);
             if (rc !=0)
             {
                 //  failed to allocate slot
@@ -1134,7 +1096,7 @@ int main(int argc, char* argv[])
         {
             void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)send_memory_region->addr, 0, args.message_size));
             fill_pattern(send_addr, args.message_size, send_count);
-            rc = post_send(!(args.unsignaled),0, (uint64_t)(uintptr_t)send_memory_region->addr, queue_pair, args.message_size, send_memory_region->lkey);
+            rc = post_send(!(args.unsignaled),0, (uint64_t)(uintptr_t)send_memory_region->addr, queue_pair.get(), args.message_size, send_memory_region->lkey);
             if (rc !=0)
             {
                 //  failed to allocate slot
@@ -1148,7 +1110,7 @@ int main(int argc, char* argv[])
         std::chrono::time_point last_valid_check = std::chrono::steady_clock::now();
         while (true)
         {
-            int cqe_count = ibv_poll_cq(completion_queue,COMPLETE_QUEUE_DEPTH,wc_arr.data());
+            int cqe_count = ibv_poll_cq(completion_queue.get(),COMPLETE_QUEUE_DEPTH,wc_arr.data());
             if (cqe_count < 0)
             {
                 //  error
@@ -1168,9 +1130,9 @@ int main(int argc, char* argv[])
                     {
                         //  if the status is not successful then WCs from this one onward
                         //  are bad & have to be flushed accordingly
-                        std::cout << std::format("qp_num={:#08x}\n",queue_pair->qp_num);
+                        std::cout << std::format("qp_num={:#08x}\n",queue_pair.get()->qp_num);
                         std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
-                        ibv_query_qp(queue_pair, &qp_attr, IBV_QP_STATE, &qp_init_attr);
+                        ibv_query_qp(queue_pair.get(), &qp_attr, IBV_QP_STATE, &qp_init_attr);
                         std::cout << "qp_state_after_error: ERR"  << std::endl;
                         bad_wc_idx = i;
                         break;
@@ -1193,7 +1155,7 @@ int main(int argc, char* argv[])
                                 mismatch_count++;
                             }
                             //  post replacement recv
-                            rc = post_recv(slot_num, (uint64_t)(uintptr_t)recv_memory_region->addr, queue_pair, args.message_size, recv_memory_region->lkey);
+                            rc = post_recv(slot_num, (uint64_t)(uintptr_t)recv_memory_region->addr, queue_pair.get(), args.message_size, recv_memory_region->lkey);
                             if (rc !=0)
                             {
                                 //  failed to allocate slot
@@ -1210,7 +1172,7 @@ int main(int argc, char* argv[])
                             {
                                 void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)send_memory_region->addr,0,args.message_size));
                                 fill_pattern(send_addr, args.message_size, send_count);
-                                rc = post_send(!(args.unsignaled), 0, (uint64_t)(uintptr_t) send_memory_region->addr, queue_pair, args.message_size, send_memory_region->lkey);
+                                rc = post_send(!(args.unsignaled), 0, (uint64_t)(uintptr_t) send_memory_region->addr, queue_pair.get(), args.message_size, send_memory_region->lkey);
                                 if (rc != 0)
                                 {
                                     fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
@@ -1262,15 +1224,15 @@ int main(int argc, char* argv[])
                 *pd_s = "n/a", *ctx_s = "n/a";
         int e;
 
-        if (queue_pair)  { e = ibv_destroy_qp(queue_pair);  qp_s = e ? strerrorname_np(e) : "ok"; }
-        if (completion_queue)  { e = ibv_destroy_cq(completion_queue);  cq_s = e ? strerrorname_np(e) : "ok"; }
+        // if (queue_pair)  { e = ibv_destroy_qp(queue_pair);  qp_s = e ? strerrorname_np(e) : "ok"; }
+        // if (completion_queue)  { e = ibv_destroy_cq(completion_queue);  cq_s = e ? strerrorname_np(e) : "ok"; }
         if (send_memory_region)  { e = ibv_dereg_mr(send_memory_region);    mr_send_s = e ? strerrorname_np(e) : "ok"; }
         if (recv_memory_region)  { e = ibv_dereg_mr(recv_memory_region);    mr_recv_s = e ? strerrorname_np(e) : "ok"; }
         if (send_buf)   {free(send_buf);}
         if (recv_buf)   {free(recv_buf);}
-        if (pd)  { e = ibv_dealloc_pd(pd);  pd_s = e ? strerrorname_np(e) : "ok"; }
-        if (device_context) { ctx_s = ibv_close_device(device_context) ? "failed" : "ok"; }
-        if (devices_list) ibv_free_device_list(devices_list);
+        // if (pd)  { e = ibv_dealloc_pd(pd);  pd_s = e ? strerrorname_np(e) : "ok"; }
+        // if (device_context) { ctx_s = ibv_close_device(device_context) ? "failed" : "ok"; }
+        // if (devices_list) ibv_free_device_list(devices_list);
         if (local_socket_fd>0) close(local_socket_fd);
         if (remote_socket_fd >0) close(local_socket_fd);
 
