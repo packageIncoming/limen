@@ -1,5 +1,6 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#include "limen/verbs.hpp"
 #endif
 #include <cstdlib>
 #include <cstddef>
@@ -20,6 +21,7 @@
 #include <infiniband/verbs.h>
 #include "limen/limen_common.h"
 #include "limen/limen_connect.h"
+#include "limen/verbs.hpp"
 
 void parse_argv(int argc, char* argv[], connect_parsed_args* args)
 {
@@ -502,22 +504,14 @@ int main(int argc, char* argv[])
     endpoint_identity remote_identity{};
 
     //  Device-based variables
-    ibv_device** devices_list = nullptr;
-    ibv_context* device_context = nullptr;
+    limen::Context device_context;
     ibv_device_attr device_attr{};
-    ibv_pd* pd = nullptr;
     ibv_gid gid{};
-    int device_idx = 0;
-    ibv_mr* memory_region = nullptr;
-    // char buf[4096];
 
     //  Port-based variables
     ibv_port_attr port_attr{};
 
     //  QP-based variables
-    ibv_cq* completion_queue = nullptr;
-    ibv_qp* queue_pair = nullptr;
-    ibv_qp_cap qp_cap{};
     ibv_qp_init_attr qp_init_attr{};
 
     //  Endpoint Identity strings
@@ -546,64 +540,36 @@ int main(int argc, char* argv[])
         fprintf(stderr,"-d required\n");
         print_help(true); 
         exit_rc = EXIT_USAGE_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
     if (args.gid_index == INT_MAX )
     {
         fprintf(stderr,"-g required\n");
         print_help(true); 
         exit_rc = EXIT_USAGE_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
-    //  open devices list
-    devices_list = ibv_get_device_list(NULL);
-    if (devices_list == NULL)
-    {
-        //  failed to open device list
-        perror("ibv_get_device_list");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
-
-    //  figure out index of associated device (-d)
-    device_idx = find_device_by_name(devices_list,args.device_name);
-    if (device_idx == -1)
-    {
-        //  did not find device, exit early
-        fprintf(stderr,"did not find device %s\n",args.device_name);
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
-
-    //  get device context
-    device_context = ibv_open_device(devices_list[device_idx]);
-    if (device_context == NULL)
-    {
-        //  failed to open device context
-        perror("ibv_open_device");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
+    device_context = limen::Context(args.device_name);
 
     //  get device attributes
-    rc = ibv_query_device(device_context,&device_attr);
+    rc = ibv_query_device(device_context.get(),&device_attr);
     if (rc != 0)
     {
         //  failed to get device attributes
         perror("ibv_query_device");
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     //  get port attributes
-    rc = ibv_query_port(device_context,args.port,&port_attr);
+    rc = ibv_query_port(device_context.get(),args.port,&port_attr);
     if (rc != 0)
     {
         //  failed to get port attributes
         perror("ibv_query_port");
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     //  verify the GID index against gid_tbl_len
@@ -611,80 +577,57 @@ int main(int argc, char* argv[])
     {
         fprintf(stderr, "invalid gid_index: gid_index %i > gid_tbl_len  %i\n",args.gid_index,port_attr.gid_tbl_len);
         exit_rc = EXIT_USAGE_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
-
-    //  create protection domain
-    pd = ibv_alloc_pd(device_context);
-    if (pd == NULL)
-    {
-        //  failed to create protection domain
-        perror("ibv_alloc_pd");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
-
-    //  create the queues
-    //  create completion queue
-    completion_queue = ibv_create_cq(
-        device_context,
-        std::min(COMPLETE_QUEUE_DEPTH,device_attr.max_cqe)
-        ,NULL,NULL,0
-    );
-    if (completion_queue == NULL)
-    {
-        //  failed to create completion queue
-        perror("ibv_create_cq");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
-    printf("cq: cqe=%i (requested %i)\n",completion_queue->cqe, COMPLETE_QUEUE_DEPTH);
-
-    //  fill qp_cap for qp_init_attr
-    qp_cap.max_send_wr = std::min(SEND_QUEUE_DEPTH,device_attr.max_qp_wr);
-    qp_cap.max_recv_wr = std::min(RECV_QUEUE_DEPTH,device_attr.max_qp_wr);
-    qp_cap.max_send_sge = 1;
-    qp_cap.max_recv_sge = 1;
-
-
-    //  fill qp_init_attr to make the QP
-    qp_init_attr.send_cq = completion_queue;
-    qp_init_attr.recv_cq = completion_queue;
-    qp_init_attr.srq=NULL;
-    qp_init_attr.cap = qp_cap;
-    qp_init_attr.qp_type = IBV_QPT_RC;
-    qp_init_attr.sq_sig_all= 1;
 
     //  get ibv_gid
-    if (ibv_query_gid(device_context,args.port,args.gid_index,&gid) == -1)
+    if (ibv_query_gid(device_context.get(),args.port,args.gid_index,&gid) == -1)
     {
         //  failed to get ibv_gid
         fprintf(stderr,"ibv_query_gid failed\n");
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
-    //  create reliable-connected queue pair
-    queue_pair = ibv_create_qp(pd,&qp_init_attr);
-    if (queue_pair == NULL)
-    {
-        perror("ibv_create_qp");
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
+    //  fill qp_cap for qp_init_attr
+    qp_init_attr.cap.max_send_wr = std::min(SEND_QUEUE_DEPTH,device_attr.max_qp_wr);
+    qp_init_attr.cap.max_recv_wr = std::min(RECV_QUEUE_DEPTH,device_attr.max_qp_wr);
+    qp_init_attr.cap.max_send_sge = 1;
+    qp_init_attr.cap.max_recv_sge = 1;
+
+
+    //  fill qp_init_attr to make the QP
+    qp_init_attr.srq=NULL;
+    qp_init_attr.qp_type = IBV_QPT_RC;
+    qp_init_attr.sq_sig_all= 1;
+
+    limen::Endpoint endpoint(
+        args.device_name,
+        std::min(COMPLETE_QUEUE_DEPTH,device_attr.max_cqe),
+        nullptr,
+        nullptr,
+        0,
+        &qp_init_attr,
+        4096,
+        8,
+        IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ
+    );
+
+    printf("cq: cqe=%i (requested %i)\n",endpoint.get_cq()->cqe, COMPLETE_QUEUE_DEPTH);
+
 
     //  print out qp: line from filled qp_init_attr 
     printf(
         "qp: type=RC max_send_wr=%i max_recv_wr=%i max_send_sge=%i max_recv_sge=%i\n",
-        qp_cap.max_send_wr,
-        qp_cap.max_recv_wr,
-        qp_cap.max_send_sge,
-        qp_cap.max_recv_sge
+        qp_init_attr.cap.max_send_wr,
+        qp_init_attr.cap.max_recv_wr,
+        qp_init_attr.cap.max_send_sge,
+        qp_init_attr.cap.max_recv_sge
     );
 
 
     //  populate local identity struct
-    local_identity.qpn = queue_pair->qp_num;
+    local_identity.qpn = endpoint.get_qp()->qp_num;
     srand48(time(nullptr));
     local_identity.psn = lrand48() & U32_TO_U24_MASK;
     
@@ -704,7 +647,7 @@ int main(int argc, char* argv[])
         {
             fprintf(stderr,"side channel exchange as client failed\n");
             exit_rc = EXIT_SIDE_CHANNEL_ERROR;
-            goto cleanup;
+            return exit_rc;
         }
 
     } else {
@@ -713,7 +656,7 @@ int main(int argc, char* argv[])
         {
             fprintf(stderr,"side channel exchange as server failed\n");
             exit_rc = EXIT_SIDE_CHANNEL_ERROR;
-            goto cleanup;
+            return exit_rc;
         }
     }
 
@@ -728,13 +671,13 @@ int main(int argc, char* argv[])
     //  set flags for attr_mask
     attr_mask = IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS;
     //  execute ibv_modify_qp
-    rc = ibv_modify_qp(queue_pair, &qp_attr, attr_mask);
+    rc = ibv_modify_qp(endpoint.get_qp(), &qp_attr, attr_mask);
     if (rc!=0)
     {
         //  failed to perform RESET->INIT transition
         print_reset_init_fail(rc,&qp_attr);
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     printf("state: RESET -> INIT ok\n");
@@ -772,13 +715,13 @@ int main(int argc, char* argv[])
     }
 
     //  execute ibv_modify_qp
-    rc = ibv_modify_qp(queue_pair, &qp_attr, attr_mask);
+    rc = ibv_modify_qp(endpoint.get_qp(), &qp_attr, attr_mask);
     if (rc!=0)
     {
         //  failed to perform RESET->INIT transition
         print_init_rtr_fail(rc,&qp_attr);
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     printf("state: INIT -> RTR ok\n");
@@ -799,53 +742,43 @@ int main(int argc, char* argv[])
     attr_mask = 	IBV_QP_STATE | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_TIMEOUT;
 
     //  execute ibv_modify_qp
-    rc = ibv_modify_qp(queue_pair, &qp_attr, attr_mask);
+    rc = ibv_modify_qp(endpoint.get_qp(), &qp_attr, attr_mask);
     if (rc!=0)
     {
         //  failed to perform RESET->INIT transition
         print_rtr_rts_fail(rc,&qp_attr);
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     printf("state: RTR -> RTS ok\n");
 
     //  Verify QP in RTS
     attr_mask = IBV_QP_STATE | IBV_QP_AV;
-    rc = ibv_query_qp(queue_pair, &qp_attr, attr_mask, &qp_init_attr);
+    rc = ibv_query_qp(endpoint.get_qp(), &qp_attr, attr_mask, &qp_init_attr);
     if (rc !=0)
     {
         //  failed to query
         perror("main:ibv_query_qp");
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     if (qp_attr.qp_state != IBV_QPS_RTS)
     {
         fprintf(stderr,"local qp not in state IBV_QPS_RTS after RTR -> RTS transition\n");
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     printf("verify: qp_state=RTS\n");
 
-cleanup: {
-    const char *qp_s = "n/a", *cq_s = "n/a", *mr_s = "ok",
-               *pd_s = "n/a", *ctx_s = "n/a";
-    int e;
-
-    if (queue_pair)  { e = ibv_destroy_qp(queue_pair);  qp_s = e ? strerrorname_np(e) : "ok"; }
-    if (completion_queue)  { e = ibv_destroy_cq(completion_queue);  cq_s = e ? strerrorname_np(e) : "ok"; }
-    if (memory_region)  { e = ibv_dereg_mr(memory_region);    mr_s = e ? strerrorname_np(e) : "ok"; }
-    if (pd)  { e = ibv_dealloc_pd(pd);  pd_s = e ? strerrorname_np(e) : "ok"; }
-    if (device_context) { ctx_s = ibv_close_device(device_context) ? "failed" : "ok"; }
-    if (devices_list) ibv_free_device_list(devices_list);
+    const char *qp_s = "ok", *cq_s = "ok", *mr_s = "ok",
+               *pd_s = "ok", *ctx_s = "ok";
 
     printf("teardown: qp=%s cq=%s mr=%s pd=%s context=%s\n",
            qp_s, cq_s, mr_s, pd_s, ctx_s);
     return exit_rc;
-}
 
 
 }

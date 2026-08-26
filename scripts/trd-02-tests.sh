@@ -8,6 +8,11 @@
 #   ./scripts/trd-02-tests.sh --peer 10.0.0.1 --gid 3                two-node, manual server start
 #   ./scripts/trd-02-tests.sh --peer 10.0.0.1 --gid 3 --ssh you@10.0.0.1   fully automatic
 #
+# Single-host, two-card topology (peer lives in a network namespace):
+#
+#   ./scripts/trd-02-tests.sh --dev rocep1s0f0 --peer-dev rocep4s0f0 \
+#                             --gid 3 --peer 192.168.100.2 --peer-cmd "sudo limen-b"
+#
 # Exit 0 only when every test passes and none was skipped.
 
 set -uo pipefail
@@ -17,6 +22,8 @@ DEV=""
 GID=""
 PEER=""
 SSH_PEER=""
+PEER_DEV=""
+PEER_CMD=""
 TCP_PORT=18515
 PASS=0; FAIL=0; SKIP=0
 
@@ -32,9 +39,14 @@ hdr() { echo -e "\n${B}$1${N}"; }
 TMPDIR="$(mktemp -d)"
 SERVER_STARTED=""
 cleanup() {
-  if [[ -n "$SSH_PEER" && -n "$SERVER_STARTED" ]]; then
-    ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
-        "pkill -f limen_connect" >/dev/null 2>&1 || true
+  if [[ -n "$SERVER_STARTED" ]]; then
+    if [[ -n "$PEER_CMD" ]]; then
+      $PEER_CMD pkill -f limen_connect >/dev/null 2>&1 || true
+      sudo pkill -f limen_connect     >/dev/null 2>&1 || true
+    elif [[ -n "$SSH_PEER" ]]; then
+      ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
+          "pkill -f limen_connect" >/dev/null 2>&1 || true
+    fi
   fi
   rm -rf "$TMPDIR"
 }
@@ -46,9 +58,12 @@ while [[ $# -gt 0 ]]; do
     --gid)  GID="${2:-}"; shift 2 ;;
     --peer) PEER="${2:-}"; shift 2 ;;
     --ssh)  SSH_PEER="${2:-}"; shift 2 ;;
+    --peer-dev) PEER_DEV="${2:-}"; shift 2 ;;
+    --peer-cmd) PEER_CMD="${2:-}"; shift 2 ;;
     --tcp)  TCP_PORT="${2:-}"; shift 2 ;;
     -h|--help)
-      echo "usage: $0 [--dev NAME] [--gid N] [--peer IP] [--ssh user@host] [--tcp PORT]"
+      echo "usage: $0 [--dev NAME] [--gid N] [--peer IP] [--ssh user@host]"
+      echo "          [--peer-dev NAME] [--peer-cmd 'sudo limen-b'] [--tcp PORT]"
       exit 1 ;;
     *) echo "unknown argument: $1"; exit 1 ;;
   esac
@@ -138,21 +153,35 @@ test_side_channel_failure_exits_four() {                            # R4
   fi
 }
 
+# ── Peer control ──────────────────────────────────────────────────────
+# Three modes, in priority order:
+#   --peer-cmd  the peer is on this host behind a wrapper (namespace, container)
+#   --ssh       the peer is a separate machine
+#   neither     prompt the operator to start it by hand
+start_peer() {
+  local port="$1" extra="${2:-}"
+  if [[ -n "$PEER_CMD" ]]; then
+    $PEER_CMD "$BIN" -d "$PEER_DEV" -g "$GID" -t "$port" $extra >/dev/null 2>&1 &
+    SERVER_STARTED=1
+    sleep 2
+  elif [[ -n "$SSH_PEER" ]]; then
+    ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
+      "cd '$(pwd)' && nohup $BIN -d $PEER_DEV -g $GID -t $port $extra >/dev/null 2>&1 & disown" \
+      >/dev/null 2>&1 || true
+    SERVER_STARTED=1
+    sleep 2
+  else
+    echo "      start on the peer:  $BIN -d $PEER_DEV -g $GID -t $port $extra"
+    read -rp "      press enter once it is listening... "
+  fi
+}
+
 # ── Two-node run ──────────────────────────────────────────────────────
 RUN=""
 RUN_RC=""
 do_connect_run() {
   [[ -n "$RUN" ]] && return 0
-  if [[ -n "$SSH_PEER" ]]; then
-    ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
-      "cd '$(pwd)' && nohup $BIN -d $DEV -g $GID -t $TCP_PORT >/dev/null 2>&1 & disown" \
-      >/dev/null 2>&1 || true
-    SERVER_STARTED=1
-    sleep 2
-  else
-    echo "      start on the peer:  $BIN -d $DEV -g $GID -t $TCP_PORT"
-    read -rp "      press enter once it is listening... "
-  fi
+  start_peer "$TCP_PORT"
   RUN=$(timeout 40 "$BIN" -d "$DEV" -g "$GID" -t "$TCP_PORT" "$PEER" 2>&1)
   RUN_RC=$?
 }
@@ -252,16 +281,7 @@ test_verify_rts() {                                                 # R8
 test_failure_diagnostic() {                                         # R10
   hdr "R10: a forced transition failure prints mask and attribute values"
   local port=$((TCP_PORT + 1))
-  if [[ -n "$SSH_PEER" ]]; then
-    ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
-      "cd '$(pwd)' && nohup $BIN -d $DEV -g $GID -t $port >/dev/null 2>&1 & disown" \
-      >/dev/null 2>&1 || true
-    SERVER_STARTED=1
-    sleep 2
-  else
-    echo "      start on the peer:  $BIN -d $DEV -g $GID -t $port"
-    read -rp "      press enter once it is listening... "
-  fi
+  start_peer "$port"
   local out rc
   out=$(timeout 30 "$BIN" -d "$DEV" -g "$GID" -t "$port" \
         --force-rtr-fail "$PEER" 2>&1); rc=$?
@@ -304,15 +324,7 @@ test_no_leaks() {                                                   # R11
   if ! command -v valgrind >/dev/null 2>&1; then
     sk "valgrind not installed"; return
   fi
-  if [[ -n "$SSH_PEER" ]]; then
-    ssh -o BatchMode=yes "$SSH_PEER" \
-      "cd '$(pwd)' && nohup $BIN -d $DEV -g $GID -t $((TCP_PORT + 2)) >/dev/null 2>&1 & disown" \
-      >/dev/null 2>&1 || true
-    sleep 2
-  else
-    echo "      start on the peer:  $BIN -d $DEV -g $GID -t $((TCP_PORT + 2))"
-    read -rp "      press enter once it is listening... "
-  fi
+  start_peer "$((TCP_PORT + 2))"
   local log="$TMPDIR/valgrind.log"
   timeout 90 valgrind --leak-check=full --show-leak-kinds=definite \
     "$BIN" -d "$DEV" -g "$GID" -t "$((TCP_PORT + 2))" "$PEER" >/dev/null 2>"$log" || true
@@ -337,6 +349,16 @@ fi
 
 if [[ -z "$DEV" ]] && command -v ibv_devices >/dev/null 2>&1; then
   DEV=$(ibv_devices 2>/dev/null | awk 'NR>2 && NF {print $1; exit}' || true)
+fi
+
+# The peer defaults to the same device name; on a single host with two cards
+# they differ, so --peer-dev overrides it.
+[[ -z "$PEER_DEV" ]] && PEER_DEV="$DEV"
+
+# Cache sudo credentials up front so backgrounded peer launches never block
+# on a password prompt in the middle of the suite.
+if [[ "$PEER_CMD" == sudo* ]]; then
+  sudo -v || { echo "sudo credentials required for --peer-cmd"; exit 1; }
 fi
 
 test_missing_gid_exits_one

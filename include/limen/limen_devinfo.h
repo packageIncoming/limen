@@ -1,6 +1,8 @@
 #ifndef limen_devinfo_h
 #define limen_devinfo_h
 
+#include <infiniband/verbs.h>
+
 typedef struct {
     const char* device_name;
     unsigned long long  port;

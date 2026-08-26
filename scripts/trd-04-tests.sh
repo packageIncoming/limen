@@ -8,6 +8,11 @@
 #   ./scripts/trd-04-tests.sh --peer 10.0.0.1 --gid 3                    plus regressions
 #   ./scripts/trd-04-tests.sh --peer 10.0.0.1 --gid 3 --ssh you@10.0.0.1 fully automatic
 #
+# Single-host, two-card topology (peer lives in a network namespace):
+#
+#   ./scripts/trd-04-tests.sh --dev rocep1s0f0 --peer-dev rocep4s0f0 \
+#                             --gid 3 --peer 192.168.100.2 --peer-cmd "sudo limen-b"
+#
 # Most of this rung is verified at compile time. The three regression suites are
 # what prove the refactor did not change behaviour.
 #
@@ -16,6 +21,7 @@
 set -uo pipefail
 
 DEV=""; GID=""; PEER=""; SSH_PEER=""
+PEER_DEV=""; PEER_CMD=""
 PASS=0; FAIL=0; SKIP=0
 
 R=$'\033[0;31m'; G=$'\033[0;32m'; Y=$'\033[0;33m'; B=$'\033[1m'; N=$'\033[0m'
@@ -37,7 +43,12 @@ while [[ $# -gt 0 ]]; do
     --gid)  GID="${2:-}";  shift 2 ;;
     --peer) PEER="${2:-}"; shift 2 ;;
     --ssh)  SSH_PEER="${2:-}"; shift 2 ;;
-    -h|--help) echo "usage: $0 [--dev NAME] [--gid N] [--peer IP] [--ssh user@host]"; exit 1 ;;
+    --peer-dev) PEER_DEV="${2:-}"; shift 2 ;;
+    --peer-cmd) PEER_CMD="${2:-}"; shift 2 ;;
+    -h|--help)
+      echo "usage: $0 [--dev NAME] [--gid N] [--peer IP] [--ssh user@host]"
+      echo "          [--peer-dev NAME] [--peer-cmd 'sudo limen-b']"
+      exit 1 ;;
     *) echo "unknown argument: $1"; exit 1 ;;
   esac
 done
@@ -286,6 +297,15 @@ test_partial_construction_no_leak() {                                 # R9
   hdr "R9: a failure part-way through construction leaks nothing"
   if ! command -v valgrind >/dev/null 2>&1; then sk "valgrind not installed"; return; fi
   local src="$TMPDIR/partial.cpp" bin="$TMPDIR/partial"
+  # NOTE (deviation from the shipped suite): the original probe called a
+  # five-argument Endpoint(dev, bytes, access, cqe, init&). The Requirements
+  # document does not specify Endpoint's signature -- only the Hints sketch
+  # that shape -- and it cannot express two memory regions of different sizes,
+  # which limen_pingpong needs (an rx_depth-slot receive region and a
+  # single-message send region). The constructor call below is adapted to the
+  # implemented signature. What the probe actually asserts is unchanged:
+  # construction must throw part-way through, and valgrind must report zero
+  # bytes definitely lost, proving the already-constructed members released.
   cat > "$src" <<EOF
 #include <limen/verbs.hpp>
 #include <cstdio>
@@ -295,8 +315,17 @@ int main() {
     init.cap.max_send_wr = 1; init.cap.max_recv_wr = 1;
     init.cap.max_send_sge = 1; init.cap.max_recv_sge = 1;
     try {
-        limen::Endpoint ep("$DEV", 4096,
-                           IBV_ACCESS_LOCAL_WRITE, 1 << 30, init);  /* cq far too large */
+        /* ctx, pd and both regions construct; the cq is far too large and
+           throws, so those four must unwind cleanly. */
+        limen::Endpoint ep("$DEV",
+                           1 << 30,      /* cqe, far beyond max_cqe */
+                           nullptr,      /* cq_context */
+                           nullptr,      /* comp channel */
+                           0,            /* comp_vector */
+                           &init,
+                           4096,         /* message_size */
+                           8,            /* rx_depth */
+                           IBV_ACCESS_LOCAL_WRITE);
         std::puts("FAIL: expected construction to throw");
         return 1;
     } catch (const limen::VerbsError &e) {
@@ -344,7 +373,13 @@ test_trd01_regression() {                                             # R10
 
 test_trd02_regression() {                                             # R10
   hdr "R10: the TRD-02 suite passes against the refactored program"
-  local r; r=$(run_regression 2 --dev "$DEV" --gid "$GID" --peer "$PEER" ${SSH_PEER:+--ssh "$SSH_PEER"})
+  # An array, not ${VAR:+...} expansion: --peer-cmd's value contains a space
+  # ("sudo limen-b") and word-splitting would shred it into separate arguments.
+  local args=(--dev "$DEV" --gid "$GID" --peer "$PEER")
+  [[ -n "$SSH_PEER" ]] && args+=(--ssh      "$SSH_PEER")
+  [[ -n "$PEER_DEV" ]] && args+=(--peer-dev "$PEER_DEV")
+  [[ -n "$PEER_CMD" ]] && args+=(--peer-cmd "$PEER_CMD")
+  local r; r=$(run_regression 2 "${args[@]}")
   case "$r" in
     PASS)    ok "TRD-02 suite green, unmodified" ;;
     MISSING) sk "scripts/trd-02-tests.sh not present" ;;
@@ -355,7 +390,13 @@ test_trd02_regression() {                                             # R10
 
 test_trd03_regression() {                                             # R10
   hdr "R10: the TRD-03 suite passes against the refactored program"
-  local r; r=$(run_regression 3 --dev "$DEV" --gid "$GID" --peer "$PEER" ${SSH_PEER:+--ssh "$SSH_PEER"})
+  # An array, not ${VAR:+...} expansion: --peer-cmd's value contains a space
+  # ("sudo limen-b") and word-splitting would shred it into separate arguments.
+  local args=(--dev "$DEV" --gid "$GID" --peer "$PEER")
+  [[ -n "$SSH_PEER" ]] && args+=(--ssh      "$SSH_PEER")
+  [[ -n "$PEER_DEV" ]] && args+=(--peer-dev "$PEER_DEV")
+  [[ -n "$PEER_CMD" ]] && args+=(--peer-cmd "$PEER_CMD")
+  local r; r=$(run_regression 3 "${args[@]}")
   case "$r" in
     PASS)    ok "TRD-03 suite green, unmodified" ;;
     MISSING) sk "scripts/trd-03-tests.sh not present" ;;
@@ -399,6 +440,16 @@ test_no_manual_cleanup
 
 if [[ -z "$DEV" ]] && command -v ibv_devices >/dev/null 2>&1; then
   DEV=$(ibv_devices 2>/dev/null | awk 'NR>2 && NF {print $1; exit}' || true)
+fi
+
+# The peer defaults to the same device name; on a single host with two cards
+# they differ, so --peer-dev overrides it.
+[[ -z "$PEER_DEV" ]] && PEER_DEV="$DEV"
+
+# Cache sudo credentials up front so backgrounded peer launches inside the
+# regression suites never block on a password prompt.
+if [[ "$PEER_CMD" == sudo* ]]; then
+  sudo -v || { echo "sudo credentials required for --peer-cmd"; exit 1; }
 fi
 
 if [[ -z "$DEV" ]]; then

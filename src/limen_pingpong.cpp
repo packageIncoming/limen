@@ -702,22 +702,14 @@ int main(int argc, char* argv[])
     //  Device-based variables
     ibv_device_attr device_attr{};
     ibv_gid gid{};
-    //  Memory region variables
-    ibv_mr* send_memory_region = nullptr;
-    ibv_mr* recv_memory_region = nullptr;
     const int send_buf_size = args.message_size;
-    const int recv_buf_size = args.message_size * args.rx_depth;
-    void* send_buf = nullptr;
-    void* recv_buf = nullptr;
     int mr_access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
 
     //  Port-based variables
     ibv_port_attr port_attr{};
 
-    //  QP-based variables
 
     // ibv_qp* queue_pair = nullptr;
-    ibv_qp_cap qp_cap{};
     ibv_qp_init_attr qp_init_attr{};
 
     //  Endpoint Identity strings
@@ -769,7 +761,7 @@ int main(int argc, char* argv[])
         perror("ibv_query_device");
         exit_rc = EXIT_VERB_ERROR;
         return exit_rc;
-        // goto cleanup;
+        // return exit_rc;
     }
 
     //  get port attributes
@@ -780,7 +772,7 @@ int main(int argc, char* argv[])
         perror("ibv_query_port");
         exit_rc = EXIT_VERB_ERROR;
         return exit_rc;
-        // goto cleanup;
+        // return exit_rc;
     }
 
     //  verify the GID index against gid_tbl_len
@@ -789,36 +781,8 @@ int main(int argc, char* argv[])
         fprintf(stderr, "invalid gid_index: gid_index %i > gid_tbl_len  %i\n",args.gid_index,port_attr.gid_tbl_len);
         exit_rc = EXIT_USAGE_ERROR;
         return exit_rc;
-        // goto cleanup;
+        // return exit_rc;
     }
-
-    //  create protection domain
-    limen::ProtectionDomain pd(device_context);
-
-    //  create the queues
-    //  create completion queue
-    limen::CompletionQueue completion_queue(
-        device_context,
-        std::min(COMPLETE_QUEUE_DEPTH,device_attr.max_cqe),
-        nullptr,
-        nullptr,
-        0
-    );
-
-    //  fill qp_cap for qp_init_attr
-    qp_cap.max_send_wr = std::min((uint32_t)args.iterations,(uint32_t)device_attr.max_qp_wr);
-    qp_cap.max_recv_wr = std::min(RECV_QUEUE_DEPTH,device_attr.max_qp_wr);
-    qp_cap.max_send_sge = 1;
-    qp_cap.max_recv_sge = 1;
-
-
-    //  fill qp_init_attr to make the QP
-    qp_init_attr.send_cq = completion_queue.get();
-    qp_init_attr.recv_cq = completion_queue.get();
-    qp_init_attr.srq=NULL;
-    qp_init_attr.cap = qp_cap;
-    qp_init_attr.qp_type = IBV_QPT_RC;
-    qp_init_attr.sq_sig_all= 0;
 
     //  get ibv_gid
     if (ibv_query_gid(device_context.get(),args.port,args.gid_index,&gid) == -1)
@@ -829,73 +793,53 @@ int main(int argc, char* argv[])
         return exit_rc;
     }
 
-    //  create reliable-connected queue pair
-    limen::QueuePair queue_pair(pd,&qp_init_attr);
-    // queue_pair = ibv_create_qp(pd.get(),&qp_init_attr);
-    // if (queue_pair == NULL)
-    // {
-    //     perror("ibv_create_qp");
-    //     exit_rc = EXIT_VERB_ERROR;
-    //     goto cleanup;
-    // }
+    //  create protection domain
+
+    //  fill qp_init_attr.cap
+    //  qp_init_attr's send_cq and recv_cq filled in Endpoint constructor
+    qp_init_attr.cap.max_send_wr = std::min((uint32_t)args.iterations,(uint32_t)device_attr.max_qp_wr);
+    qp_init_attr.cap.max_recv_wr = std::min(RECV_QUEUE_DEPTH,device_attr.max_qp_wr);
+    qp_init_attr.cap.max_send_sge = 1;
+    qp_init_attr.cap.max_recv_sge = 1;
+
+
+    //  fill qp_init_attr to make the QP
+    qp_init_attr.srq=NULL;
+    qp_init_attr.qp_type = IBV_QPT_RC;
+    qp_init_attr.sq_sig_all= 0;
 
     //  clamp rx_depth 
-    args.rx_depth = std::min(args.rx_depth,static_cast<uint64_t>(qp_cap.max_recv_wr));
+    args.rx_depth = std::min(args.rx_depth,static_cast<uint64_t>(qp_init_attr.cap.max_recv_wr));
 
-    //  allocate buffers
-    send_buf = aligned_alloc(4096,send_buf_size);
-    if (send_buf == NULL)
-    {
-        perror("main:malloc send_buf");
-        exit_rc = EXIT_DEVICE_ERROR;
-        goto cleanup;
-    }
-    memset(send_buf, 0, send_buf_size);
+    //  Create Endpoint instance which carries everything
+    limen::Endpoint endpoint(
+        args.device_name,
+        std::min(COMPLETE_QUEUE_DEPTH,device_attr.max_cqe),
+        nullptr,
+        nullptr,
+        0,
+        &qp_init_attr,
+        args.message_size,
+        args.rx_depth,
+        mr_access_flags
+    );
 
+    printf("recv: posted=%zu depth=%lu size=%zu\n",endpoint.get_recv_mr()->length / send_buf_size,args.rx_depth,args.message_size);
 
-    recv_buf = aligned_alloc(4096,recv_buf_size);
-    if (recv_buf == NULL)
-    {
-        perror("main:malloc recv_buf");
-        exit_rc = EXIT_DEVICE_ERROR;
-        goto cleanup;
-    }
-    memset(recv_buf, 0, recv_buf_size);
+    printf("cq: cqe=%i (requested %i)\n",endpoint.get_cq()->cqe, COMPLETE_QUEUE_DEPTH);
 
-
-    //  register send memory region
-    send_memory_region = ibv_reg_mr(pd.get(), send_buf, send_buf_size, mr_access_flags);
-    if (send_memory_region == NULL)
-    {
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
-
-    //  register recv memory region
-    recv_memory_region = ibv_reg_mr(pd.get(), recv_buf, recv_buf_size, mr_access_flags);
-    if (recv_memory_region == NULL)
-    {
-        exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
-    }
-
-    printf("recv: posted=%zu depth=%lu size=%zu\n",recv_memory_region->length / send_buf_size,args.rx_depth,args.message_size);
-
-
-    printf("cq: cqe=%i (requested %i)\n",completion_queue.size(), COMPLETE_QUEUE_DEPTH);
 
     //  print out qp: line from filled qp_init_attr 
     printf(
         "qp: type=RC max_send_wr=%i max_recv_wr=%i max_send_sge=%i max_recv_sge=%i\n",
-        qp_cap.max_send_wr,
-        qp_cap.max_recv_wr,
-        qp_cap.max_send_sge,
-        qp_cap.max_recv_sge
+        qp_init_attr.cap.max_send_wr,
+        qp_init_attr.cap.max_recv_wr,
+        qp_init_attr.cap.max_send_sge,
+        qp_init_attr.cap.max_recv_sge
     );
 
-
     //  populate local identity struct
-    local_identity.qpn = queue_pair.get()->qp_num;
+    local_identity.qpn = endpoint.get_qp()->qp_num;
     srand48(time(nullptr));
     local_identity.psn = lrand48() & U32_TO_U24_MASK;
     
@@ -915,7 +859,7 @@ int main(int argc, char* argv[])
         {
             fprintf(stderr,"side channel exchange as client failed\n");
             exit_rc = EXIT_SIDE_CHANNEL_ERROR;
-            goto cleanup;
+            return exit_rc;
         }
 
     } else {
@@ -924,7 +868,7 @@ int main(int argc, char* argv[])
         {
             fprintf(stderr,"side channel exchange as server failed\n");
             exit_rc = EXIT_SIDE_CHANNEL_ERROR;
-            goto cleanup;
+            return exit_rc;
         }
     }
 
@@ -939,13 +883,13 @@ int main(int argc, char* argv[])
     //  set flags for attr_mask
     attr_mask = IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS;
     //  execute ibv_modify_qp
-    rc = ibv_modify_qp(queue_pair.get(), &qp_attr, attr_mask);
+    rc = ibv_modify_qp(endpoint.get_qp(), &qp_attr, attr_mask);
     if (rc!=0)
     {
         //  failed to perform RESET->INIT transition
         print_reset_init_fail(rc,&qp_attr);
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     printf("state: RESET -> INIT ok\n");
@@ -978,13 +922,13 @@ int main(int argc, char* argv[])
     attr_mask = 	IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER;
 
     //  execute ibv_modify_qp
-    rc = ibv_modify_qp(queue_pair.get(), &qp_attr, attr_mask);
+    rc = ibv_modify_qp(endpoint.get_qp(), &qp_attr, attr_mask);
     if (rc!=0)
     {
         //  failed to perform RESET->INIT transition
         print_init_rtr_fail(rc,&qp_attr);
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     printf("state: INIT -> RTR ok\n");
@@ -1005,33 +949,33 @@ int main(int argc, char* argv[])
     attr_mask = 	IBV_QP_STATE | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_TIMEOUT;
 
     //  execute ibv_modify_qp
-    rc = ibv_modify_qp(queue_pair.get(), &qp_attr, attr_mask);
+    rc = ibv_modify_qp(endpoint.get_qp(), &qp_attr, attr_mask);
     if (rc!=0)
     {
         //  failed to perform RESET->INIT transition
         print_rtr_rts_fail(rc,&qp_attr);
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     printf("state: RTR -> RTS ok\n");
 
     //  Verify QP in RTS
     attr_mask = IBV_QP_STATE | IBV_QP_AV;
-    rc = ibv_query_qp(queue_pair.get(), &qp_attr, attr_mask, &qp_init_attr);
+    rc = ibv_query_qp(endpoint.get_qp(), &qp_attr, attr_mask, &qp_init_attr);
     if (rc !=0)
     {
         //  failed to query
         perror("main:ibv_query_qp");
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     if (qp_attr.qp_state != IBV_QPS_RTS)
     {
         fprintf(stderr,"local qp not in state IBV_QPS_RTS after RTR -> RTS transition\n");
         exit_rc = EXIT_VERB_ERROR;
-        goto cleanup;
+        return exit_rc;
     }
 
     printf("verify: qp_state=RTS\n");
@@ -1041,13 +985,13 @@ int main(int argc, char* argv[])
     {
         for (uint32_t slot =0; slot < args.rx_depth; slot++)
         {
-            rc = post_recv(slot, (uint64_t)(uintptr_t)recv_memory_region->addr, queue_pair.get(), args.message_size,  recv_memory_region->lkey);
+            rc = post_recv(slot, (uint64_t)(uintptr_t)endpoint.get_recv_mr()->addr, endpoint.get_qp(), args.message_size,  endpoint.get_recv_mr()->lkey);
             if (rc !=0)
             {
                 //  failed to allocate slot
                 fprintf(stderr,"main:post_recv %s (%s)\n",strerrorname_np(rc),strerror(rc));
                 exit_rc = EXIT_VERB_ERROR;
-                goto cleanup;
+                return exit_rc;
             }
         }
     }
@@ -1094,15 +1038,15 @@ int main(int argc, char* argv[])
         //  post the initial send work request only if you're the client
         if (is_client)
         {
-            void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)send_memory_region->addr, 0, args.message_size));
+            void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)endpoint.get_send_mr()->addr, 0, args.message_size));
             fill_pattern(send_addr, args.message_size, send_count);
-            rc = post_send(!(args.unsignaled),0, (uint64_t)(uintptr_t)send_memory_region->addr, queue_pair.get(), args.message_size, send_memory_region->lkey);
+            rc = post_send(!(args.unsignaled),0, (uint64_t)(uintptr_t)endpoint.get_send_mr()->addr, endpoint.get_qp(), args.message_size, endpoint.get_send_mr()->lkey);
             if (rc !=0)
             {
                 //  failed to allocate slot
                 fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
                 exit_rc = EXIT_VERB_ERROR;
-                goto cleanup;
+                return exit_rc;
             }
             send_count++;
         }
@@ -1110,13 +1054,13 @@ int main(int argc, char* argv[])
         std::chrono::time_point last_valid_check = std::chrono::steady_clock::now();
         while (true)
         {
-            int cqe_count = ibv_poll_cq(completion_queue.get(),COMPLETE_QUEUE_DEPTH,wc_arr.data());
+            int cqe_count = ibv_poll_cq(endpoint.get_cq(),COMPLETE_QUEUE_DEPTH,wc_arr.data());
             if (cqe_count < 0)
             {
                 //  error
                 fprintf(stderr,"main:ibv_poll_cq error\n");
                 exit_rc = EXIT_VERB_ERROR;
-                goto cleanup;
+                return exit_rc;
             }
             if (cqe_count > 0)
             {
@@ -1130,9 +1074,9 @@ int main(int argc, char* argv[])
                     {
                         //  if the status is not successful then WCs from this one onward
                         //  are bad & have to be flushed accordingly
-                        std::cout << std::format("qp_num={:#08x}\n",queue_pair.get()->qp_num);
+                        std::cout << std::format("qp_num={:#08x}\n",endpoint.get_qp()->qp_num);
                         std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
-                        ibv_query_qp(queue_pair.get(), &qp_attr, IBV_QP_STATE, &qp_init_attr);
+                        ibv_query_qp(endpoint.get_qp(), &qp_attr, IBV_QP_STATE, &qp_init_attr);
                         std::cout << "qp_state_after_error: ERR"  << std::endl;
                         bad_wc_idx = i;
                         break;
@@ -1149,19 +1093,19 @@ int main(int argc, char* argv[])
                             uint32_t slot_num = wc->wr_id & ~(RECV_WRID_TAG);
 
                             //  verify the payload
-                            void* recv_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)recv_memory_region->addr,slot_num,args.message_size));
+                            void* recv_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)endpoint.get_recv_mr()->addr,slot_num,args.message_size));
                             if (verify_pattern(recv_addr, wc->byte_len, recv_count) > 0)
                             {
                                 mismatch_count++;
                             }
                             //  post replacement recv
-                            rc = post_recv(slot_num, (uint64_t)(uintptr_t)recv_memory_region->addr, queue_pair.get(), args.message_size, recv_memory_region->lkey);
+                            rc = post_recv(slot_num, (uint64_t)(uintptr_t)endpoint.get_recv_mr()->addr, endpoint.get_qp(), args.message_size, endpoint.get_recv_mr()->lkey);
                             if (rc !=0)
                             {
                                 //  failed to allocate slot
                                 fprintf(stderr,"main:post_recv %s (%s)\n",strerrorname_np(rc),strerror(rc));
                                 exit_rc = EXIT_VERB_ERROR;
-                                goto cleanup;
+                                return exit_rc;
                             }
                             recv_count++;
 
@@ -1170,14 +1114,14 @@ int main(int argc, char* argv[])
                             //  SEND before the loop; this prevents sending that n+1th 
                             if ((uint64_t)send_count < args.iterations)
                             {
-                                void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)send_memory_region->addr,0,args.message_size));
+                                void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)endpoint.get_send_mr()->addr,0,args.message_size));
                                 fill_pattern(send_addr, args.message_size, send_count);
-                                rc = post_send(!(args.unsignaled), 0, (uint64_t)(uintptr_t) send_memory_region->addr, queue_pair.get(), args.message_size, send_memory_region->lkey);
+                                rc = post_send(!(args.unsignaled), 0, (uint64_t)(uintptr_t) endpoint.get_send_mr()->addr, endpoint.get_qp(), args.message_size, endpoint.get_send_mr()->lkey);
                                 if (rc != 0)
                                 {
                                     fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
                                     exit_rc = EXIT_VERB_ERROR;
-                                    goto cleanup;
+                                    return exit_rc;
                                 }
                                 send_count++;
                             }
@@ -1195,7 +1139,7 @@ int main(int argc, char* argv[])
             {
                 fprintf(stderr,"main:ibv_poll_cq loop timeout (10sec)\n");
                 exit_rc = EXIT_COMPLETION_STATUS_ERROR;
-                goto cleanup;
+                return exit_rc;
             }
         }
     }
@@ -1215,31 +1159,13 @@ int main(int argc, char* argv[])
     }
     std::cout << std::endl;
 
-
-
-
-
-    cleanup: {
-        const char *qp_s = "n/a", *cq_s = "n/a", *mr_send_s = "n/a", *mr_recv_s = "n/a",
-                *pd_s = "n/a", *ctx_s = "n/a";
-        int e;
-
-        // if (queue_pair)  { e = ibv_destroy_qp(queue_pair);  qp_s = e ? strerrorname_np(e) : "ok"; }
-        // if (completion_queue)  { e = ibv_destroy_cq(completion_queue);  cq_s = e ? strerrorname_np(e) : "ok"; }
-        if (send_memory_region)  { e = ibv_dereg_mr(send_memory_region);    mr_send_s = e ? strerrorname_np(e) : "ok"; }
-        if (recv_memory_region)  { e = ibv_dereg_mr(recv_memory_region);    mr_recv_s = e ? strerrorname_np(e) : "ok"; }
-        if (send_buf)   {free(send_buf);}
-        if (recv_buf)   {free(recv_buf);}
-        // if (pd)  { e = ibv_dealloc_pd(pd);  pd_s = e ? strerrorname_np(e) : "ok"; }
-        // if (device_context) { ctx_s = ibv_close_device(device_context) ? "failed" : "ok"; }
-        // if (devices_list) ibv_free_device_list(devices_list);
-        if (local_socket_fd>0) close(local_socket_fd);
-        if (remote_socket_fd >0) close(local_socket_fd);
-
-        printf("teardown: qp=%s cq=%s tx_mr=%s rx_mr=%s pd=%s context=%s\n",
-            qp_s, cq_s, mr_send_s, mr_recv_s, pd_s, ctx_s);
-        return exit_rc;
-    }
-
+    std::printf("teardown: qp=%s cq=%s rx_mr=%s tx_mr=%s pd=%s context=%s\n",
+                endpoint.get_qp()      ? "ok" : "n/a",
+                endpoint.get_cq()      ? "ok" : "n/a",
+                endpoint.get_recv_mr() ? "ok" : "n/a",
+                endpoint.get_send_mr() ? "ok" : "n/a",
+                endpoint.pd()          ? "ok" : "n/a",
+                endpoint.get_ctx()     ? "ok" : "n/a");
+    return exit_rc;
 
 }
