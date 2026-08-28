@@ -901,13 +901,18 @@ int main(int argc, char* argv[])
                 return 1;
             }
             rdma_resolve_addr(conn_id.get(), nullptr, (struct sockaddr*) &server_sockaddr, 5000);
-            limen::Event resolve_addr_event = get_expected_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, 5000);
-
+            get_expected_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, 5000);
             //  resolve route
-
+            rdma_resolve_route(conn_id.get(), 5000);
+            get_expected_event(ec, RDMA_CM_EVENT_ROUTE_RESOLVED, 5000);
             //  create QP
-
-            //
+            rdma_create_qp(conn_id.get(), conn_id.get()->pd, &qp_init_attr);
+            //  connect
+            rdma_conn_param cp{};
+            rdma_connect(conn_id.get(), &cp);
+            limen::Event est_event = get_expected_event(ec, RDMA_CM_EVENT_ESTABLISHED, 5000);
+            printf("done\n");
+            return 0;
         } catch (limen::VerbsError& e) {
             
             return 7;

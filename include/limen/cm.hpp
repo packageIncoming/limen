@@ -50,7 +50,7 @@ public:
     Event(Event&&) noexcept;
     Event& operator=(Event&&) noexcept;
 
-    rdma_cm_event_type type()   const noexcept;
+    rdma_cm_event_type type()   const noexcept {return _type;}
     const char        *name()   const noexcept {return _event ? rdma_event_str(_type) : nullptr;}
     int                status() const noexcept {return _status;}
     rdma_cm_id        *id()     const noexcept {return _id;}
