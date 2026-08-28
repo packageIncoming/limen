@@ -1,5 +1,6 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#include <rdma/rdma_cma.h>
 #endif
 
 #include <array>
@@ -683,13 +684,35 @@ static size_t verify_pattern(const void *buf, size_t len, unsigned iter)
     return 0;
 }
 
+limen::Event get_expected_event(limen::EventChannel& event_channel, rdma_cm_event_type event_type, int timeout_ms)
+{
+    //  wait for event to appear
+    if (event_channel.wait(timeout_ms) != 0)
+    {
+        //  throw error
+        throw limen::VerbsError("get_expected_event fail: timeout",ETIMEDOUT);
+    }
+    //  an event should be available now
+    limen::Event event(event_channel);
+    //  make sure it matches what the caller wanted
+    if (event.type() != event_type)
+    {
+        //  throw error
+        throw limen::VerbsError(
+            std::format("get_expected_event fail: unexpected event type %s", event.name()).c_str(),
+            EINVAL
+        );
+    }
+
+    return event;
+}
 
 
 int main(int argc, char* argv[])
 {
     // Misc. variables
     pingpong_parsed_args args{};
-    // parse args
+    // parse argsq
     parse_argv(argc,argv,&args);
 
     //  Variables:
@@ -793,7 +816,11 @@ int main(int argc, char* argv[])
         return exit_rc;
     }
 
-    //  create protection domain
+    //  create event channel
+    limen::EventChannel ec = limen::EventChannel::create();
+
+    //  create connection ID
+    limen::ConnectionId conn_id(ec,RDMA_PS_TCP);
 
     //  fill qp_init_attr.cap
     //  qp_init_attr's send_cq and recv_cq filled in Endpoint constructor
@@ -855,12 +882,37 @@ int main(int argc, char* argv[])
     if (is_client)
     {
         //  client
-        if (exchange_as_client(&local_socket_fd,&remote_identity,&local_identity,args.tcp_port,args.addr) != 0)
-        {
-            fprintf(stderr,"side channel exchange as client failed\n");
-            exit_rc = EXIT_SIDE_CHANNEL_ERROR;
-            return exit_rc;
+        // if (exchange_as_client(&local_socket_fd,&remote_identity,&local_identity,args.tcp_port,args.addr) != 0)
+        // {
+        //     fprintf(stderr,"side channel exchange as client failed\n");
+        //     exit_rc = EXIT_SIDE_CHANNEL_ERROR;
+        //     return exit_rc;
+        // }
+        try {
+            //  resolve address
+            sockaddr_in server_sockaddr{};
+            //  construct the sockaddr_in struct that points to the server
+            server_sockaddr.sin_family = AF_INET;
+            server_sockaddr.sin_port = htons(args.tcp_port);
+            if (inet_pton(AF_INET, args.addr, &server_sockaddr.sin_addr) != 1)
+            {
+                perror("exchange_as_client:inet_pton");
+                // close(*local_socket_fd);
+                return 1;
+            }
+            rdma_resolve_addr(conn_id.get(), nullptr, (struct sockaddr*) &server_sockaddr, 5000);
+            limen::Event resolve_addr_event = get_expected_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, 5000);
+
+            //  resolve route
+
+            //  create QP
+
+            //
+        } catch (limen::VerbsError& e) {
+            
+            return 7;
         }
+
 
     } else {
         //  server

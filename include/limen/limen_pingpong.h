@@ -4,6 +4,8 @@
 #include <climits>
 #include <infiniband/verbs.h>
 
+#include "limen/cm.hpp"
+
 #define limen_pingpong
 
 #define SEND_QUEUE_DEPTH 16
@@ -79,5 +81,8 @@ int post_recv(uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t m
 int post_send(bool signaled, uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t message_size, uint32_t lkey);
 
 std::string wc_to_str(ibv_wc *wc);
+
+//  calls ec::wait(timeout)
+limen::Event get_expected_event(limen::EventChannel& ec, rdma_cm_event_type event_type, int timeout_ms);
 
 #endif

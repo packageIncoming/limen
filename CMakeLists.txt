@@ -21,7 +21,7 @@ message(STATUS "libibverbs: ${IBVERBS_LIB}")
 message(STATUS "librdmacm: ${RDMACM_LIB}")
 
 # Shared library. Named "limen" so the test probes' -llimen resolves.
-add_library(limen STATIC src/limen_common.cpp src/verbs.cpp)
+add_library(limen STATIC src/limen_common.cpp src/verbs.cpp src/cm.cpp)
 target_compile_options(limen PRIVATE -Wall -Wextra)
 
 target_include_directories(limen
@@ -50,6 +50,12 @@ add_executable(static_contract tests/static_contract.cpp)
 target_compile_options(static_contract PRIVATE -Wall -Wextra)
 target_link_libraries(static_contract PRIVATE limen)
 
+add_executable(cm_static_contract tests/cm_static_contract.cpp)
+target_compile_options(cm_static_contract PRIVATE -Wall -Wextra)
+target_link_libraries(cm_static_contract PRIVATE limen)
+
 # Must NOT compile. Excluded from the default build; the suite asks for it directly.
 add_executable(copy_must_not_compile EXCLUDE_FROM_ALL tests/copy_must_not_compile.cpp)
 target_link_libraries(copy_must_not_compile PRIVATE limen)
+add_executable(no_raw_private_data EXCLUDE_FROM_ALL tests/no_raw_private_data.cpp)
+target_link_libraries(no_raw_private_data PRIVATE limen)
