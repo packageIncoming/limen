@@ -108,6 +108,20 @@ limen::ProtectionDomain::ProtectionDomain(const limen::Context& device_context)
 
 }
 
+//  Same, against a context this object does not own (rdma_cm_id->verbs).
+limen::ProtectionDomain::ProtectionDomain(ibv_context* device_context)
+{
+    ibv_pd* pd = ibv_alloc_pd(device_context);
+    if (pd == nullptr)
+    {
+        int e = errno;
+        std::fprintf(stderr, "ibv_alloc_pd: %s\n", strerror(e));
+        throw VerbsError("ibv_alloc_pd",e);
+    }
+    _h = ResourceHandle<ibv_pd, ibv_dealloc_pd>(pd);
+
+}
+
 int limen::ProtectionDomain::close() noexcept
 {
     if (_h.get()) { trace_release("pd"); }
@@ -126,6 +140,26 @@ limen::CompletionQueue::CompletionQueue(const Context& device_context, int cqe, 
 {
     ibv_cq* completion_queue = ibv_create_cq(
         device_context.get(),
+        cqe,
+        cq_context,
+        channel,
+        comp_vector
+    );
+    if (completion_queue == nullptr)
+    {
+        //  failed to create completion queue
+        int e = errno;
+        std::fprintf(stderr, "ibv_create_cq: %s\n", strerror(e));
+        throw VerbsError("ibv_create_cq",e);
+    }
+    _h = ResourceHandle<ibv_cq, ibv_destroy_cq>(completion_queue);
+}
+
+//  Same, against a context this object does not own (rdma_cm_id->verbs).
+limen::CompletionQueue::CompletionQueue(ibv_context* device_context, int cqe, void* cq_context, ibv_comp_channel* channel, int comp_vector)
+{
+    ibv_cq* completion_queue = ibv_create_cq(
+        device_context,
         cqe,
         cq_context,
         channel,

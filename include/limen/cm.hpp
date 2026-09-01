@@ -75,4 +75,9 @@ struct ConnInfo {                            /* the handshake payload */
 };                                           /* 16 bytes; must fit in 56 */
 static_assert(sizeof(ConnInfo) == 16, "unexpected layout");
 static_assert(sizeof(ConnInfo) <= 56,  "exceeds the rdma_connect private data limit");
+
+ConnInfo to_wire_format(ConnInfo src);
+
+ConnInfo from_wire_format(ConnInfo src);
+
 } /* namespace limen */

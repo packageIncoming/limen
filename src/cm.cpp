@@ -2,6 +2,7 @@
 #include "limen/verbs.hpp"
 #include <cstdlib>
 #include <cstring>
+#include <endian.h>
 #include <rdma/rdma_cma.h>
 #include <sys/poll.h>
 #include <utility>
@@ -91,7 +92,10 @@ int limen::ConnectionId::close() noexcept
     //  need to free the QP (rdma_destroy_qp) before the rdma_cm_id
     if (this->_cm_id == nullptr) return 0;
 
-    rdma_destroy_qp(_cm_id);
+    if (_cm_id->qp)
+    {
+        rdma_destroy_qp(_cm_id);
+    }
     int rc = rdma_destroy_id(_cm_id);
     if (rc == 0) _cm_id = nullptr;
     return rc;
@@ -176,4 +180,24 @@ size_t limen::Event::copy_private_data(void* dst, size_t len) const noexcept
     size_t amount = std::min<size_t>(len,_pd_size);
     memcpy(dst, _pd, amount);
     return amount;
+}
+
+//  Converts from host to network (big-endian)
+limen::ConnInfo limen::to_wire_format(limen::ConnInfo src)
+{
+    return limen::ConnInfo(
+        htobe64(src.addr),
+        htobe32(src.rkey),
+        htobe32(src.length)
+    );
+
+}
+
+limen::ConnInfo limen::from_wire_format(limen::ConnInfo src)
+{
+    return limen::ConnInfo(
+        be64toh(src.addr),
+        be32toh(src.rkey),
+        be32toh(src.length) 
+    );
 }

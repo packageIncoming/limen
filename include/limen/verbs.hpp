@@ -83,6 +83,8 @@ class ProtectionDomain {
 public:
     ProtectionDomain() noexcept = default;
     explicit ProtectionDomain(const Context& device_context);        
+    //  borrowed context (e.g. rdma_cm_id->verbs), not owned by this object
+    explicit ProtectionDomain(ibv_context* device_context);
     ~ProtectionDomain() noexcept {close();}                              
     ProtectionDomain(const ProtectionDomain&)                = delete;
     ProtectionDomain& operator=(const ProtectionDomain&)     = delete;
@@ -100,6 +102,8 @@ class CompletionQueue {
 public:
     CompletionQueue() noexcept = default;
     explicit CompletionQueue(const Context& device_context, int cqe, void* cq_context, ibv_comp_channel* channel, int comp_vector);        
+    //  borrowed context (e.g. rdma_cm_id->verbs), not owned by this object
+    explicit CompletionQueue(ibv_context* device_context, int cqe, void* cq_context, ibv_comp_channel* channel, int comp_vector);
     ~CompletionQueue() noexcept {close();}                              
     CompletionQueue(const CompletionQueue&)                = delete;
     CompletionQueue& operator=(const CompletionQueue&)     = delete;

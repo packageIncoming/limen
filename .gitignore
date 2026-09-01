@@ -12,3 +12,6 @@ cmake_install.cmake
 Makefile
 src/limen_pingpong.cpp
 liblimen_common.so
+build-asan/cm_static_contract
+build-asan/liblimen.a
+build-asan/static_contract

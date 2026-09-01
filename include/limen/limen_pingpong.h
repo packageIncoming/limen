@@ -33,42 +33,9 @@ typedef struct pingpong_parsed_args {
     const char* addr{nullptr};
 } pingpong_parsed_args;
 
-typedef struct {
-    uint32_t qpn;
-    uint32_t psn;   //  MUST BE 24 BIT, SCALE WITH U32_TO_U24_MASK
-    ibv_gid gid;
-    uint16_t lid;   //  FROM PORT ATTRIBUTES
-
-} endpoint_identity;
-
 void parse_argv(int arg, char* argv[], pingpong_parsed_args* args_container);
 
 void print_help(bool to_error=false);
-
-
-
-int exchange_as_server(
-    int* local_socket_fd,
-    int* remote_socket_fd,
-    endpoint_identity* remote_identity,
-    endpoint_identity* local_identity,
-    int tcp_port
-);
-
-int exchange_as_client(
-    int* local_socket_fd,
-    endpoint_identity* remote_identity,
-    endpoint_identity* local_identity,
-    int tcp_port,
-    const char* server_addr
-);
-
-// turns it into "qpn={qpn in hex} psn={psn in hex } gid={gid string} lid={lid in hex}"
-std::string identity_to_str(endpoint_identity* identity);
-
-int send_endpoint_identity(int fd, endpoint_identity* local_identity);
-
-int recv_endpoint_identity(int fd, endpoint_identity* remote_identity);
 
 void print_reset_init_fail(int rc, ibv_qp_attr* qp_attr);
 
@@ -84,5 +51,7 @@ std::string wc_to_str(ibv_wc *wc);
 
 //  calls ec::wait(timeout)
 limen::Event get_expected_event(limen::EventChannel& ec, rdma_cm_event_type event_type, int timeout_ms);
+
+void fill_qp_init_attr(ibv_qp_init_attr* qp_init_attr, ibv_device_attr* device_attr, pingpong_parsed_args* args);
 
 #endif
