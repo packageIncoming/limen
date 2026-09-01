@@ -45,6 +45,11 @@ add_executable(limen_pingpong src/limen_pingpong.cpp)
 target_compile_options(limen_pingpong PRIVATE -Wall -Wextra)
 target_link_libraries(limen_pingpong PRIVATE limen)
 
+# Executable 3: limen_onesided
+add_executable(limen_onesided src/limen_onesided.cpp)
+target_compile_options(limen_onesided PRIVATE -Wall -Wextra)
+target_link_libraries(limen_onesided PRIVATE limen)
+
 # Tests
 add_executable(static_contract tests/static_contract.cpp)
 target_compile_options(static_contract PRIVATE -Wall -Wextra)
