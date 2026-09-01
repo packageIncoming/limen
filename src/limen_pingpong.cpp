@@ -535,14 +535,15 @@ int main(int argc, char* argv[])
             
             //  create QP
             rdma_create_qp(conn_id.get(), pd.get(), &qp_init_attr);
-            std::cout << std::format("cm: qp created qp_num={:#08x}\n",conn_id.qp()->qp_num);
+            remote_conn_id = std::move(conn_id);
+            std::cout << std::format("cm: qp created qp_num={:#08x}\n",remote_conn_id.qp()->qp_num);
             
             // //  post work requests
             if (!args.no_recv)
             {
                 for (uint32_t slot =0; slot < args.rx_depth; slot++)
                 {
-                    rc = post_recv(slot, (uint64_t)(uintptr_t)recv_mr.get()->addr, conn_id.qp(), args.message_size,  recv_mr.get()->lkey);
+                    rc = post_recv(slot, (uint64_t)(uintptr_t)recv_mr.get()->addr, remote_conn_id.qp(), args.message_size,  recv_mr.get()->lkey);
                     if (rc !=0)
                     {
                         //  failed to allocate slot
@@ -569,17 +570,17 @@ int main(int argc, char* argv[])
             cp.retry_count         = 7;
             cp.rnr_retry_count     = (uint8_t)args.rnr_retry;
 
-            rdma_connect(conn_id.get(), &cp);
-            std::cout << "cm: connect finished\n";
+            rdma_connect(remote_conn_id.get(), &cp);
 
             e = get_expected_event(ec, RDMA_CM_EVENT_ESTABLISHED, 5000);
+            std::cout << "cm: connect finished\n";
+
             limen::ConnInfo remote_raw{};
             e.copy_private_data(&remote_raw, sizeof(remote_raw));
             remote_conninfo = limen::from_wire_format(remote_raw);
             std::cout << std::format("cm: connect private_data_len={}\n",sizeof(remote_raw));
             std::cout << "cm: event ESTABLISHED" << std::endl;
 
-            remote_conn_id = std::move(conn_id);
         } 
         catch (limen::VerbsError& e) {
             std::cout << e.what() << std::endl;
@@ -600,7 +601,7 @@ int main(int argc, char* argv[])
             std::cout << "cm: listening on server..."<<std::endl;
             //  this event has the new id associated with the client
             e = get_expected_event(ec, RDMA_CM_EVENT_CONNECT_REQUEST, -1);
-            std::cout << "cm: event CONNECT_REQUEST" << std::endl;
+            std::cout << "cm: event CONNECT_REQUEST adopted" << std::endl;
 
             //  adopt event->id as 2nd identifier
             limen::ConnectionId client_conn_id = limen::ConnectionId::adopt(e.id());
@@ -701,13 +702,6 @@ int main(int argc, char* argv[])
 
 
     }
-
-    // std::cout << std::format(
-    //     "local info: addr={:#x} rkey={:#x} length={:#x}\n",
-    //     (uint64_t)(uintptr_t)recv_mr.get()->addr,
-    //     recv_mr.get()->rkey,
-    //     recv_mr.get()->length
-    // );
 
     std::cout << std::format(
         "peer: addr={:#016x} rkey={:#08x} length={}\n",
@@ -893,7 +887,7 @@ int main(int argc, char* argv[])
     limen::Event e(ec);
     if (e.type() != RDMA_CM_EVENT_DISCONNECTED && e.type() != RDMA_CM_EVENT_TIMEWAIT_EXIT)
     {
-        throw limen::VerbsError("bad disconnect",EINVAL);
+        return 7;
     }
     std::cout << "cm: event DISCONNECTED" << std::endl;
 

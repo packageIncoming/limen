@@ -8,12 +8,18 @@
 #   ./scripts/trd-05-tests.sh --peer 10.0.0.1 --gid 3                    plus runtime
 #   ./scripts/trd-05-tests.sh --peer 10.0.0.1 --gid 3 --ssh you@10.0.0.1 fully automatic
 #
+# Single-host, two-card topology (peer lives in a network namespace):
+#
+#   ./scripts/trd-05-tests.sh --dev rocep1s0f0 --peer-dev rocep4s0f0 \
+#                             --gid 3 --peer 192.168.100.2 --peer-cmd "sudo limen-b"
+#
 # Exit 0 only when every test passes and none was skipped.
 
 set -uo pipefail
 
 BIN="./build/limen_pingpong"
 DEV=""; GID=""; PEER=""; SSH_PEER=""
+PEER_DEV=""; PEER_CMD=""
 TCP_BASE=18700
 PASS=0; FAIL=0; SKIP=0
 
@@ -29,8 +35,13 @@ hdr() { echo -e "\n${B}$1${N}"; }
 TMPDIR="$(mktemp -d)"
 PORT_SEQ=0
 cleanup() {
-  [[ -n "$SSH_PEER" ]] && ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
-      "pkill -f limen_pingpong" >/dev/null 2>&1 || true
+  if [[ -n "$PEER_CMD" ]]; then
+    $PEER_CMD pkill -f limen_pingpong >/dev/null 2>&1 || true
+    sudo pkill -f limen_pingpong      >/dev/null 2>&1 || true
+  elif [[ -n "$SSH_PEER" ]]; then
+    ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
+        "pkill -f limen_pingpong" >/dev/null 2>&1 || true
+  fi
   rm -rf "$TMPDIR"
 }
 trap cleanup EXIT INT TERM
@@ -42,7 +53,12 @@ while [[ $# -gt 0 ]]; do
     --gid) GID="${2:-}"; shift 2 ;;
     --peer) PEER="${2:-}"; shift 2 ;;
     --ssh) SSH_PEER="${2:-}"; shift 2 ;;
-    -h|--help) echo "usage: $0 [--dev NAME] [--gid N] [--peer IP] [--ssh user@host]"; exit 1 ;;
+    --peer-dev) PEER_DEV="${2:-}"; shift 2 ;;
+    --peer-cmd) PEER_CMD="${2:-}"; shift 2 ;;
+    -h|--help)
+      echo "usage: $0 [--dev NAME] [--gid N] [--peer IP] [--ssh user@host]"
+      echo "          [--peer-dev NAME] [--peer-cmd 'sudo limen-b']"
+      exit 1 ;;
     *) echo "unknown argument: $1"; exit 1 ;;
   esac
 done
@@ -51,23 +67,59 @@ CXX="${CXX:-c++}"; STD="-std=c++20"; INC="-Iinclude"
 
 echo -e "${B}=== Limen TRD-05: Connection Management ===${N}"
 
+# ── Peer control ──────────────────────────────────────────────────────
+# Three modes, in priority order:
+#   --peer-cmd  the peer is on this host behind a wrapper (namespace, container)
+#   --ssh       the peer is a separate machine
+#   neither     prompt the operator to start it by hand
+#
+# $3, when given, is a file the peer's stdout and stderr are captured into,
+# which is how R6 inspects the server side.
+start_peer() {
+  local port="$1" extra="${2:-}" logfile="${3:-/dev/null}"
+  if [[ -n "$PEER_CMD" ]]; then
+    $PEER_CMD "$BIN" -d "$PEER_DEV" -g "$GID" -t "$port" $extra >"$logfile" 2>&1 &
+    sleep 2
+  elif [[ -n "$SSH_PEER" ]]; then
+    ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
+      "cd '$(pwd)' && nohup $BIN -d $PEER_DEV -g $GID -t $port $extra >/tmp/limen-srv.log 2>&1 & disown" \
+      >/dev/null 2>&1 || true
+    sleep 2
+  else
+    echo "      on the peer:  $BIN -d $PEER_DEV -g $GID -t $port $extra" >&2
+    read -rp "      press enter once it is running... " >&2
+  fi
+}
+
+kill_peer() {
+  local port="$1"
+  if [[ -n "$PEER_CMD" ]]; then
+    $PEER_CMD pkill -f "limen_pingpong.*-t $port" >/dev/null 2>&1 || true
+    sudo pkill -f "limen_pingpong.*-t $port"      >/dev/null 2>&1 || true
+  elif [[ -n "$SSH_PEER" ]]; then
+    ssh -o BatchMode=yes "$SSH_PEER" \
+        "pkill -f 'limen_pingpong.*-t $port'" >/dev/null 2>&1 || true
+  fi
+}
+
+# Echo whatever the peer wrote, whichever transport started it.
+peer_log() {
+  local logfile="${1:-/dev/null}"
+  if [[ -n "$PEER_CMD" ]]; then
+    cat "$logfile" 2>/dev/null || true
+  elif [[ -n "$SSH_PEER" ]]; then
+    ssh -o BatchMode=yes "$SSH_PEER" "cat /tmp/limen-srv.log" 2>/dev/null || true
+  fi
+}
+
 # run_pair "<server args>" "<client args>" <timeout>
 run_pair() {
   local sargs="$1" cargs="$2" tmo="${3:-60}" port
   port=$(next_port)
-  if [[ -n "$SSH_PEER" ]]; then
-    ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
-      "cd '$(pwd)' && nohup $BIN -d $DEV -g $GID -t $port $sargs >/dev/null 2>&1 & disown" \
-      >/dev/null 2>&1 || true
-    sleep 2
-  else
-    echo "      on the peer:  $BIN -d $DEV -g $GID -t $port $sargs" >&2
-    read -rp "      press enter once it is running... " >&2
-  fi
+  start_peer "$port" "$sargs"
   timeout "$tmo" "$BIN" -d "$DEV" -g "$GID" -t "$port" $cargs "$PEER" 2>&1
   local rc=$?
-  [[ -n "$SSH_PEER" ]] && ssh -o BatchMode=yes "$SSH_PEER" \
-      "pkill -f 'limen_pingpong.*-t $port'" >/dev/null 2>&1 || true
+  kill_peer "$port"
   echo "__EXIT__${rc}"
 }
 exit_of() { grep -oE '__EXIT__[0-9]+' <<<"$1" | grep -oE '[0-9]+$'; }
@@ -182,19 +234,18 @@ test_client_event_sequence() {                                        # R5
 
 test_server_adopts_new_id() {                                         # R6
   hdr "R6: server reports CONNECT_REQUEST and adopts the new id"
-  # The client's own output cannot show this; check the server side over ssh.
-  if [[ -z "$SSH_PEER" ]]; then
-    sk "requires --ssh to capture the server's output"
+  # The client's own output cannot show this; the server's must be captured.
+  if [[ -z "$SSH_PEER" && -z "$PEER_CMD" ]]; then
+    sk "requires --ssh or --peer-cmd to capture the server's output"
     return
   fi
   local port; port=$(next_port)
-  ssh -o BatchMode=yes "$SSH_PEER" \
-    "cd '$(pwd)' && nohup $BIN -d $DEV -g $GID -t $port -n 5 >/tmp/limen-srv.log 2>&1 & disown" \
-    >/dev/null 2>&1 || true
-  sleep 2
+  local srvlog="$TMPDIR/srv-${port}.log"
+  start_peer "$port" "-n 5" "$srvlog"
   timeout 60 "$BIN" -d "$DEV" -g "$GID" -t "$port" -n 5 "$PEER" >/dev/null 2>&1 || true
   sleep 1
-  local srv; srv=$(ssh -o BatchMode=yes "$SSH_PEER" "cat /tmp/limen-srv.log" 2>/dev/null || true)
+  local srv; srv=$(peer_log "$srvlog")
+  kill_peer "$port"
   if grep -qE 'CONNECT_REQUEST.*adopted' <<<"$srv"; then
     ok "server adopted the delivered id"
   else
@@ -287,7 +338,13 @@ run_regression() {
 
 test_trd02_regression() {                                             # R11
   hdr "R11: the TRD-02 suite passes against the untouched limen_connect"
-  local r; r=$(run_regression 2 --dev "$DEV" --gid "$GID" --peer "$PEER" ${SSH_PEER:+--ssh "$SSH_PEER"})
+  # An array, not ${VAR:+...} expansion: --peer-cmd's value contains a space
+  # ("sudo limen-b") and word-splitting would shred it into separate arguments.
+  local args=(--dev "$DEV" --gid "$GID" --peer "$PEER")
+  [[ -n "$SSH_PEER" ]] && args+=(--ssh      "$SSH_PEER")
+  [[ -n "$PEER_DEV" ]] && args+=(--peer-dev "$PEER_DEV")
+  [[ -n "$PEER_CMD" ]] && args+=(--peer-cmd "$PEER_CMD")
+  local r; r=$(run_regression 2 "${args[@]}")
   case "$r" in
     PASS)    ok "manual bringup still green — the reference is intact" ;;
     MISSING) sk "scripts/trd-02-tests.sh not present" ;;
@@ -298,7 +355,13 @@ test_trd02_regression() {                                             # R11
 
 test_trd03_regression() {                                             # R11
   hdr "R11: the TRD-03 suite passes against the ported limen_pingpong"
-  local r; r=$(run_regression 3 --dev "$DEV" --gid "$GID" --peer "$PEER" ${SSH_PEER:+--ssh "$SSH_PEER"})
+  # An array, not ${VAR:+...} expansion: --peer-cmd's value contains a space
+  # ("sudo limen-b") and word-splitting would shred it into separate arguments.
+  local args=(--dev "$DEV" --gid "$GID" --peer "$PEER")
+  [[ -n "$SSH_PEER" ]] && args+=(--ssh      "$SSH_PEER")
+  [[ -n "$PEER_DEV" ]] && args+=(--peer-dev "$PEER_DEV")
+  [[ -n "$PEER_CMD" ]] && args+=(--peer-cmd "$PEER_CMD")
+  local r; r=$(run_regression 3 "${args[@]}")
   case "$r" in
     PASS)    ok "transfer behaviour unchanged by the port" ;;
     MISSING) sk "scripts/trd-03-tests.sh not present" ;;
@@ -325,15 +388,7 @@ test_no_leaks() {                                                     # R11
     local name="${spec%%:*}" rest="${spec#*:}"
     local sargs="${rest%%:*}" cargs="${rest#*:}"
     port=$(next_port)
-    if [[ -n "$SSH_PEER" ]]; then
-      ssh -o BatchMode=yes "$SSH_PEER" \
-        "cd '$(pwd)' && nohup $BIN -d $DEV -g $GID -t $port $sargs >/dev/null 2>&1 & disown" \
-        >/dev/null 2>&1 || true
-      sleep 2
-    else
-      echo "      on the peer:  $BIN -d $DEV -g $GID -t $port $sargs"
-      read -rp "      press enter once it is running... "
-    fi
+    start_peer "$port" "$sargs"
     log="$TMPDIR/vg-${name}.log"
     timeout 150 valgrind --leak-check=full --show-leak-kinds=definite \
       "$BIN" -d "$DEV" -g "$GID" -t "$port" $cargs "$PEER" >/dev/null 2>"$log" || true
@@ -361,6 +416,16 @@ test_side_channel_removed
 
 if [[ -z "$DEV" ]] && command -v ibv_devices >/dev/null 2>&1; then
   DEV=$(ibv_devices 2>/dev/null | awk 'NR>2 && NF {print $1; exit}' || true)
+fi
+
+# The peer defaults to the same device name; on a single host with two cards
+# they differ, so --peer-dev overrides it.
+[[ -z "$PEER_DEV" ]] && PEER_DEV="$DEV"
+
+# Cache sudo credentials up front so backgrounded peer launches never block
+# on a password prompt in the middle of the suite.
+if [[ "$PEER_CMD" == sudo* ]]; then
+  sudo -v || { echo "sudo credentials required for --peer-cmd"; exit 1; }
 fi
 
 if [[ -z "$PEER" || -z "$GID" || -z "$DEV" ]]; then
