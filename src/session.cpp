@@ -73,14 +73,12 @@ namespace limen
         }
 
         //  resolve addr
-        // std::cout << std::format("cm: resolving {}:{}\n",peer,config.tcp_port);
         Event e;
         if (rdma_resolve_addr(conn_id.get(), nullptr, (struct sockaddr*) &remote_sockaddr, 5000) != 0)
         {
             throw SessionError("create_client_session:rdma_resolve_addr", errno);
         }
         e = get_expected_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, 5000);
-        // std::cout << "cm: event ADDR_RESOLVED" << std::endl;
         
         //  resolve route
         if (rdma_resolve_route(conn_id.get(), 5000) != 0)
@@ -88,7 +86,6 @@ namespace limen
             throw SessionError("create_client_session:rdma_resolve_route", errno);
         }
         e = get_expected_event(ec, RDMA_CM_EVENT_ROUTE_RESOLVED, 5000);
-        // std::cout << "cm: event ROUTE_RESOLVED" << std::endl;
 
         //  get device attributes
         ibv_context* device_context = conn_id.get()->verbs;
@@ -100,7 +97,6 @@ namespace limen
             throw SessionError("create_client_session:ibv_query_device",errno);
         }
 
-
         //  fill qp_init_attr
         ibv_qp_init_attr qp_init_attr{};
         uint32_t recv_wr = std::min(config.recv_wr, (uint32_t)device_attr.max_qp_wr);
@@ -108,7 +104,6 @@ namespace limen
         int      cqe     = config.cqe > 0 ? std::min(config.cqe, device_attr.max_cqe)
                                         : device_attr.max_cqe;
         fill_qp_init_attr(&qp_init_attr, send_wr,recv_wr);
-
 
         //  device has now been decided, create the wrapper instances
         ProtectionDomain pd = ProtectionDomain(conn_id.get()->verbs);
@@ -120,28 +115,11 @@ namespace limen
         qp_init_attr.send_cq = cq.get();
         qp_init_attr.recv_cq = cq.get();
 
-        // //  print out qp: line from filled qp_init_attr 
-        // printf(
-        //     "qp: type=RC max_send_wr=%i max_recv_wr=%i max_send_sge=%i max_recv_sge=%i\n",
-        //     qp_init_attr.cap.max_send_wr,
-        //     qp_init_attr.cap.max_recv_wr,
-        //     qp_init_attr.cap.max_send_sge,
-        //     qp_init_attr.cap.max_recv_sge
-        // );
-        // printf("recv: posted=%u depth=%u size=%" PRIu64 "\n",
-        //     config.recv_wr,
-        //     qp_init_attr.cap.max_recv_wr,
-        //     args.message_size);
-        // printf("cq: cqe=%i (requested %i)\n",
-        //     cq.get()->cqe,
-        //     config.cqe);
-        
         //  create QP
         if (rdma_create_qp(conn_id.get(), pd.get(), &qp_init_attr) != 0)
         {
             throw SessionError("create_client_session:rdma_create_qp", errno);
         }
-        // std::cout << std::format("cm: qp created qp_num={:#08x}\n",conn_id.qp()->qp_num);
         
         // //  post work requests
         for (uint32_t slot =0; slot < config.recv_wr; slot++)
@@ -175,13 +153,10 @@ namespace limen
         }
 
         e = get_expected_event(ec, RDMA_CM_EVENT_ESTABLISHED, 5000);
-        // std::cout << "cm: connect finished\n";
 
         ConnInfo remote_raw{};
         e.copy_private_data(&remote_raw, sizeof(remote_raw));
         ConnInfo peer_info = from_wire_format(remote_raw);
-        // std::cout << std::format("cm: connect private_data_len={}\n",sizeof(remote_raw));
-        // std::cout << "cm: event ESTABLISHED" << std::endl;
 
         Session s;
         s._ec        = std::move(ec);
@@ -215,10 +190,8 @@ namespace limen
         {
             throw SessionError("create_server_session:rdma_listen", errno);
         }
-        // std::cout << "cm: listening on server..."<<std::endl;
         //  this event has the new id associated with the client
         e = get_expected_event(ec, RDMA_CM_EVENT_CONNECT_REQUEST, -1);
-        // std::cout << "cm: event CONNECT_REQUEST adopted" << std::endl;
 
         //  adopt event->id as 2nd identifier
         ConnectionId client_conn_id = ConnectionId::adopt(e.id());
@@ -247,7 +220,6 @@ namespace limen
 
         fill_qp_init_attr(&qp_init_attr, send_wr,recv_wr);
 
-
         //  device has now been decided, create the wrapper instances
         ProtectionDomain pd = ProtectionDomain(client_conn_id.get()->verbs);
         MemoryRegion recv_mr = MemoryRegion(pd,config.recv_size,config.access_flags);
@@ -258,30 +230,11 @@ namespace limen
         qp_init_attr.send_cq = cq.get();
         qp_init_attr.recv_cq = cq.get();
 
-
-
-        // //  print out qp: line from filled qp_init_attr 
-        // printf(
-        //     "qp: type=RC max_send_wr=%i max_recv_wr=%i max_send_sge=%i max_recv_sge=%i\n",
-        //     qp_init_attr.cap.max_send_wr,
-        //     qp_init_attr.cap.max_recv_wr,
-        //     qp_init_attr.cap.max_send_sge,
-        //     qp_init_attr.cap.max_recv_sge
-        // );
-        // printf("recv: posted=%u depth=%u size=%" PRIu64 "\n",
-        //     config.recv_wr,
-        //     qp_init_attr.cap.max_recv_wr,
-        //     args.message_size);
-        // printf("cq: cqe=%i (requested %i)\n",
-        //     cq.get()->cqe,
-        //     config.cqe);
-
         //  create QP on adopted identifier
         if (rdma_create_qp(client_conn_id.get(), pd.get(), &qp_init_attr) != 0)
         {
             throw SessionError("create_server_session:rdma_create_qp", errno);
         }
-        // std::cout << std::format("cm: qp created qp_num={:#08x}\n",client_conn_id.qp()->qp_num);
 
         //  accept w/ own payload
         rdma_conn_param cp{};
@@ -299,8 +252,6 @@ namespace limen
         cp.rnr_retry_count     = (uint8_t)config.rnr_retry_count;
 
         // //  post work requests
-        //client_conn_id.qp()
-        // //  post work requests
         for (uint32_t slot =0; slot < config.recv_wr; slot++)
         {
             int rc = post_recv(slot, (uint64_t)(uintptr_t)recv_mr.get()->addr, client_conn_id.qp(), config.recv_slot_size,  recv_mr.get()->lkey);
@@ -316,8 +267,6 @@ namespace limen
             throw SessionError("create_server_session:rdma_accept", errno);
         }
         e = get_expected_event(ec, RDMA_CM_EVENT_ESTABLISHED, -1);
-        // std::cout << std::format("cm: connect private_data_len={}\n",sizeof(remote_raw));
-        // std::cout << "cm: event ESTABLISHED" << std::endl;
         Session s;
         s._ec        = std::move(ec);
         s._id        = std::move(client_conn_id);
@@ -374,7 +323,7 @@ namespace limen
 
     void Session::wait_for_disconnect(int timeout_ms)
     {
-    //  wait for event to appear
+        //  wait for event to appear
         if (_ec.wait(timeout_ms) != 0)
         {
             //  throw error
