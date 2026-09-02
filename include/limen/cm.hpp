@@ -38,6 +38,8 @@ public:
     rdma_cm_id *get() const noexcept {return this->_cm_id;}
     ibv_qp     *qp()  const noexcept {return this->_cm_id ?  this->_cm_id->qp : nullptr;}
     int close() noexcept;
+    void destroy_qp() noexcept;
+    
 private:
     rdma_cm_id* _cm_id = nullptr;
 };
@@ -85,5 +87,8 @@ static_assert(sizeof(ConnInfo) <= 56,  "exceeds the rdma_connect private data li
 ConnInfo to_wire_format(ConnInfo src);
 
 ConnInfo from_wire_format(ConnInfo src);
+
+Event get_expected_event(EventChannel& event_channel, rdma_cm_event_type event_type, int timeout_ms);
+
 
 } /* namespace limen */

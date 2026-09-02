@@ -112,7 +112,7 @@ namespace limen
         }
     }
 
-    std::string wc_to_str(ibv_wc *wc)
+    std::string wc_to_str(const ibv_wc *wc)
     {
         if (wc->status == IBV_WC_SUCCESS)
         {

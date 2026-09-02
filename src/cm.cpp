@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <endian.h>
+#include <format>
 #include <rdma/rdma_cma.h>
 #include <sys/poll.h>
 #include <utility>
@@ -99,6 +100,14 @@ int limen::ConnectionId::close() noexcept
     int rc = rdma_destroy_id(_cm_id);
     if (rc == 0) _cm_id = nullptr;
     return rc;
+}
+
+void limen::ConnectionId::destroy_qp() noexcept
+{
+    if (_cm_id->qp)
+    {
+        rdma_destroy_qp(_cm_id);
+    }
 }
 
 limen::ConnectionId& limen::ConnectionId::operator=(limen::ConnectionId&& o) noexcept
@@ -207,4 +216,27 @@ limen::ConnInfo limen::from_wire_format(limen::ConnInfo src)
         be32toh(src.rkey),
         be32toh(src.length) 
     );
+}
+
+limen::Event limen::get_expected_event(limen::EventChannel& event_channel, rdma_cm_event_type event_type, int timeout_ms)
+{
+    //  wait for event to appear
+    if (event_channel.wait(timeout_ms) != 0)
+    {
+        //  throw error
+        throw limen::VerbsError("get_expected_event fail: timeout",ETIMEDOUT);
+    }
+    //  an event should be available now
+    limen::Event event(event_channel);
+    //  make sure it matches what the caller wanted
+    if (event.type() != event_type)
+    {
+        //  throw error
+        throw limen::VerbsError(
+            std::format("get_expected_event fail: unexpected event type {}", event.name()).c_str(),
+            EINVAL
+        );
+    }
+
+    return event;
 }
