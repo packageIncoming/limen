@@ -31,6 +31,10 @@ int find_device_index(ibv_device** list, const char* name) noexcept
 }
 } /* anonymous namespace */
 
+int limen::find_device_by_name(ibv_device **devices_list, const char *device_name)
+{
+    return find_device_index(devices_list, device_name);
+}
 
 limen::VerbsError::VerbsError(const char*op, int err):std::runtime_error(std::format("{}: {}",op,strerror(err))) ,_err(err){}
 

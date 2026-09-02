@@ -9,9 +9,103 @@
 #include <endian.h>
 #include <cstring>
 #include <sys/resource.h>
-#include "limen/limen_devinfo.h"
-#include "limen/limen_common.h"
+
 #include "limen/verbs.hpp"
+#include "limen/app/devinfo.hpp"
+#include <cstdio>
+#include <inttypes.h>
+
+
+void print_device_info(ibv_device_attr* attr)
+{
+    // print out all the data here:
+    const char* fmt64 = "\t%s: %llu\n";
+    const char* fmtint = "\t%s: %i\n";
+    uint64_t guid = be64toh(attr->node_guid);
+
+    printf("\t%s: 0x%016" PRIx64 "\n","guid",guid);
+    printf("\tfw_ver: %s\n",attr->fw_ver);
+    printf(fmtint,"phys_port_cnt",attr->phys_port_cnt);
+    printf(fmtint,"max_qp",attr->max_qp);
+    printf(fmtint,"max_qp_wr",attr->max_qp_wr);
+    printf(fmtint,"max_cq",attr->max_cq);
+    printf(fmtint,"max_cqe",attr->max_cqe);
+    printf(fmtint,"max_mr",attr->max_mr);
+    printf(fmt64,"max_mr_size",attr->max_mr_size);
+    printf(fmtint,"max_sge",attr->max_sge);
+    printf(fmtint,"max_qp_rd_atom",attr->max_qp_rd_atom);
+}
+
+int port_mtu_enum_to_bytes(ibv_mtu mtu)
+{
+    switch (mtu)
+    {
+        case IBV_MTU_256:
+            return 256;
+        case IBV_MTU_512:
+            return 512;
+        case IBV_MTU_1024:
+            return 1024;
+        case IBV_MTU_2048:
+            return 2048;
+        case IBV_MTU_4096:
+            return 4096;
+    }
+    return 0;
+}
+
+
+void print_port_info(ibv_port_attr* attr)
+{
+    const char* link_layer;
+    int active_mtu_bytes;
+    const char* state;
+
+    //  figure out the state string
+    switch(attr->state)
+    {
+        case IBV_PORT_NOP:
+            state = "PORT_NOP";
+            break;
+        case IBV_PORT_DOWN:
+            state = "PORT_DOWN";
+            break;
+        case IBV_PORT_INIT:
+            state = "PORT_INIT";
+            break;
+        case IBV_PORT_ARMED:
+            state = "PORT_ARMED";
+            break;
+        case IBV_PORT_ACTIVE:
+            state = "PORT_ACTIVE";
+            break;
+        case IBV_PORT_ACTIVE_DEFER:
+            state = "PORT_ACTIVE_DEFER";
+            break;
+    }
+
+    //  figure out link layer
+    switch(attr->link_layer)
+    {
+        case IBV_LINK_LAYER_INFINIBAND:
+            link_layer = "InfiniBand";
+            break;
+        case IBV_LINK_LAYER_ETHERNET:
+            link_layer = "Ethernet";
+            break;
+        case IBV_LINK_LAYER_UNSPECIFIED:
+            link_layer = "Unspecified";
+            break;
+    }
+
+    active_mtu_bytes = port_mtu_enum_to_bytes(attr->active_mtu);
+
+    printf("\tstate: %s\n",state);
+    printf("\tlink_layer: %s\n",link_layer);
+    printf("\tactive_mtu: %i\n",active_mtu_bytes);
+    printf("\tmax_msg_sz: %" PRIu32 "\n", attr->max_msg_sz);
+    printf("\tgid_tbl_len: %i\n",attr->gid_tbl_len);
+}
 
 
 void parse_argv(int argc, char* argv[],parsed_args* args_container)
@@ -178,18 +272,12 @@ int main(int argc, char* argv[])
     {
 
         //  VARIABLES
-        // ibv_device** device_list= nullptr;
-        // ibv_device* device= nullptr;
-        // ibv_context* device_context= nullptr;
         limen::DeviceList dl;
         limen::Context ctx;
         limen::ProtectionDomain pd;
         limen::MemoryRegion mr;
         ibv_device_attr device_attr;
         ibv_port_attr port_attr;
-        // ibv_pd* pd= nullptr;
-        // ibv_mr* mr= nullptr;
-        // void* mr_buffer= nullptr;
 
         //  handle arguments
         parsed_args args_container;
@@ -197,12 +285,6 @@ int main(int argc, char* argv[])
         parse_argv(argc,argv,&args_container);
 
         //  open device list
-        // device_list = ibv_get_device_list(NULL);
-        // if (device_list == NULL)
-        // {
-
-
-        // }
 
         if (argc ==1)
         {
@@ -214,7 +296,7 @@ int main(int argc, char* argv[])
         if (args_container.device_name != nullptr)
         {
             //  (-d) open a named device context
-            int device_idx = find_device_by_name(dl.get(),args_container.device_name);
+            int device_idx = limen::find_device_by_name(dl.get(),args_container.device_name);
             if (device_idx == -1)
             {
                 // not found, enumerate & exit 2
@@ -245,7 +327,6 @@ int main(int argc, char* argv[])
 
         if (ibv_query_port(ctx.get(),args_container.port,&port_attr) != 0)
         {
-            //  TODO GRACEFUL EXIT
             perror("ibv_query_port");
             return 3;
 
@@ -258,13 +339,6 @@ int main(int argc, char* argv[])
         //  allocate protection domain on context 
         pd = limen::ProtectionDomain(ctx);
         
-        // pd = ibv_alloc_pd(ctx.get());
-        // if (pd == nullptr)
-        // {
-        //     std::cerr << "failed to allocate protection domain" << std::endl;
-        //     return 3;
-
-        // }
         printf("pd: allocated\n");
 
 
@@ -279,14 +353,7 @@ int main(int argc, char* argv[])
             } catch (const limen::VerbsError& e) {
                 print_mr_diag_block(e.error(), args_container.buffer_size);
                 return 3;
-            }            // mr_buffer =calloc(1,args_container.buffer_size);
-            // mr = ibv_reg_mr(pd,mr_buffer,args_container.buffer_size,access);
-            // if (mr == nullptr)
-            // {
-            //     print_mr_diag_block( errno,args_container.buffer_size);
-            //     return 3;
-
-            // }
+            }     
             printf(
                 "mr: addr=%p length=%zu lkey=0x%08x rkey=0x%08x ",
                 mr.get()->addr,mr.get()->length,mr.get()->lkey,mr.get()->rkey);

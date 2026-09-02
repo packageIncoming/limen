@@ -1,5 +1,4 @@
-#ifndef limen_namespace
-#define limen_namespace
+#pragma once
 #include <infiniband/verbs.h>
 #include <stdexcept>
 #include <utility>
@@ -7,6 +6,11 @@
 #include <cstdint>
 
 namespace limen {
+
+//  returns the index of the first ibv_device whose name 
+//  matches device_name; returns -1 if not found
+int find_device_by_name(ibv_device** devices_list, const char* device_name);
+
 
 class VerbsError : public std::runtime_error {
 public:
@@ -217,5 +221,3 @@ private:
 };
 
 } /* namespace limen */
-
-#endif

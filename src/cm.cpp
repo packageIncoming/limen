@@ -127,6 +127,9 @@ limen::Event::Event(EventChannel& ch)
     _type = _event->event;
     _status = _event->status;
     _id = _event->id;
+    _init_depth = _event->param.conn.initiator_depth;
+    _resp_res = _event->param.conn.responder_resources;
+
     //  snapshot the private_data
     if (_event->param.conn.private_data && _event->param.conn.private_data_len>0)
     {
@@ -143,6 +146,8 @@ limen::Event::Event(limen::Event&& o) noexcept
     _status = o._status;
     _id = std::exchange(o._id,nullptr);
     _pd_size = o._pd_size;
+    _init_depth = o._init_depth;
+    _resp_res = o._resp_res;
     memcpy(_pd, o._pd, _pd_size);
 }
 
@@ -156,6 +161,8 @@ limen::Event& limen::Event::operator=(limen::Event&& o) noexcept
         _status = o._status;
         _id = std::exchange(o._id,nullptr);
         _pd_size = o._pd_size;
+        _init_depth = o._init_depth;
+        _resp_res = o._resp_res;
         memcpy(_pd, o._pd, _pd_size);
     }
     return *this;

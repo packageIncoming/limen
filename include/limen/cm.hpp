@@ -1,3 +1,5 @@
+#pragma once
+
 #include <rdma/rdma_cma.h>
 #include <utility>
 
@@ -57,13 +59,17 @@ public:
 
     size_t copy_private_data(void *dst, size_t len) const noexcept;
 
-    int ack() noexcept;                     
+    int ack() noexcept;           
+    uint8_t initiator_depth()     const noexcept { return _init_depth; }
+    uint8_t responder_resources() const noexcept { return _resp_res; }
 private:
     rdma_cm_event* _event = nullptr;
     rdma_cm_event_type _type = {};
     int _status = -1;
     rdma_cm_id* _id = nullptr;
     size_t _pd_size = 0;
+    uint8_t _init_depth = 0;
+    uint8_t _resp_res   = 0;  
     char _pd[56];
 
 };

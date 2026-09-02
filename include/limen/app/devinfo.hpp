@@ -1,6 +1,4 @@
-#ifndef limen_devinfo_h
-#define limen_devinfo_h
-
+#pragma once
 #include <infiniband/verbs.h>
 
 typedef struct {
@@ -34,4 +32,11 @@ void graceful_exit(
     void* mr_buffer=nullptr
 );
 
-#endif
+//  todo docstring
+void print_device_info(ibv_device_attr* attr);
+
+//  turns the MTU enum into its bytes 
+int port_mtu_enum_to_bytes(ibv_mtu mtu);
+
+//  todo docstring
+void print_port_info(ibv_port_attr* attr);

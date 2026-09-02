@@ -1,10 +1,11 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
+
+
 #include <netinet/in.h>
 #include <rdma/rdma_cma.h>
 #include <utility>
-#endif
-
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -25,9 +26,12 @@
 #include <cstring>
 
 #include <infiniband/verbs.h>
-#include "limen/limen_common.h"
-#include "limen/limen_pingpong.h"
+#include "limen/app/pingpong.hpp"
 #include "limen/verbs.hpp"
+#include "limen/app/cli.hpp"
+#include "limen/app/exit_codes.hpp"
+#include "limen/format.hpp"
+#include "limen/pattern.hpp"
 
 enum {
     OPT_RNR_RETRY = 256,   //  no short letter given for these three, per TRD-03's interface
@@ -60,7 +64,7 @@ void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
             }
             case 'g':
             {
-                int rc = parse_int_strict(optarg,&args->gid_index);
+                int rc = limen::app::parse_int_strict(optarg,&args->gid_index);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -69,7 +73,7 @@ void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
             }
             case 'p': 
             {
-                int rc = parse_int_strict(optarg,&args->port);
+                int rc = limen::app::parse_int_strict(optarg,&args->port);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -78,7 +82,7 @@ void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
             }
             case 's':
             {
-                int rc = parse_u64_strict(optarg,&args->message_size);
+                int rc = limen::app::parse_u64_strict(optarg,&args->message_size);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -87,7 +91,7 @@ void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
             }
             case 'n':
             {
-                int rc = parse_u64_strict(optarg,&args->iterations);
+                int rc = limen::app::parse_u64_strict(optarg,&args->iterations);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -96,7 +100,7 @@ void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
             }
             case 'r':
             {
-                int rc = parse_u64_strict(optarg,&args->rx_depth);
+                int rc = limen::app::parse_u64_strict(optarg,&args->rx_depth);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -111,7 +115,7 @@ void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
             }
             case 't':
             {
-                int rc = parse_u64_strict(optarg, &args->tcp_port);
+                int rc = limen::app::parse_u64_strict(optarg, &args->tcp_port);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -121,7 +125,7 @@ void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
             }
             case OPT_RNR_RETRY:
             {
-                int rc = parse_int_strict(optarg, &args->rnr_retry);
+                int rc = limen::app::parse_int_strict(optarg, &args->rnr_retry);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -180,7 +184,7 @@ void print_reset_init_fail(int rc, ibv_qp_attr* qp_attr)
     fprintf(stderr,"attr_mask: IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS\n");
     
     //  print the fields that were changed
-    fprintf(stderr,"qp_state: %s\n",qp_state_to_str(qp_attr->qp_state).c_str());
+    fprintf(stderr,"qp_state: %s\n",limen::qp_state_to_str(qp_attr->qp_state).c_str());
     fprintf(stderr,"pkey_index: %i\n",qp_attr->pkey_index);
     fprintf(stderr,"port_num: %i\n",qp_attr->port_num);
     fprintf(stderr,"qp_access_flags: %i\n",qp_attr->qp_access_flags);
@@ -194,7 +198,7 @@ void print_init_rtr_fail(int rc, ibv_qp_attr* qp_attr)
     fprintf(stderr,"attr_mask: IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER\n");
     
     //  print the fields that were changed
-    fprintf(stderr, "qp_state: %s\n", qp_state_to_str(qp_attr->qp_state).c_str());
+    fprintf(stderr, "qp_state: %s\n", limen::qp_state_to_str(qp_attr->qp_state).c_str());
     fprintf(stderr, "path_mtu: %i\n", qp_attr->path_mtu);
     fprintf(stderr, "dest_qp_num: %#010x\n", qp_attr->dest_qp_num);
     fprintf(stderr, "rq_psn: %#08x\n", qp_attr->rq_psn);
@@ -203,7 +207,7 @@ void print_init_rtr_fail(int rc, ibv_qp_attr* qp_attr)
     fprintf(stderr, "ah_attr: is_global=%i dlid=%#06x sl=%i src_path_bits=%i\n",
         qp_attr->ah_attr.is_global, qp_attr->ah_attr.dlid,
         qp_attr->ah_attr.sl, qp_attr->ah_attr.src_path_bits);
-    fprintf(stderr, "dgid: %s\n", gid_to_str(&qp_attr->ah_attr.grh.dgid).c_str());
+    fprintf(stderr, "dgid: %s\n", limen::gid_to_str(&qp_attr->ah_attr.grh.dgid).c_str());
     fprintf(stderr, "sgid_index: %i\n", qp_attr->ah_attr.grh.sgid_index);
     fprintf(stderr, "hint: if dgid is all zero or is_global=0, GRH was never populated\n");
 
@@ -213,7 +217,7 @@ void print_rtr_rts_fail(int rc, ibv_qp_attr* qp_attr)
 {
     fprintf(stderr, "state: RTR -> RTS FAILED: %s (%s)\n", strerrorname_np(rc), std::strerror(rc));
     fprintf(stderr, "attr_mask: IBV_QP_STATE | IBV_QP_SQ_PSN | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_MAX_QP_RD_ATOMIC\n");
-    fprintf(stderr, "qp_state: %s\n", qp_state_to_str(qp_attr->qp_state).c_str());
+    fprintf(stderr, "qp_state: %s\n", limen::qp_state_to_str(qp_attr->qp_state).c_str());
     fprintf(stderr, "sq_psn: %#08x\n", qp_attr->sq_psn);
     fprintf(stderr, "timeout: %i\n", qp_attr->timeout);
     fprintf(stderr, "retry_cnt: %i\n", qp_attr->retry_cnt);
@@ -230,7 +234,7 @@ int post_recv(uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t m
 
     //  for now each entry has a single SGE
     //  slot[i] has address &(buffer) + ([i]* [message_size])
-    sge.addr = slot_addr(buff_addr, slot, message_size);
+    sge.addr = limen::slot_addr(buff_addr, slot, message_size);
     sge.length = message_size;
     sge.lkey = lkey;
 
@@ -255,7 +259,7 @@ int post_send(bool signaled, uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pa
 
     //  for now each entry has a single SGE
     //  slot[i] has address &(buffer) + ([i]* [message_size])
-    sge.addr = slot_addr(buff_addr, slot, message_size);
+    sge.addr = limen::slot_addr(buff_addr, slot, message_size);
     sge.length = message_size;
     sge.lkey = lkey;
 
@@ -277,37 +281,6 @@ int post_send(bool signaled, uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pa
     return rc;
 }
 
-static const char* wc_status_name(enum ibv_wc_status s)
-{
-    switch (s) {
-    case IBV_WC_SUCCESS:            return "SUCCESS";
-    case IBV_WC_LOC_LEN_ERR:        return "LOC_LEN_ERR";
-    case IBV_WC_LOC_QP_OP_ERR:      return "LOC_QP_OP_ERR";
-    case IBV_WC_LOC_EEC_OP_ERR:     return "LOC_EEC_OP_ERR";
-    case IBV_WC_LOC_PROT_ERR:       return "LOC_PROT_ERR";
-    case IBV_WC_WR_FLUSH_ERR:       return "WR_FLUSH_ERR";
-    case IBV_WC_MW_BIND_ERR:        return "MW_BIND_ERR";
-    case IBV_WC_BAD_RESP_ERR:       return "BAD_RESP_ERR";
-    case IBV_WC_LOC_ACCESS_ERR:     return "LOC_ACCESS_ERR";
-    case IBV_WC_REM_INV_REQ_ERR:    return "REM_INV_REQ_ERR";
-    case IBV_WC_REM_ACCESS_ERR:     return "REM_ACCESS_ERR";
-    case IBV_WC_REM_OP_ERR:         return "REM_OP_ERR";
-    case IBV_WC_RETRY_EXC_ERR:      return "RETRY_EXC_ERR";
-    case IBV_WC_RNR_RETRY_EXC_ERR:  return "RNR_RETRY_EXC_ERR";
-    case IBV_WC_LOC_RDD_VIOL_ERR:   return "LOC_RDD_VIOL_ERR";
-    case IBV_WC_REM_INV_RD_REQ_ERR: return "REM_INV_RD_REQ_ERR";
-    case IBV_WC_REM_ABORT_ERR:      return "REM_ABORT_ERR";
-    case IBV_WC_INV_EECN_ERR:       return "INV_EECN_ERR";
-    case IBV_WC_INV_EEC_STATE_ERR:  return "INV_EEC_STATE_ERR";
-    case IBV_WC_FATAL_ERR:          return "FATAL_ERR";
-    case IBV_WC_RESP_TIMEOUT_ERR:   return "RESP_TIMEOUT_ERR";
-    case IBV_WC_GENERAL_ERR:        return "GENERAL_ERR";
-    case IBV_WC_TM_ERR:             return "TM_ERR";
-    case IBV_WC_TM_RNDV_INCOMPLETE: return "TM_RNDV_INCOMPLETE";
-    }
-    return "UNKNOWN";
-}
-
 std::string wc_to_str(ibv_wc *wc)
 {
     if (wc->status == IBV_WC_SUCCESS)
@@ -318,8 +291,8 @@ std::string wc_to_str(ibv_wc *wc)
             return std::format(
                 "completion: wr_id={:#016x} opcode={} status={} byte_len={}",
                 wc->wr_id,
-                ibv_wc_opcode_str(wc->opcode),
-                wc_status_name(wc->status),
+                limen::wc_opcode_str(wc->opcode),
+                limen::wc_status_name(wc->status),
                 wc->byte_len
             );
         }
@@ -327,8 +300,8 @@ std::string wc_to_str(ibv_wc *wc)
             return std::format(
                 "completion: wr_id={:#016x} opcode={} status={}",
                 wc->wr_id,
-                ibv_wc_opcode_str(wc->opcode),
-                wc_status_name(wc->status)
+                limen::wc_opcode_str(wc->opcode),
+                limen::wc_status_name(wc->status)
             );
         }
     }
@@ -338,7 +311,7 @@ std::string wc_to_str(ibv_wc *wc)
         return std::format(
             "completion: wr_id={:#016x} status={} vendor_err={:#08x}", 
             wc->wr_id,
-            wc_status_name(wc->status),
+            limen::wc_status_name(wc->status),
             wc->vendor_err
         );
     }
@@ -441,13 +414,6 @@ int main(int argc, char* argv[])
     if (args.device_name == nullptr)
     {
         fprintf(stderr,"-d required\n");
-        print_help(true); 
-        exit_rc = EXIT_USAGE_ERROR;
-        return exit_rc;
-    }
-    if (args.gid_index == INT_MAX )
-    {
-        fprintf(stderr,"-g required\n");
         print_help(true); 
         exit_rc = EXIT_USAGE_ERROR;
         return exit_rc;
@@ -711,26 +677,6 @@ int main(int argc, char* argv[])
     );
 
 
-    //  Verify QP in RTS
-    attr_mask = IBV_QP_STATE | IBV_QP_AV;
-    rc = ibv_query_qp(remote_conn_id.qp(), &qp_attr, attr_mask, &qp_init_attr);
-    if (rc !=0)
-    {
-        //  failed to query
-        perror("main:ibv_query_qp");
-        exit_rc = EXIT_VERB_ERROR;
-        return exit_rc;
-    }
-
-    if (qp_attr.qp_state != IBV_QPS_RTS)
-    {
-        fprintf(stderr,"local qp not in state IBV_QPS_RTS after RTR -> RTS transition\n");
-        exit_rc = EXIT_VERB_ERROR;
-        return exit_rc;
-    }
-
-    printf("verify: qp_state=RTS\n");
-
     std::cout << std::format(
         "pingpong: role={} iterations={} size={} signaled={} rnr_retry={}",
         is_client ? "client" : "server",
@@ -757,7 +703,7 @@ int main(int argc, char* argv[])
         //  post the initial send work request only if you're the client
         if (is_client)
         {
-            void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)send_mr.get()->addr, 0, args.message_size));
+            void* send_addr = reinterpret_cast<void*>(limen::slot_addr((uint64_t)(uintptr_t)send_mr.get()->addr, 0, args.message_size));
             fill_pattern(send_addr, args.message_size, send_count);
             rc = post_send(!(args.unsignaled),0, (uint64_t)(uintptr_t)send_mr.get()->addr, remote_conn_id.qp(), args.message_size, send_mr.get()->lkey);
             if (rc !=0)
@@ -812,7 +758,7 @@ int main(int argc, char* argv[])
                             uint32_t slot_num = wc->wr_id & ~(RECV_WRID_TAG);
 
                             //  verify the payload
-                            void* recv_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)recv_mr.get()->addr,slot_num,args.message_size));
+                            void* recv_addr = reinterpret_cast<void*>(limen::slot_addr((uint64_t)(uintptr_t)recv_mr.get()->addr,slot_num,args.message_size));
                             if (verify_pattern(recv_addr, wc->byte_len, recv_count) > 0)
                             {
                                 mismatch_count++;
@@ -833,7 +779,7 @@ int main(int argc, char* argv[])
                             //  SEND before the loop; this prevents sending that n+1th 
                             if ((uint64_t)send_count < args.iterations)
                             {
-                                void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)send_mr.get()->addr,0,args.message_size));
+                                void* send_addr = reinterpret_cast<void*>(limen::slot_addr((uint64_t)(uintptr_t)send_mr.get()->addr,0,args.message_size));
                                 fill_pattern(send_addr, args.message_size, send_count);
                                 rc = post_send(!(args.unsignaled), 0, (uint64_t)(uintptr_t) send_mr.get()->addr, remote_conn_id.qp(), args.message_size, send_mr.get()->lkey);
                                 if (rc != 0)
@@ -873,7 +819,7 @@ int main(int argc, char* argv[])
     );
     if (bad_wc_idx > -1)
     {
-        std::cout << std::format(" first_error={}",wc_status_name(wc_arr[bad_wc_idx].status));
+        std::cout << std::format(" first_error={}",limen::wc_status_name(wc_arr[bad_wc_idx].status));
     }
     std::cout << std::endl;
 

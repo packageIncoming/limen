@@ -1,7 +1,10 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
-#include "limen/verbs.hpp"
 #endif
+
+
+
+
 #include <cstdlib>
 #include <cstddef>
 #include <cstdio>
@@ -19,9 +22,12 @@
 #include <cstring>
 
 #include <infiniband/verbs.h>
-#include "limen/limen_common.h"
-#include "limen/limen_connect.h"
+#include "limen/format.hpp"
 #include "limen/verbs.hpp"
+#include "limen/app/connect.hpp"
+#include "limen/verbs.hpp"
+#include "limen/app/cli.hpp"
+#include "limen/app/exit_codes.hpp"
 
 void parse_argv(int argc, char* argv[], connect_parsed_args* args)
 {
@@ -46,7 +52,7 @@ void parse_argv(int argc, char* argv[], connect_parsed_args* args)
             }
             case 'g':
             {
-                int rc = parse_int_strict(optarg,&args->gid_index);
+                int rc = limen::app::parse_int_strict(optarg,&args->gid_index);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -55,7 +61,7 @@ void parse_argv(int argc, char* argv[], connect_parsed_args* args)
             }
             case 'p': 
             {
-                int rc = parse_int_strict(optarg,&args->port);
+                int rc = limen::app::parse_int_strict(optarg,&args->port);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -64,7 +70,7 @@ void parse_argv(int argc, char* argv[], connect_parsed_args* args)
             }
             case 's':
             {
-                int rc = parse_u64_strict(optarg,&args->buffer_size);
+                int rc = limen::app::parse_u64_strict(optarg,&args->buffer_size);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -79,7 +85,7 @@ void parse_argv(int argc, char* argv[], connect_parsed_args* args)
             }
             case 't':
             {
-                int rc = parse_u64_strict(optarg, &args->tcp_port);
+                int rc = limen::app::parse_u64_strict(optarg, &args->tcp_port);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -418,15 +424,15 @@ int recv_endpoint_identity(int fd, endpoint_identity* remote_identity)
     remote_identity->psn = psn & U32_TO_U24_MASK;
     remote_identity->lid = static_cast<uint16_t>(lid32);
 
-    if (str_to_gid(gid_str, &remote_identity->gid) != 0)
+    if (limen::str_to_gid(gid_str, &remote_identity->gid) != 0)
     {
         fprintf(stderr, "recv_endpoint_identity: failed to parse gid\n");
         return 1;
     }
 
-    if (str_to_gid(gid_str, &remote_identity->gid) != 0)
+    if (limen::str_to_gid(gid_str, &remote_identity->gid) != 0)
     {
-        fprintf(stderr,"recv_endpoint_identity: str_to_gid failed\n");
+        fprintf(stderr,"recv_endpoint_identity: limen::str_to_gid failed\n");
         return 1;
     }
 
@@ -439,7 +445,7 @@ std::string identity_to_str(endpoint_identity* identity)
         "qpn={:#010x} psn={:#08x} gid={} lid={:#06x}",
             identity->qpn,
             identity->psn,
-            gid_to_str(&identity->gid),
+            limen::gid_to_str(&identity->gid),
             identity->lid
         );
 }
@@ -450,7 +456,7 @@ void print_reset_init_fail(int rc, ibv_qp_attr* qp_attr)
     fprintf(stderr,"attr_mask: IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS\n");
     
     //  print the fields that were changed
-    fprintf(stderr,"qp_state: %s\n",qp_state_to_str(qp_attr->qp_state).c_str());
+    fprintf(stderr,"qp_state: %s\n",limen::qp_state_to_str(qp_attr->qp_state).c_str());
     fprintf(stderr,"pkey_index: %i\n",qp_attr->pkey_index);
     fprintf(stderr,"port_num: %i\n",qp_attr->port_num);
     fprintf(stderr,"qp_access_flags: %i\n",qp_attr->qp_access_flags);
@@ -464,7 +470,7 @@ void print_init_rtr_fail(int rc, ibv_qp_attr* qp_attr)
     fprintf(stderr,"attr_mask: IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER\n");
     
     //  print the fields that were changed
-    fprintf(stderr, "qp_state: %s\n", qp_state_to_str(qp_attr->qp_state).c_str());
+    fprintf(stderr, "qp_state: %s\n", limen::qp_state_to_str(qp_attr->qp_state).c_str());
     fprintf(stderr, "path_mtu: %i\n", qp_attr->path_mtu);
     fprintf(stderr, "dest_qp_num: %#010x\n", qp_attr->dest_qp_num);
     fprintf(stderr, "rq_psn: %#08x\n", qp_attr->rq_psn);
@@ -473,7 +479,7 @@ void print_init_rtr_fail(int rc, ibv_qp_attr* qp_attr)
     fprintf(stderr, "ah_attr: is_global=%i dlid=%#06x sl=%i src_path_bits=%i\n",
         qp_attr->ah_attr.is_global, qp_attr->ah_attr.dlid,
         qp_attr->ah_attr.sl, qp_attr->ah_attr.src_path_bits);
-    fprintf(stderr, "dgid: %s\n", gid_to_str(&qp_attr->ah_attr.grh.dgid).c_str());
+    fprintf(stderr, "dgid: %s\n", limen::gid_to_str(&qp_attr->ah_attr.grh.dgid).c_str());
     fprintf(stderr, "sgid_index: %i\n", qp_attr->ah_attr.grh.sgid_index);
     fprintf(stderr, "hint: if dgid is all zero or is_global=0, GRH was never populated\n");
 
@@ -483,7 +489,7 @@ void print_rtr_rts_fail(int rc, ibv_qp_attr* qp_attr)
 {
     fprintf(stderr, "state: RTR -> RTS FAILED: %s (%s)\n", strerrorname_np(rc), std::strerror(rc));
     fprintf(stderr, "attr_mask: IBV_QP_STATE | IBV_QP_SQ_PSN | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_MAX_QP_RD_ATOMIC\n");
-    fprintf(stderr, "qp_state: %s\n", qp_state_to_str(qp_attr->qp_state).c_str());
+    fprintf(stderr, "qp_state: %s\n", limen::qp_state_to_str(qp_attr->qp_state).c_str());
     fprintf(stderr, "sq_psn: %#08x\n", qp_attr->sq_psn);
     fprintf(stderr, "timeout: %i\n", qp_attr->timeout);
     fprintf(stderr, "retry_cnt: %i\n", qp_attr->retry_cnt);

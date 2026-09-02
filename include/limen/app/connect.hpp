@@ -1,10 +1,8 @@
+#pragma once
 #include <string>
-#ifndef limen_connect
-
 #include <climits>
 #include <infiniband/verbs.h>
 
-#define limen_connect
 
 #define SEND_QUEUE_DEPTH 16
 #define RECV_QUEUE_DEPTH 16
@@ -59,7 +57,3 @@ void print_reset_init_fail(int rc, ibv_qp_attr* qp_attr);
 void print_init_rtr_fail(int rc, ibv_qp_attr* qp_attr);
 
 void print_rtr_rts_fail(int rc, ibv_qp_attr* qp_attr);
-
-
-
-#endif
