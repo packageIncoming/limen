@@ -50,6 +50,14 @@ struct SessionConfig {
     int      timeout_ms          = 5000;    // per CM step; -1 blocks
 };
 
+struct GrantedCaps {
+    uint32_t max_send_wr = 0;
+    uint32_t max_recv_wr = 0;
+    uint32_t max_inline_data = 0;
+    uint8_t  initiator_depth = 0;      // negotiated at ESTABLISHED, not at create
+    uint8_t  responder_resources = 0;
+};
+
 class Session {
 friend class PendingConnection;
 public:
@@ -84,10 +92,15 @@ public:
 
     //  getters for private data members
     ConnInfo peer()  const noexcept {return _peer;};   // host byte order, validated non-zero
-    uint8_t negotiated_initiator_depth()     const noexcept {return _init_depth;}
-    uint8_t negotiated_responder_resources() const noexcept {return _resp_res;}
     bool has_peer() {return _has_peer;}
     bool is_client() {return _is_client;}
+    
+    uint8_t negotiated_initiator_depth()     const noexcept {return _caps.initiator_depth;}
+    uint8_t negotiated_responder_resources() const noexcept {return _caps.responder_resources;}
+    uint32_t max_send_wr() const noexcept {return _caps.max_send_wr;}
+    uint32_t max_recv_wr() const noexcept {return _caps.max_recv_wr;}
+    uint32_t max_inline_data() const noexcept {return _caps.max_inline_data;}
+
     SessionConfig* config_ptr() noexcept{return &_init_config;}
 
     int  disconnect() noexcept;                    // rdma_disconnect
@@ -102,11 +115,11 @@ private:
     MemoryRegion _send_mr;
     CompletionQueue _cq;
 
-    uint8_t       _init_depth = 0;
-    uint8_t       _resp_res   = 0;
     bool          _has_peer = false;
     bool          _is_client = false;
-    SessionConfig _init_config;
+
+    SessionConfig _init_config; //  the requested resources
+    GrantedCaps   _caps{};  //  the granted resources (maxes) 
 };
 
 
@@ -150,6 +163,10 @@ public:
     bool     has_peer() const noexcept {return _has_peer;};
     bool     is_client() const noexcept {return _is_client;};
 
+    uint32_t max_send_wr() const noexcept {return _caps.max_send_wr;}
+    uint32_t max_recv_wr() const noexcept {return _caps.max_recv_wr;}
+    uint32_t max_inline_data() const noexcept {return _caps.max_inline_data;}
+
     // rdma_connect or rdma_accept with this side's ConnInfo as private data,
     // wait for ESTABLISHED, capture the negotiated initiator_depth and
     // responder_resources, move every resource into the returned Session.
@@ -169,6 +186,7 @@ private:
     CompletionQueue _cq;
     ConnInfo        _peer{};
     SessionConfig   _config{};
+    GrantedCaps     _caps{};    //  holds the granted resource caps (like max_send_wr, max_recv_wr)
     bool            _is_client = false;
     bool            _has_peer  = false;
 };

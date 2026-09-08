@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #endif
 
+#include "limen/verbs.hpp"
 #include <netinet/in.h>
 #include <rdma/rdma_cma.h>
 #include <array>
@@ -13,7 +14,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <iostream>
-#include <algorithm> 
 #include <format>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -21,6 +21,7 @@
 #include <poll.h>
 #include <cerrno>
 #include <cstring>
+#include <cinttypes>
 #include <infiniband/verbs.h>
 
 #include "limen/app/pingpong.hpp"
@@ -30,18 +31,57 @@
 #include "limen/pattern.hpp"
 #include "limen/session.hpp"
 
+
 enum {
-    OPT_RNR_RETRY = 256,   //  no short letter given for these three, per TRD-03's interface
+    OPT_RNR_RETRY = 256,
     OPT_NO_RECV,
     OPT_UNSIGNALED,
+    OPT_INLINE,
+    OPT_SIGNAL_EVERY,
+    OPT_PIPELINE,
+    OPT_REAP,
+    OPT_MODERATE,
+    OPT_REPORT_CONFIG,
+    OPT_BROKEN_ARMING,
 };
+
+namespace {
+
+//  "16:8" -> count=16 usec=8. returns 0 on success, 1 on failure.
+//  both halves must be present, numeric, and fit the uint16_t fields of
+//  ibv_moderate_cq. either may be 0, which disables that half.
+int parse_moderate(const char* s, uint64_t* count, uint64_t* usec)
+{
+    const char* colon = std::strchr(s, ':');
+    if (colon == nullptr || colon == s || *(colon + 1) == '\0') return 1;
+
+    char left[32];
+    std::size_t n = (std::size_t)(colon - s);
+    if (n >= sizeof(left)) return 1;
+    std::memcpy(left, s, n);
+    left[n] = '\0';
+
+    if (limen::app::parse_u64_strict(left,      count) != 0) return 1;
+    if (limen::app::parse_u64_strict(colon + 1, usec)  != 0) return 1;
+    if (*count > UINT16_MAX || *usec > UINT16_MAX)            return 1;
+    return 0;
+}
+
+} // namespace
 
 void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
 {
     static struct option long_opts[] = {
-        {"rnr-retry",  required_argument, nullptr, OPT_RNR_RETRY},
-        {"no-recv",    no_argument,       nullptr, OPT_NO_RECV},
-        {"unsignaled", no_argument,       nullptr, OPT_UNSIGNALED},
+        {"rnr-retry",     required_argument, nullptr, OPT_RNR_RETRY},
+        {"no-recv",       no_argument,       nullptr, OPT_NO_RECV},
+        {"unsignaled",    no_argument,       nullptr, OPT_UNSIGNALED},
+        {"inline",        no_argument,       nullptr, OPT_INLINE},
+        {"signal-every",  required_argument, nullptr, OPT_SIGNAL_EVERY},
+        {"pipeline",      required_argument, nullptr, OPT_PIPELINE},
+        {"reap",          required_argument, nullptr, OPT_REAP},
+        {"moderate",      required_argument, nullptr, OPT_MODERATE},
+        {"report-config", no_argument,       nullptr, OPT_REPORT_CONFIG},
+        {"broken-arming", no_argument,       nullptr, OPT_BROKEN_ARMING},
         {nullptr, 0, nullptr, 0}
     };
 
@@ -61,72 +101,42 @@ void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
             }
             case 'g':
             {
-                int rc = limen::app::parse_int_strict(optarg,&args->gid_index);
-                if (rc != 0)
-                {
-                    exit(EXIT_USAGE_ERROR);
-                }
+                if (limen::app::parse_int_strict(optarg, &args->gid_index) != 0) exit(EXIT_USAGE_ERROR);
                 break;
             }
-            case 'p': 
+            case 'p':
             {
-                int rc = limen::app::parse_int_strict(optarg,&args->port);
-                if (rc != 0)
-                {
-                    exit(EXIT_USAGE_ERROR);
-                }
+                if (limen::app::parse_int_strict(optarg, &args->port) != 0) exit(EXIT_USAGE_ERROR);
                 break;
             }
             case 's':
             {
-                int rc = limen::app::parse_u64_strict(optarg,&args->message_size);
-                if (rc != 0)
-                {
-                    exit(EXIT_USAGE_ERROR);
-                }
+                if (limen::app::parse_u64_strict(optarg, &args->message_size) != 0) exit(EXIT_USAGE_ERROR);
                 break;
             }
             case 'n':
             {
-                int rc = limen::app::parse_u64_strict(optarg,&args->iterations);
-                if (rc != 0)
-                {
-                    exit(EXIT_USAGE_ERROR);
-                }
+                if (limen::app::parse_u64_strict(optarg, &args->iterations) != 0) exit(EXIT_USAGE_ERROR);
                 break;
             }
             case 'r':
             {
-                int rc = limen::app::parse_u64_strict(optarg,&args->rx_depth);
-                if (rc != 0)
-                {
-                    exit(EXIT_USAGE_ERROR);
-                }
+                if (limen::app::parse_u64_strict(optarg, &args->rx_depth) != 0) exit(EXIT_USAGE_ERROR);
+                break;
+            }
+            case 't':
+            {
+                if (limen::app::parse_u64_strict(optarg, &args->tcp_port) != 0) exit(EXIT_USAGE_ERROR);
                 break;
             }
             case 'h':
             {
                 print_help(false);
                 exit(0);
-                return;
-            }
-            case 't':
-            {
-                int rc = limen::app::parse_u64_strict(optarg, &args->tcp_port);
-                if (rc != 0)
-                {
-                    exit(EXIT_USAGE_ERROR);
-                }
-                break;
-
             }
             case OPT_RNR_RETRY:
             {
-                int rc = limen::app::parse_int_strict(optarg, &args->rnr_retry);
-                if (rc != 0)
-                {
-                    exit(EXIT_USAGE_ERROR);
-                }
+                if (limen::app::parse_int_strict(optarg, &args->rnr_retry) != 0) exit(EXIT_USAGE_ERROR);
                 break;
             }
             case OPT_NO_RECV:
@@ -139,10 +149,67 @@ void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
                 args->unsignaled = true;
                 break;
             }
+            case OPT_INLINE:
+            {
+                args->inline_data = true;
+                break;
+            }
+            case OPT_SIGNAL_EVERY:
+            {
+                if (limen::app::parse_u64_strict(optarg, &args->signal_every) != 0) exit(EXIT_USAGE_ERROR);
+                if (args->signal_every == 0)
+                {
+                    std::fprintf(stderr, "--signal-every must be at least 1\n");
+                    exit(EXIT_USAGE_ERROR);
+                }
+                break;
+            }
+            case OPT_PIPELINE:
+            {
+                if (limen::app::parse_u64_strict(optarg, &args->pipeline) != 0) exit(EXIT_USAGE_ERROR);
+                if (args->pipeline == 0)
+                {
+                    std::fprintf(stderr, "--pipeline must be at least 1\n");
+                    exit(EXIT_USAGE_ERROR);
+                }
+                break;
+            }
+            case OPT_REAP:
+            {
+                if      (std::strcmp(optarg, "poll")  == 0) args->reap = reap_mode::POLL;
+                else if (std::strcmp(optarg, "event") == 0) args->reap = reap_mode::EVENT;
+                else
+                {
+                    std::fprintf(stderr, "--reap takes poll or event, got '%s'\n", optarg);
+                    exit(EXIT_USAGE_ERROR);
+                }
+                break;
+            }
+            case OPT_MODERATE:
+            {
+                if (parse_moderate(optarg, &args->moderate_count, &args->moderate_usec) != 0)
+                {
+                    std::fprintf(stderr,
+                        "--moderate takes <count>:<usec>, both numeric and at most %u, got '%s'\n",
+                        (unsigned)UINT16_MAX, optarg);
+                    exit(EXIT_USAGE_ERROR);
+                }
+                args->moderate = true;
+                break;
+            }
+            case OPT_REPORT_CONFIG:
+            {
+                args->report_config = true;
+                break;
+            }
+            case OPT_BROKEN_ARMING:
+            {
+                args->broken_arming = true;
+                break;
+            }
             case '?':
             {
                 exit(EXIT_USAGE_ERROR);
-                break;
             }
             default:
             {
@@ -150,78 +217,39 @@ void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
             }
         }
     }
+
+    //  --unsignaled means signal nothing; --signal-every means signal one in n.
+    //  both together has no meaning, and silently picking one hides the mistake.
+    if (args->unsignaled && args->signal_every != 1)
+    {
+        std::fprintf(stderr, "--unsignaled and --signal-every are mutually exclusive\n");
+        exit(EXIT_USAGE_ERROR);
+    }
+
+    //  --broken-arming only removes the race-closing poll, which only exists
+    //  on the event path
+    if (args->broken_arming && args->reap != reap_mode::EVENT)
+    {
+        std::fprintf(stderr, "--broken-arming requires --reap event\n");
+        exit(EXIT_USAGE_ERROR);
+    }
+
     if (optind < argc)
     {
-        // address was given
-        char* addr = argv[argc-1];
-        args->addr = addr;
-
+        args->addr = argv[optind];
     }
 }
-
 void print_help(bool to_error)
 {
-    const char* str = "./build/limen_pingpong -d <device> -g <gid_index> [-p <port>] [-t <tcp_port>]\n"
-                       "\t[-s <bytes>] [-n <iterations>] [-r <rx_depth>]\n"
-                       "\t[--rnr-retry <n>] [--no-recv] [--unsignaled] [<peer>]\n";
-    if (to_error)
-    {
-        fprintf(stderr, "%s", str);
-    }
-    else
-    {
-        printf("%s", str);
-
-    }
+    const char* str =
+        "./build/limen_pingpong -d <device> [-g <gid_index>] [-p <port>] [-t <tcp_port>]\n"
+        "\t[-s <bytes>] [-n <iterations>] [-r <rx_depth>]\n"
+        "\t[--rnr-retry <n>] [--no-recv] [--unsignaled]\n"
+        "\t[--inline] [--signal-every <n>] [--pipeline <depth>]\n"
+        "\t[--reap <poll|event>] [--moderate <count>:<usec>] [--report-config]\n"
+        "\t[<peer>]\n";
+    std::fprintf(to_error ? stderr : stdout, "%s", str);
 }
-
-void print_reset_init_fail(int rc, ibv_qp_attr* qp_attr)
-{
-    fprintf(stderr,"state: RESET -> INIT FAILED: %s (%s)\n", strerrorname_np(rc),std::strerror(rc));
-    fprintf(stderr,"attr_mask: IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS\n");
-    
-    //  print the fields that were changed
-    fprintf(stderr,"qp_state: %s\n",limen::qp_state_to_str(qp_attr->qp_state).c_str());
-    fprintf(stderr,"pkey_index: %i\n",qp_attr->pkey_index);
-    fprintf(stderr,"port_num: %i\n",qp_attr->port_num);
-    fprintf(stderr,"qp_access_flags: %i\n",qp_attr->qp_access_flags);
-
-
-}
-
-void print_init_rtr_fail(int rc, ibv_qp_attr* qp_attr)
-{
-    fprintf(stderr,"state: INIT -> RTR FAILED: %s (%s)\n", strerrorname_np(rc),std::strerror(rc));
-    fprintf(stderr,"attr_mask: IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN | IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER\n");
-    
-    //  print the fields that were changed
-    fprintf(stderr, "qp_state: %s\n", limen::qp_state_to_str(qp_attr->qp_state).c_str());
-    fprintf(stderr, "path_mtu: %i\n", qp_attr->path_mtu);
-    fprintf(stderr, "dest_qp_num: %#010x\n", qp_attr->dest_qp_num);
-    fprintf(stderr, "rq_psn: %#08x\n", qp_attr->rq_psn);
-    fprintf(stderr, "max_dest_rd_atomic: %i\n", qp_attr->max_dest_rd_atomic);
-    fprintf(stderr, "min_rnr_timer: %i\n", qp_attr->min_rnr_timer);
-    fprintf(stderr, "ah_attr: is_global=%i dlid=%#06x sl=%i src_path_bits=%i\n",
-        qp_attr->ah_attr.is_global, qp_attr->ah_attr.dlid,
-        qp_attr->ah_attr.sl, qp_attr->ah_attr.src_path_bits);
-    fprintf(stderr, "dgid: %s\n", limen::gid_to_str(&qp_attr->ah_attr.grh.dgid).c_str());
-    fprintf(stderr, "sgid_index: %i\n", qp_attr->ah_attr.grh.sgid_index);
-    fprintf(stderr, "hint: if dgid is all zero or is_global=0, GRH was never populated\n");
-
-}
-
-void print_rtr_rts_fail(int rc, ibv_qp_attr* qp_attr)
-{
-    fprintf(stderr, "state: RTR -> RTS FAILED: %s (%s)\n", strerrorname_np(rc), std::strerror(rc));
-    fprintf(stderr, "attr_mask: IBV_QP_STATE | IBV_QP_SQ_PSN | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_MAX_QP_RD_ATOMIC\n");
-    fprintf(stderr, "qp_state: %s\n", limen::qp_state_to_str(qp_attr->qp_state).c_str());
-    fprintf(stderr, "sq_psn: %#08x\n", qp_attr->sq_psn);
-    fprintf(stderr, "timeout: %i\n", qp_attr->timeout);
-    fprintf(stderr, "retry_cnt: %i\n", qp_attr->retry_cnt);
-    fprintf(stderr, "rnr_retry: %i\n", qp_attr->rnr_retry);
-    fprintf(stderr, "max_rd_atomic: %i\n", qp_attr->max_rd_atomic);
-}
-
 
 int post_send(bool signaled, uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t message_size, uint32_t lkey)
 {
@@ -254,17 +282,11 @@ int post_send(bool signaled, uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pa
     return rc;
 }
 
-
-
 int main(int argc, char* argv[])
 {
-
     try
     {
-
-        // Misc. variables
         pingpong_parsed_args args{};
-        // parse args
         parse_argv(argc,argv,&args);
 
         //  Variables:
@@ -273,11 +295,103 @@ int main(int argc, char* argv[])
         bool is_client = false;
 
         //  Device-based variables
-
         ibv_qp_init_attr qp_init_attr{};
-
         //  QP transition variables
         ibv_qp_attr qp_attr{};
+
+        limen::SessionConfig cfg{};
+        cfg.recv_wr        = args.no_recv ? 0 : RECV_QUEUE_DEPTH;
+        cfg.recv_slots     = cfg.recv_wr;          // a receive consumes one of each
+        cfg.recv_slot_size = args.message_size;
+        cfg.send_wr = std::max<uint64_t>(args.pipeline, args.signal_every) * 4;
+        cfg.send_slots     = 1;
+        cfg.send_slot_size = args.message_size;
+        cfg.cqe            = COMPLETE_QUEUE_DEPTH;
+        cfg.retry_count     = 7;                  // transport retries on timeout/NAK
+        cfg.rnr_retry_count = args.rnr_retry;     // retries specifically on receiver-not-ready
+        cfg.tcp_port            = (uint16_t)args.tcp_port;
+        cfg.initiator_depth     = 1;
+        cfg.responder_resources = 1;
+
+        if (args.report_config)
+        {
+            //  query max inline data
+            if (args.device_name == nullptr)
+            {
+                std::fprintf(stderr, "--report-config requires -d <device>\n");
+                return EXIT_USAGE_ERROR;
+            }
+            limen::Context ctx(args.device_name);
+            //  get device attributes
+            ibv_device_attr device_attr{};
+            if (ibv_query_device(ctx.get(), &device_attr) != 0)
+            {
+                throw limen::SessionError("ibv_query_device from --report-config", errno);
+            }
+            limen::ProtectionDomain pd(ctx);
+            int      cqe     = cfg.cqe > 0 ? std::min(cfg.cqe, device_attr.max_cqe)
+                                            : device_attr.max_cqe;
+            uint32_t recv_wr = std::min(cfg.recv_wr, (uint32_t)device_attr.max_qp_wr);
+            uint32_t send_wr = std::min(cfg.send_wr, (uint32_t)device_attr.max_qp_wr);
+            limen::CompletionQueue cq(ctx,cqe,nullptr,nullptr,0);
+            limen::fill_qp_init_attr(&qp_init_attr, send_wr, recv_wr);
+            qp_init_attr.send_cq = cq.get();
+            qp_init_attr.recv_cq = cq.get();
+            limen::QueuePair qp(pd,&qp_init_attr);
+
+            uint32_t granted_send_wr = qp_init_attr.cap.max_send_wr;
+            uint32_t eff_pipeline    = std::min<uint32_t>(args.pipeline, granted_send_wr);
+
+            const char* moderation = "off";
+            char modbuf[32];
+
+            if (args.moderate)
+            {
+                ibv_modify_cq_attr attr{};
+                attr.attr_mask          = IBV_CQ_ATTR_MODERATE;
+                attr.moderate.cq_count  = (uint16_t)args.moderate_count;
+                attr.moderate.cq_period = (uint16_t)args.moderate_usec;
+
+                if (ibv_modify_cq(cq.get(), &attr) == 0)
+                {
+                    std::snprintf(modbuf, sizeof modbuf, "%" PRIu64 ":%" PRIu64,
+                                args.moderate_count, args.moderate_usec);
+                    moderation = modbuf;
+                }
+                else
+                {
+                    moderation = "unavailable";
+                }
+            }
+
+            std::cout << std::format(
+                "config: inline={}(max={}) signal_every={} pipeline={} reap={} moderation={}",
+                args.inline_data ? "on":"off",
+                qp_init_attr.cap.max_inline_data,
+                args.signal_every,
+                eff_pipeline,
+                args.reap == reap_mode::POLL? "poll": "event",
+                moderation
+            ) << std::endl;
+            return EXIT_SUCCESS;
+        }
+
+
+        limen::Session session = is_client ? 
+            limen::Session::create_client_session(args.addr, cfg) : 
+            limen::Session::create_server_session(cfg);
+        
+
+        std::cout << std::format(
+            "config: inline={}(max={}) signal_every={} pipeline={} reap={} moderation={}",
+            args.inline_data ? "on":"off",
+            session.max_inline_data(),
+            args.signal_every,
+            args.pipeline,
+            args.reap == reap_mode::POLL? "poll": "event",
+            args.moderate ? std::format("{}:{}",args.moderate_count,args.moderate_usec) : "unavailable"
+        ) << std::endl;
+
 
 
         if (args.addr != nullptr)
@@ -288,26 +402,6 @@ int main(int argc, char* argv[])
         {
             printf("role: server\n");
         }
-
-
-        limen::SessionConfig cfg{};
-        cfg.recv_wr        = args.no_recv ? 0 : RECV_QUEUE_DEPTH;
-        cfg.recv_slots     = cfg.recv_wr;          // a receive consumes one of each
-        cfg.recv_slot_size = args.message_size;
-        cfg.send_wr        = args.iterations;
-        cfg.send_slots     = 1;
-        cfg.send_slot_size = args.message_size;
-        cfg.cqe            = COMPLETE_QUEUE_DEPTH;
-        cfg.retry_count     = 7;                  // transport retries on timeout/NAK
-        cfg.rnr_retry_count = args.rnr_retry;     // retries specifically on receiver-not-ready
-        cfg.tcp_port            = (uint16_t)args.tcp_port;
-        cfg.initiator_depth     = 1;
-        cfg.responder_resources = 1;
-
-
-        limen::Session session = is_client ? 
-            limen::Session::create_client_session(args.addr, cfg) : 
-            limen::Session::create_server_session(cfg);
 
         std::cout << std::format(
             "peer: addr={:#016x} rkey={:#08x} length={}\n",

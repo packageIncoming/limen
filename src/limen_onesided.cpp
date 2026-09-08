@@ -1,12 +1,9 @@
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
-#include "limen/app/connect.hpp"
 #endif
 #include <chrono>
-#include <iterator>
 #include <ostream>
-#include <thread>
 #include "limen/app/cli.hpp"
 #include "limen/app/exit_codes.hpp"
 #include "limen/cm.hpp"

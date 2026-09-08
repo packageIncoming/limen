@@ -60,6 +60,7 @@ namespace limen
         //  NOTE: CALLER MUST SET qp_init_attr's send_cq AND recv_cq
         *qp_init_attr = ibv_qp_init_attr{}; //  zero it before use
         qp_init_attr->cap.max_send_wr = send_wr;
+        qp_init_attr->cap.max_inline_data = 256;   
         qp_init_attr->cap.max_recv_wr = recv_wr;
         qp_init_attr->cap.max_send_sge = 1;
         qp_init_attr->cap.max_recv_sge = 1;
@@ -106,11 +107,10 @@ namespace limen
         _send_mr = std::move(o._send_mr);
         _cq = std::move(o._cq);
         _peer = o._peer;
-        _init_depth = o._init_depth;
-        _resp_res = o._resp_res;
         _has_peer = o._has_peer;
         _is_client = o._is_client;
         _init_config = o._init_config;
+        _caps = o._caps;
         return *this;
     }
 
@@ -260,7 +260,7 @@ namespace limen
         MemoryRegion     recv_mr = MemoryRegion(pd, recv_len, config.recv_access_flags);
         MemoryRegion     send_mr = MemoryRegion(pd, send_len, config.send_access_flags);
         CompletionQueue  cq      = CompletionQueue(conn_id.get()->verbs, cqe, nullptr, nullptr, 0);
-
+        GrantedCaps caps{};
         qp_init_attr.send_cq = cq.get();
         qp_init_attr.recv_cq = cq.get();
 
@@ -269,6 +269,12 @@ namespace limen
         {
             throw SessionError("PendingConnection::resolve:rdma_create_qp", errno);
         }
+
+        //  now we can fill _caps
+        caps.max_inline_data = qp_init_attr.cap.max_inline_data;
+        caps.max_recv_wr = qp_init_attr.cap.max_recv_wr;
+        caps.max_send_wr = qp_init_attr.cap.max_send_wr;
+        //  initiator_depth and responder resources have to be filled on finish 
 
         //  post work requests
         for (uint32_t slot = 0; slot < recv_wr; slot++)
@@ -291,6 +297,7 @@ namespace limen
         pc._config    = config;
         pc._is_client = true;
         pc._has_peer  = false;   //  client learns the peer at ESTABLISHED
+        pc._caps = caps;
         return pc;
     }
 
@@ -353,6 +360,7 @@ namespace limen
         MemoryRegion     recv_mr = MemoryRegion(pd, recv_len, config.recv_access_flags);
         MemoryRegion     send_mr = MemoryRegion(pd, send_len, config.send_access_flags);
         CompletionQueue  cq      = CompletionQueue(client_conn_id.get()->verbs, cqe, nullptr, nullptr, 0);
+        GrantedCaps caps{};
 
         qp_init_attr.send_cq = cq.get();
         qp_init_attr.recv_cq = cq.get();
@@ -362,6 +370,13 @@ namespace limen
         {
             throw SessionError("PendingConnection::listen:rdma_create_qp", errno);
         }
+
+        //  now we can fill _caps
+        caps.max_inline_data = qp_init_attr.cap.max_inline_data;
+        caps.max_recv_wr = qp_init_attr.cap.max_recv_wr;
+        caps.max_send_wr = qp_init_attr.cap.max_send_wr;
+        //  initiator_depth and responder resources have to be filled on finish 
+
 
         //  post work requests before accept, or the first inbound send hits RNR
         for (uint32_t slot = 0; slot < recv_wr; slot++)
@@ -386,6 +401,7 @@ namespace limen
         pc._config    = config;
         pc._is_client = false;
         pc._has_peer  = true;    //  arrived with CONNECT_REQUEST
+        pc._caps = caps;
         return pc;
     }
 
@@ -441,10 +457,10 @@ namespace limen
         s._has_peer    = _has_peer;
         s._is_client   = _is_client;
         s._init_config = _config;
+        s._caps = _caps;
+        s._caps.initiator_depth = e.initiator_depth();
+        s._caps.responder_resources = e.responder_resources();
         //  negotiated values from the ESTABLISHED event, not what was requested.
-        //  the CM can grant less than asked for, and R9 reports the effective limit.
-        s._init_depth  = e.initiator_depth();
-        s._resp_res    = e.responder_resources();
         return s;
     }
 
