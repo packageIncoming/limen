@@ -246,7 +246,8 @@ limen::MemoryRegion::MemoryRegion(const ProtectionDomain& pd, std::size_t bytes,
         free(_buf);
         _buf = nullptr;
         _buf_size = 0;
-        std::fprintf(stderr, "ibv_reg_mr: %s\n", strerror(e));
+        std::fprintf(stderr, "ibv_reg_mr: %s (buf=%p bytes=%zu access=0x%x)\n",
+                    strerror(e), _buf, bytes, access);
         throw VerbsError("ibv_reg_mr", e);
     }
     _h = ResourceHandle<ibv_mr, ibv_dereg_mr>(mr);

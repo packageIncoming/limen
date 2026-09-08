@@ -1,9 +1,20 @@
+
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#include "limen/app/connect.hpp"
 #endif
+#include <chrono>
+#include <iterator>
+#include <ostream>
+#include <thread>
+#include "limen/app/cli.hpp"
+#include "limen/app/exit_codes.hpp"
+#include "limen/cm.hpp"
+#include "limen/format.hpp"
+#include "limen/pattern.hpp"
+#include "limen/session.hpp"
 #include <netinet/in.h>
 #include <rdma/rdma_cma.h>
-#include <utility>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -21,13 +32,10 @@
 #include <poll.h>
 #include <cerrno>
 #include <cstring>
-
 #include <infiniband/verbs.h>
-#include "limen/limen_common.h"
-#include "limen/limen_onesided.h"
+#include "limen/app/onesided.hpp"
 #include "limen/verbs.hpp"
 #include <cstring>
-#include "limen/wc.hpp"
 
 
 void parse_argv(int argc, char* argv[], onesided_parsed_args* args)
@@ -61,7 +69,7 @@ void parse_argv(int argc, char* argv[], onesided_parsed_args* args)
             }
             case 'p': 
             {
-                int rc = parse_int_strict(optarg, &args->port);
+                int rc = limen::app::parse_int_strict(optarg, &args->port);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -70,7 +78,7 @@ void parse_argv(int argc, char* argv[], onesided_parsed_args* args)
             }
             case 't':
             {
-                int rc = parse_u64_strict(optarg, &args->tcp_port);
+                int rc = limen::app::parse_u64_strict(optarg, &args->tcp_port);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -79,7 +87,7 @@ void parse_argv(int argc, char* argv[], onesided_parsed_args* args)
             }
             case 's':
             {
-                int rc = parse_u64_strict(optarg, &args->message_size);
+                int rc = limen::app::parse_u64_strict(optarg, &args->message_size);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -88,7 +96,7 @@ void parse_argv(int argc, char* argv[], onesided_parsed_args* args)
             }
             case 'n':
             {
-                int rc = parse_u64_strict(optarg, &args->iterations);
+                int rc = limen::app::parse_u64_strict(optarg, &args->iterations);
                 if (rc != 0)
                 {
                     exit(EXIT_USAGE_ERROR);
@@ -173,7 +181,7 @@ int post_recv(uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t m
 
     //  for now each entry has a single SGE
     //  slot[i] has address &(buffer) + ([i]* [message_size])
-    sge.addr = slot_addr(buff_addr, slot, message_size);
+    sge.addr = limen::slot_addr(buff_addr, slot, message_size);
     sge.length = message_size;
     sge.lkey = lkey;
 
@@ -189,44 +197,144 @@ int post_recv(uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t m
     return rc;
 }
 
-int post_send(
-    uint32_t slot, 
-    uint64_t buff_addr, 
-    ibv_qp* queue_pair,  
-    uint32_t message_size, 
-    uint32_t lkey,
-    limen::ConnInfo peer_conninfo
+//  primitive: one-sided RDMA at an explicit remote byte offset.
+//  opcode must be IBV_WR_RDMA_WRITE or IBV_WR_RDMA_READ.
+//  caller owns the wr_id, the local address, and the length; nothing is derived.
+int post_rdma_at(
+    ibv_wr_opcode    opcode,
+    uint64_t         local_addr,
+    uint32_t         len,
+    ibv_qp*          queue_pair,
+    uint32_t         lkey,
+    limen::ConnInfo  peer_conninfo,
+    uint64_t         remote_offset,
+    uint64_t         wr_id,
+    uint32_t imm_data          // network byte order; ignored unless opcode is WRITE_WITH_IMM
 )
 {
-    //  create the ibv_send_wr
-    ibv_send_wr wr{};
-    ibv_sge sge{};
+    ibv_send_wr  wr{};
+    ibv_sge      sge{};
     ibv_send_wr* bad = nullptr;
 
     //  for now each entry has a single SGE
-    //  slot[i] has address &(buffer) + ([i]* [message_size])
-    sge.addr = slot_addr(buff_addr, slot, message_size);
-    sge.length = message_size;
-    sge.lkey = lkey;
+    //  WRITE: local is the source. READ: local is the destination.
+    sge.addr   = local_addr;
+    sge.length = len;
+    sge.lkey   = lkey;
 
-    wr.num_sge = 1;
-    wr.sg_list = &sge;
-    wr.next = nullptr;
-    wr.wr_id = slot | SEND_WRID_TAG;
-    wr.opcode = IBV_WR_RDMA_WRITE;
+    wr.num_sge    = 1;
+    wr.sg_list    = &sge;
+    wr.next       = nullptr;
+    wr.wr_id      = wr_id;
+    wr.opcode     = opcode;
     wr.send_flags = IBV_SEND_SIGNALED;
 
-    //  fill wr.rdma from the peer ConnInfo 
-    //  peer's length / message_size = peer_slot_count; represents how many slots the peer would have
-    //      so (slot) % (peer_slot_count) "normalizes" (local slot 8 on a 3-slot peer -> 8%3= slot 2 of peer )
-    //  NOTE: MAKE SURE PEER'S LENGTH HAS ROOM FOR AT LEAST 1 MESSAGE BEFORE CALLING THIS FUNCTION
-    uint32_t peer_slot = slot % (peer_conninfo.length / message_size);
-    wr.wr.rdma.remote_addr = slot_addr(peer_conninfo.addr, peer_slot, message_size);
-    wr.wr.rdma.rkey = peer_conninfo.rkey;
+    //  remote_offset is a byte offset into the peer's exposed region.
+    //  caller is responsible for keeping [offset, offset+len) inside peer_conninfo.length.
+    wr.wr.rdma.remote_addr = peer_conninfo.addr + remote_offset;
+    wr.wr.rdma.rkey        = peer_conninfo.rkey;
 
-    return  ibv_post_send(queue_pair, &wr, &bad);
+    //  fill immediate data for WRITE_WITH_IMM calls
+    if (imm_data)
+        wr.imm_data = imm_data;
+
+
+    return ibv_post_send(queue_pair, &wr, &bad);
 }
 
+int post_write_at(
+    uint64_t         local_addr,
+    uint32_t         len,
+    ibv_qp*          queue_pair,
+    uint32_t         lkey,
+    limen::ConnInfo  peer_conninfo,
+    uint64_t         remote_offset,
+    uint64_t         wr_id
+)
+{
+    return post_rdma_at(IBV_WR_RDMA_WRITE, local_addr, len, queue_pair,
+                        lkey, peer_conninfo, remote_offset, wr_id,0);
+}
+int post_send_imm(
+    uint32_t local_slot,
+    uint32_t peer_slot,
+    uint64_t buff_addr,
+    ibv_qp* queue_pair,
+    uint32_t message_size,
+    uint32_t lkey,
+    limen::ConnInfo peer_conninfo,
+    uint32_t imm_data
+)
+{
+    return post_rdma_at(
+        IBV_WR_RDMA_WRITE_WITH_IMM,
+        limen::slot_addr(buff_addr, local_slot, message_size),
+        message_size,
+        queue_pair,
+        lkey,
+        peer_conninfo,
+        (uint64_t)peer_slot * message_size,
+        local_slot | SEND_WRID_TAG,
+        imm_data
+    );
+}
+int post_read_at(
+    uint64_t         local_addr,
+    uint32_t         len,
+    ibv_qp*          queue_pair,
+    uint32_t         lkey,
+    limen::ConnInfo  peer_conninfo,
+    uint64_t         remote_offset,
+    uint64_t         wr_id
+)
+{
+    return post_rdma_at(IBV_WR_RDMA_READ, local_addr, len, queue_pair,
+                        lkey, peer_conninfo, remote_offset, wr_id,0);
+}
+
+//  slot-based wrappers. peer_slot is explicit: local and peer slot counts
+//  are independent, and only the caller knows the mapping it wants.
+int post_send(
+    uint32_t         local_slot,
+    uint32_t         peer_slot,
+    uint64_t         buff_addr,
+    ibv_qp*          queue_pair,
+    uint32_t         message_size,
+    uint32_t         lkey,
+    limen::ConnInfo  peer_conninfo
+)
+{
+    return post_write_at(
+        limen::slot_addr(buff_addr, local_slot, message_size),
+        message_size,
+        queue_pair,
+        lkey,
+        peer_conninfo,
+        (uint64_t)peer_slot * message_size,
+        local_slot | SEND_WRID_TAG
+    );
+}
+
+int post_read(
+    uint32_t         local_slot,
+    uint32_t         peer_slot,
+    uint64_t         buff_addr,
+    ibv_qp*          queue_pair,
+    uint32_t         message_size,
+    uint32_t         lkey,
+    limen::ConnInfo  peer_conninfo
+)
+{
+    return post_read_at(
+        limen::slot_addr(buff_addr, local_slot, message_size),
+        message_size,
+        queue_pair,
+        lkey,
+        peer_conninfo,
+        (uint64_t)peer_slot * message_size,
+        local_slot | SEND_WRID_TAG
+    );
+}
 
 limen::Event get_expected_event(limen::EventChannel& event_channel, rdma_cm_event_type event_type, int timeout_ms)
 {
@@ -269,6 +377,8 @@ void fill_qp_init_attr(ibv_qp_init_attr* qp_init_attr, ibv_device_attr* device_a
 
 int main(int argc, char* argv[])
 {
+    try 
+    {
     // Misc. variables
     onesided_parsed_args args{};
     // parse args
@@ -279,11 +389,6 @@ int main(int argc, char* argv[])
     int exit_rc=0;
     bool is_client = false;
 
-    //  Device-based variables
-    ibv_device_attr device_attr{};
-    int mr_access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ;
-
-    ibv_qp_init_attr qp_init_attr{};
 
     if (args.peer != nullptr)
     {
@@ -294,319 +399,116 @@ int main(int argc, char* argv[])
         printf("role: server\n");
     }
 
-    //  create event channel
-    limen::EventChannel ec = limen::EventChannel::create();
-    //  create connection ID
-    limen::ConnectionId conn_id(ec,RDMA_PS_TCP);
-    //  perform server or client path CM-managed bringup
-    limen::ProtectionDomain pd;
-    limen::MemoryRegion recv_mr;
-    size_t recv_mr_size = 0;    //  needs to be set once rx_depth is clamped; only happens after filling qp_init_attr
-    limen::MemoryRegion send_mr;
-    size_t send_mr_size = args.message_size; // we're only holding 1 send at a time
-    limen::CompletionQueue cq;
-    int cqe = 0;    //  needs to be set after querying device
 
-    limen::ConnInfo remote_conninfo{};
-    limen::ConnectionId remote_conn_id;
+    limen::SessionConfig cfg{};
+    cfg.recv_wr = (!is_client && args.mode == onesided_mode::IMM) ? RECV_QUEUE_DEPTH : 0;
+    if (!is_client && args.mode == onesided_mode::IMM)
+        cfg.recv_slots = RECV_QUEUE_DEPTH/2;
+    if (!is_client && args.mode == onesided_mode::FLAG)
+        cfg.recv_slots = 2;    //  1= default amount used for recv, 2-> slot 0 is reserved for the flag 
+    
+    cfg.recv_slot_size = args.message_size;
+
+    cfg.send_wr        = args.iterations;
+    cfg.send_slots     = SEND_QUEUE_DEPTH/2;
+    if (is_client && args.mode == onesided_mode::FLAG)
+        cfg.send_slots++;   //  the first slot is reserved as the flag payload slot 
+    cfg.send_slot_size = args.message_size;
+
+
+    limen::Session session;
 
     if (is_client)
     {
-        try {   //  client mode
-            //  construct the sockaddr_in struct that points to the server
-            sockaddr_in remote_sockaddr{};  //  describes the remote address
-            remote_sockaddr.sin_family = AF_INET;
-            remote_sockaddr.sin_port = htons(args.tcp_port);
-            if (inet_pton(AF_INET, args.peer, &remote_sockaddr.sin_addr) != 1)
-            {
-                perror("exchange_as_client:inet_pton");
-                return 1;
-            }
-
-            //  resolve addr
-            std::cout << std::format("cm: resolving {}:{}\n",args.peer,args.tcp_port);
-            limen::Event e;
-            rdma_resolve_addr(conn_id.get(), nullptr, (struct sockaddr*) &remote_sockaddr, 5000);
-            e = get_expected_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, 5000);
-            std::cout << "cm: event ADDR_RESOLVED" << std::endl;
-            
-            //  resolve route
-            rdma_resolve_route(conn_id.get(), 5000);
-            e = get_expected_event(ec, RDMA_CM_EVENT_ROUTE_RESOLVED, 5000);
-            std::cout << "cm: event ROUTE_RESOLVED" << std::endl;
-
-            //  get device attributes
-            ibv_context* device_context = conn_id.get()->verbs;
-            rc = ibv_query_device(device_context,&device_attr);
-            if (rc != 0)
-            {
-                //  failed to get device attributes
-                perror("ibv_query_device");
-                return EXIT_VERB_ERROR;
-            }
-
-            //  fill qp_init_attr
-            fill_qp_init_attr(&qp_init_attr,&device_attr, &args);
-
-            //  clamp rx_depth, set recv_mr_size, set cqe
-            uint32_t rx_depth = static_cast<uint64_t>(qp_init_attr.cap.max_recv_wr);
-            recv_mr_size = args.message_size*rx_depth;
-            cqe=  std::min(COMPLETE_QUEUE_DEPTH,device_attr.max_cqe);
-
-            //  device has now been decided, create the wrapper instances
-            pd = limen::ProtectionDomain(conn_id.get()->verbs);
-            recv_mr = limen::MemoryRegion(pd,recv_mr_size,mr_access_flags);
-            send_mr = limen::MemoryRegion(pd,send_mr_size,mr_access_flags);
-            cq = limen::CompletionQueue(conn_id.get()->verbs,cqe,nullptr,nullptr,0);
-
-            //  set send_cq and recv_cq of qp_init_attr
-            qp_init_attr.send_cq = cq.get();
-            qp_init_attr.recv_cq = cq.get();
-
-            //  print out qp: line from filled qp_init_attr 
-            printf(
-                "qp: type=RC max_send_wr=%i max_recv_wr=%i max_send_sge=%i max_recv_sge=%i\n",
-                qp_init_attr.cap.max_send_wr,
-                qp_init_attr.cap.max_recv_wr,
-                qp_init_attr.cap.max_send_sge,
-                qp_init_attr.cap.max_recv_sge
-            );
-            printf("recv: posted=%zu depth=%u size=%zu\n",recv_mr.get()->length / send_mr_size,rx_depth,args.message_size);
-            printf("cq: cqe=%i (requested %i)\n",cq.get()->cqe, COMPLETE_QUEUE_DEPTH);
-            
-            //  create QP
-            rdma_create_qp(conn_id.get(), pd.get(), &qp_init_attr);
-            remote_conn_id = std::move(conn_id);
-            std::cout << std::format("cm: qp created qp_num={:#08x}\n",remote_conn_id.qp()->qp_num);
-
-            if (args.mode != onesided_mode::WRITE)
-            {
-                // //  post work requests
-                for (uint32_t slot =0; slot < rx_depth; slot++)
-                {
-                    rc = post_recv(slot, (uint64_t)(uintptr_t)recv_mr.get()->addr, remote_conn_id.qp(), args.message_size,  recv_mr.get()->lkey);
-                    if (rc !=0)
-                    {
-                        //  failed to allocate slot
-                        fprintf(stderr,"main:post_recv %s (%s)\n",strerrorname_np(rc),strerror(rc));
-                        exit_rc = EXIT_VERB_ERROR;
-                        return exit_rc;
-                    }
-                }
-            }
-
-
-            //  connect
-            //  fill rdma_conn_param struct
-            rdma_conn_param cp{};
-            limen::ConnInfo outbound_cinfo = limen::to_wire_format(limen::ConnInfo(
-            (uint64_t)(uintptr_t)recv_mr.get()->addr,
-                recv_mr.get()->rkey,
-                recv_mr.get()->length
-            ));
-
-            cp.private_data = (void*)&outbound_cinfo;
-            cp.private_data_len = sizeof(outbound_cinfo);
-            cp.responder_resources = (uint8_t)std::min<uint32_t>(1, device_attr.max_qp_rd_atom);
-            cp.initiator_depth     = (uint8_t)std::min<uint32_t>(1, device_attr.max_qp_init_rd_atom);
-            cp.retry_count         = 7;
-            cp.rnr_retry_count     = 7; //  default from limen_pingpong (655ms)
-
-
-            rdma_connect(remote_conn_id.get(), &cp);
-
-            e = get_expected_event(ec, RDMA_CM_EVENT_ESTABLISHED, 5000);
-            std::cout << "cm: connect finished\n";
-
-            limen::ConnInfo remote_raw{};
-            e.copy_private_data(&remote_raw, sizeof(remote_raw));
-            remote_conninfo = limen::from_wire_format(remote_raw);
-            std::cout << std::format("cm: connect private_data_len={}\n",sizeof(remote_raw));
-            std::cout << "cm: event ESTABLISHED" << std::endl;
-
-        } 
-        catch (limen::VerbsError& e) {
-            std::cout << e.what() << std::endl;
-            return 7;
-        }
-    } else {
-        try {   //  server mode
-            limen::Event e;
-            //  bind addr
-            sockaddr_in server_sockaddr{};  //  describes the local (server) address
-            server_sockaddr.sin_family = AF_INET;
-            server_sockaddr.sin_port = htons(args.tcp_port);
-            server_sockaddr.sin_addr.s_addr = INADDR_ANY;   //  side effect: conn_id.get()->verbs not set until a CONNECT_REQUEST arrives
-            rdma_bind_addr(conn_id.get(), (struct sockaddr*)&server_sockaddr);
-
-            //  listen on addr, wait for a connect request
-            rdma_listen(conn_id.get(), 1);
-            std::cout << "cm: listening on server..."<<std::endl;
-            //  this event has the new id associated with the client
-            e = get_expected_event(ec, RDMA_CM_EVENT_CONNECT_REQUEST, -1);
-            std::cout << "cm: event CONNECT_REQUEST adopted" << std::endl;
-
-            //  adopt event->id as 2nd identifier
-            limen::ConnectionId client_conn_id = limen::ConnectionId::adopt(e.id());
-
-            //  copy out payload
-            limen::ConnInfo remote_raw{};
-            e.copy_private_data(&remote_raw, sizeof(remote_conninfo));
-            remote_conninfo = limen::from_wire_format(remote_raw);
-
-            //  get device attributes
-            if (client_conn_id.get()->verbs == nullptr)
-            {
-                std::cout << "null" << std::endl;
-            }
-            ibv_context* device_context = client_conn_id.get()->verbs;
-            rc = ibv_query_device(device_context,&device_attr);
-            if (rc != 0)
-            {
-                //  failed to get device attributes
-                perror("ibv_query_device");
-                return EXIT_VERB_ERROR;
-            }
-
-            //  fill qp_init_attr
-            fill_qp_init_attr(&qp_init_attr,&device_attr, &args);
-
-            //  clamp rx_depth, set recv_mr_size, set cqe
-            uint32_t rx_depth = qp_init_attr.cap.max_recv_wr;
-            recv_mr_size = args.message_size*rx_depth;
-            cqe = std::min(COMPLETE_QUEUE_DEPTH,device_attr.max_cqe);
-
-            //  device has now been decided, create the wrapper instances
-            pd = limen::ProtectionDomain(client_conn_id.get()->verbs);
-            recv_mr = limen::MemoryRegion(pd,recv_mr_size,mr_access_flags);
-            send_mr = limen::MemoryRegion(pd,send_mr_size,mr_access_flags);
-            cq = limen::CompletionQueue(client_conn_id.get()->verbs,cqe,nullptr,nullptr,0);
-
-            //  set send_cq and recv_cq of qp_init_attr
-            qp_init_attr.send_cq = cq.get();
-            qp_init_attr.recv_cq = cq.get();
-
-            printf(
-                "qp: type=RC max_send_wr=%i max_recv_wr=%i max_send_sge=%i max_recv_sge=%i\n",
-                qp_init_attr.cap.max_send_wr,
-                qp_init_attr.cap.max_recv_wr,
-                qp_init_attr.cap.max_send_sge,
-                qp_init_attr.cap.max_recv_sge
-            );
-            printf("recv: posted=%zu depth=%u size=%zu\n",recv_mr.get()->length / send_mr_size,rx_depth,args.message_size);
-            printf("cq: cqe=%i (requested %i)\n",cq.get()->cqe, COMPLETE_QUEUE_DEPTH);
-
-            //  create QP on adopted identifier
-            rdma_create_qp(client_conn_id.get(), pd.get(), &qp_init_attr);
-            std::cout << std::format("cm: qp created qp_num={:#08x}\n",client_conn_id.qp()->qp_num);
-
-            //  accept w/ own payload
-            rdma_conn_param cp{};
-            limen::ConnInfo outbound_cinfo = limen::to_wire_format(limen::ConnInfo(
-            (uint64_t)(uintptr_t)recv_mr.get()->addr,
-                recv_mr.get()->rkey,
-                recv_mr.get()->length
-            ));
-
-            cp.private_data = (void*)&outbound_cinfo;
-            cp.private_data_len = sizeof(outbound_cinfo);
-            cp.responder_resources = (uint8_t)std::min<uint32_t>(1, device_attr.max_qp_rd_atom);
-            cp.initiator_depth     = (uint8_t)std::min<uint32_t>(1, device_attr.max_qp_init_rd_atom);
-            cp.retry_count         = 7;
-            cp.rnr_retry_count     = 7; //655ms
-
-            if (args.mode == onesided_mode::IMM && !is_client)
-            {
-                //  post work requests
-                for (uint32_t slot =0; slot < rx_depth; slot++)
-                {
-                    rc = post_recv(slot, (uint64_t)(uintptr_t)recv_mr.get()->addr, client_conn_id.qp(), args.message_size,  recv_mr.get()->lkey);
-                    if (rc !=0)
-                    {
-                        //  failed to allocate slot
-                        fprintf(stderr,"main:post_recv %s (%s)\n",strerrorname_np(rc),strerror(rc));
-                        exit_rc = EXIT_VERB_ERROR;
-                        return exit_rc;
-                    }
-                }
-            }
-
-            rdma_accept(client_conn_id.get(),&cp);
-            //  wait for ESTABLISHED
-            e = get_expected_event(ec, RDMA_CM_EVENT_ESTABLISHED, -1);
-            std::cout << std::format("cm: connect private_data_len={}\n",sizeof(remote_raw));
-            std::cout << "cm: event ESTABLISHED" << std::endl;
-            remote_conn_id = std::move(client_conn_id);
-        }
-        catch (limen::VerbsError& e) {
-            std::cout << e.what() << std::endl;
-            return 7;
-        }
-
-
+        session = limen::Session::create_client_session( args.peer , cfg);
+    }
+    else
+    {
+        //  certain modes require some additional work done on the server before it can connect,
+        //  so we set up a PendingConnection, do that stuff, then finish that connection
+        limen::PendingConnection pending_connection = limen::PendingConnection::listen(cfg);
+        //  READ mode on server needs to fill the buffer with an expected value
+        limen::fill_pattern(pending_connection.recv_mr()->addr, pending_connection.recv_mr()->length, 0);
+        session = std::move(pending_connection).finish();
     }
 
-    std::cout << std::format(
-        "peer: addr={:#016x} rkey={:#08x} length={}\n",
-        remote_conninfo.addr,
-        remote_conninfo.rkey,
-        remote_conninfo.length
-    );
+    std::cout << std::format("max_outstanding_reads={}\n", session.negotiated_initiator_depth());  
+
+    limen::ConnInfo peer_info = session.peer();
 
     //  validate connection info
-    if (remote_conninfo.addr == 0 || remote_conninfo.rkey == 0 || remote_conninfo.length < args.message_size)
+    if (peer_info.addr == 0 || peer_info.rkey == 0 || peer_info.length < args.message_size)
     {
         throw limen::VerbsError("invalid peer ConnectionId object",EINVAL);
     }
 
-    //  poll for completion in a loop w/ 10 second timeout
-    std::array<ibv_wc, COMPLETE_QUEUE_DEPTH> wc_arr;
+    if (args.bad_rkey)
+    {
+        //  corrupt before posting
+        peer_info.rkey = 0;
+    }
+
+    std::cout << std::format(
+        "peer: addr={:#016x} rkey={:#08x} length={}\n",
+        peer_info.addr,
+        peer_info.rkey,
+        peer_info.length
+    );
+
+
+    uint32_t peer_slots = peer_info.length / args.message_size;
+    uint32_t send_slots = session.send_mr()->length / args.message_size;
+    uint32_t recv_slots = session.recv_mr()->length / args.message_size;
+
+
+    std::array<ibv_wc, COMPLETE_QUEUE_DEPTH> wc_arr{};
     int bad_wc_idx = -1; //  also acts as first error index 
     uint32_t send_count = 0;
     uint32_t send_completions = 0;
     uint32_t recv_count = 0;
     uint32_t mismatch_count = 0;
-
-
-    //  post the initial send work request only if you're the client
-    if (is_client)
-    {
-        void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)send_mr.get()->addr, 0, args.message_size));
-        fill_pattern(send_addr, args.message_size, send_count);
-        rc = post_send(0, (uint64_t)(uintptr_t)send_mr.get()->addr, remote_conn_id.qp(), args.message_size, send_mr.get()->lkey,remote_conninfo);
-        if (rc !=0)
-        {
-            //  failed to allocate slot
-            fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
-            exit_rc = EXIT_VERB_ERROR;
-            return exit_rc;
-        }
-        send_count++;
-    }
+    ibv_qp_attr qp_attr;    //  used for querying the QP when something goes wrong (WC status!= SUCCESS)
+    ibv_qp_init_attr init_attr; //  used for querying QP when something goes wrong (WC status != SUCCESS)
 
     if (is_client)
     {
         //  client-side loop
         switch (args.mode) {
             case onesided_mode::WRITE:
+            case onesided_mode::LASTBYTE:
                 //  client posts (args.iterations) writes and reaps
-                while ((uint64_t)send_completions < args.iterations)
+                while ((uint64_t)send_completions < args.iterations && bad_wc_idx==-1)
                 {
                     //reap
                     ibv_wc wc;
-                    while (ibv_poll_cq(cq.get(), 1, &wc) >0)
+                    while (ibv_poll_cq(session.cq(), 1, &wc) >0)
                     {
+                        if (wc.status != IBV_WC_SUCCESS)
+                        {
+                            //  if the status is not successful then WCs from this one onward
+                            //  are bad & have to be flushed accordingly
+                            std::cout << std::format("qp_num={:#08x}\n",session.qp()->qp_num);
+                            std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
+                            ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &init_attr);
+                            std::cout << "qp_state_after_error: "  << limen::qp_state_to_str(session.qp()->state) <<  std::endl;
+                            bad_wc_idx = 0;
+                            break;
+                        }
                         if (wc.opcode == IBV_WC_RDMA_WRITE)
                         {
-                            std::cout << wc_to_str(&wc) << std::endl;
+                            std::cout << limen::wc_to_str(&wc) << std::endl;
                             send_completions++;
                         } 
                     }
                     if ((uint64_t)send_count < args.iterations)
                     {
-                        void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)send_mr.get()->addr,0,args.message_size));
-                        fill_pattern(send_addr, args.message_size, send_count);
-                        rc = post_send( 0, (uint64_t)(uintptr_t) send_mr.get()->addr, remote_conn_id.qp(), args.message_size, send_mr.get()->lkey,remote_conninfo);
+                        int slot_num = send_count % send_slots;
+                        void* send_addr = reinterpret_cast<void*>(limen::slot_addr((uint64_t)(uintptr_t)session.send_mr()->addr,slot_num,args.message_size));
+                        limen::fill_pattern(send_addr, args.message_size, send_count);
+                        rc = post_send(slot_num, slot_num % peer_slots,
+                                    (uint64_t)(uintptr_t)session.send_mr()->addr,
+                                    session.qp(), args.message_size,
+                                    session.send_mr()->lkey, peer_info);
                         if (rc != 0)
                         {
                             fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
@@ -620,23 +522,40 @@ int main(int argc, char* argv[])
                 break;
             case onesided_mode::READ:
                 //  client posts (args.iterations) reads and reaps
-                while ((uint64_t)send_completions < args.iterations)
+                while ((uint64_t)send_completions < args.iterations && bad_wc_idx==-1)
                 {
                     //reap
                     ibv_wc wc;
-                    while (ibv_poll_cq(cq.get(), 1, &wc) >0)
+                    while (ibv_poll_cq(session.cq(), 1, &wc) >0)
                     {
+                        if (wc.status != IBV_WC_SUCCESS)
+                        {
+                            //  if the status is not successful then WCs from this one onward
+                            //  are bad & have to be flushed accordingly
+                            std::cout << std::format("qp_num={:#08x}\n",session.qp()->qp_num);
+                            std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
+                            ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &init_attr);
+                            std::cout << "qp_state_after_error: "  << limen::qp_state_to_str(session.qp()->state) <<  std::endl;
+                            bad_wc_idx = 0;
+                            break;
+                        }
                         if (wc.opcode == IBV_WC_RDMA_READ)
                         {
                             //  verify the pattern
+                            int slot_num = limen::Session::slot_of(wc.wr_id);
+                            void* read_dest_addr = reinterpret_cast<void*>(limen::slot_addr((uint64_t)(uintptr_t)session.send_mr()->addr,slot_num,args.message_size));
+                            std::cout << limen::wc_to_str(&wc) << std::endl;
+                            if(limen::verify_pattern(read_dest_addr, args.message_size, 0) >0) mismatch_count++;
+                            send_completions++;
                         }
-                        send_completions++;
                     }
                     if ((uint64_t)send_count < args.iterations)
                     {
-                        void* send_addr = reinterpret_cast<void*>(slot_addr((uint64_t)(uintptr_t)send_mr.get()->addr,0,args.message_size));
-                        fill_pattern(send_addr, args.message_size, send_count);
-                        rc = post_send( 0, (uint64_t)(uintptr_t) send_mr.get()->addr, remote_conn_id.qp(), args.message_size, send_mr.get()->lkey,remote_conninfo);
+                        uint32_t local_slot = send_count % send_slots;
+                        rc = post_read(local_slot, local_slot % peer_slots,
+                                    (uint64_t)(uintptr_t)session.send_mr()->addr,
+                                    session.qp(), args.message_size,
+                                    session.send_mr()->lkey, peer_info);
                         if (rc != 0)
                         {
                             fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
@@ -646,13 +565,102 @@ int main(int argc, char* argv[])
                         send_count++;
                     }
                 }
-
                 break;
             case onesided_mode::FLAG:
+                //  client posts a write, then a second write to a location reserved for a flag (flag read by server to signal completion)
+                while ((uint64_t)send_completions < args.iterations && bad_wc_idx==-1)
+                {
+                    //reap
+                    ibv_wc wc;
+                    while (ibv_poll_cq(session.cq(), 1, &wc) >0)
+                    {
+                        if (wc.status != IBV_WC_SUCCESS)
+                        {
+                            //  if the status is not successful then WCs from this one onward
+                            //  are bad & have to be flushed accordingly
+                            std::cout << std::format("qp_num={:#08x}\n",session.qp()->qp_num);
+                            std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
+                            ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &init_attr);
+                            std::cout << "qp_state_after_error: "  << limen::qp_state_to_str(session.qp()->state) <<  std::endl;
+                            bad_wc_idx = 0;
+                            break;
+                        }
+                        if (wc.opcode == IBV_WC_RDMA_WRITE)
+                        {
+                            std::cout << limen::wc_to_str(&wc) << std::endl;
+                            if (!(wc.wr_id & FLAG_WRID_TAG))
+                                send_completions++;
+                        } 
+                    }
+                    if ((uint64_t)send_count < args.iterations)
+                    {
+                        uint32_t slot_num = 1+ (send_count % (send_slots-1));
+                        uint32_t peer_slot = 1+(slot_num % (peer_slots - 1));
+                        void* send_addr = reinterpret_cast<void*>(limen::slot_addr((uint64_t)(uintptr_t)session.send_mr()->addr,slot_num,args.message_size));
+                        limen::fill_pattern(send_addr, args.message_size, send_count);
+
+                        rc = post_send(slot_num, peer_slot,
+                                    (uint64_t)(uintptr_t)session.send_mr()->addr,
+                                    session.qp(), args.message_size,
+                                    session.send_mr()->lkey, peer_info);
+                        if (rc != 0)
+                        {
+                            fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
+                            exit_rc = EXIT_VERB_ERROR;
+                            return exit_rc;
+                        }
+
+                        //  now write to the flag
+                        uint64_t* flag_src = reinterpret_cast<uint64_t*>(session.send_mr()->addr);
+                        *flag_src = send_count+1;
+
+                        rc = post_write_at((uint64_t)(uintptr_t)flag_src, sizeof(uint64_t),
+                                        session.qp(), session.send_mr()->lkey,
+                                        peer_info, 0, FLAG_WRID_TAG | (send_count));
+                        if (rc != 0)
+                        {
+                            fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
+                            exit_rc = EXIT_VERB_ERROR;
+                            return exit_rc;
+                        }
+                        send_count++;
+
+                    }
+                }
                 break;
             case onesided_mode::IMM:
-                break;
-            case onesided_mode::LASTBYTE:
+                //  client posts a write with IMM data which triggers a recv wr on the server
+                while ((uint64_t)send_completions < args.iterations && bad_wc_idx==-1)
+                {
+                    //reap
+                    ibv_wc wc;
+                    while (ibv_poll_cq(session.cq(), 1, &wc) >0)
+                    {
+                        // if (wc.opcode == IBV_WC_RDMA_WRITE)
+                        // {
+                            std::cout << limen::wc_to_str(&wc) << std::endl;
+                            send_completions++;
+                        // } 
+                    }
+                    if ((uint64_t)send_count < args.iterations)
+                    {
+                        int slot_num = send_count % send_slots;
+                        void* send_addr = reinterpret_cast<void*>(limen::slot_addr((uint64_t)(uintptr_t)session.send_mr()->addr,slot_num,args.message_size));
+                        limen::fill_pattern(send_addr, args.message_size, send_count);
+                        rc = post_send_imm(slot_num, slot_num % peer_slots,
+                                    (uint64_t)(uintptr_t)session.send_mr()->addr,
+                                    session.qp(), args.message_size,
+                                    session.send_mr()->lkey, peer_info,
+                                    htonl(send_count));
+                        if (rc != 0)
+                        {
+                            fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
+                            exit_rc = EXIT_VERB_ERROR;
+                            return exit_rc;
+                        }
+                        send_count++;
+                    }
+                }
                 break;
 
         }
@@ -660,22 +668,69 @@ int main(int argc, char* argv[])
     else 
     {
         //  server-side loop
+
         switch (args.mode) {
             case onesided_mode::WRITE:
                 //  server does nothing in write mode
                 break;
             case onesided_mode::READ:
                 //  server does nothing in read mode
+                
                 break;
             case onesided_mode::FLAG:
-                //  server polls flag and verifies payload
-                break;
+            {
+                //  flag is always slot 0 of the recv buffer, specifically the first 8 bytes
+                volatile uint64_t* flag_addr = reinterpret_cast<uint64_t*>(session.recv_mr()->addr);
+                while (*flag_addr < args.iterations) {}//   wait
+                //  NOTE: Having the client wait for the server to acknowledge a received write would just
+                //  turn this into two-sided RC, so instead we just wait here.
+            }
             case onesided_mode::IMM:
                 //  server polls cq and reaps IBV_WC_RECV_RDMA_WITH_IMM
                 //  NOTE: server needs to post recv work requests 
+                while (recv_count < args.iterations)
+                {
+                    ibv_wc wc;
+                    while (ibv_poll_cq(session.cq(), 1, &wc) >0)
+                    {
+                        if (wc.status != IBV_WC_SUCCESS)
+                        {
+                            std::cout << std::format("qp_num={:#08x}\n",session.qp()->qp_num);
+                            std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
+                            ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &init_attr);
+                            std::cout << "qp_state_after_error: "  << limen::qp_state_to_str(session.qp()->state) <<  std::endl;
+                            bad_wc_idx = 0;
+                            break;
+                        }
+                        if (wc.opcode == IBV_WC_RECV_RDMA_WITH_IMM)
+                        {
+                            uint32_t peer_send_counter = ntohl(wc.imm_data);
+                            uint32_t slot_num = peer_send_counter % recv_slots;
+                            //  we cannot perform verify_pattern here since the region can be written to while we check it
+                            //  also, technically we could do repost_recv(0) every time & it makes no difference since
+                            //  the address comes from the client not the local machine
+                            session.repost_recv(slot_num);
+                            recv_count++;
+                        }
+                    }
+                }
                 break;
             case onesided_mode::LASTBYTE:
                 //  server polls the last byte in region 
+                volatile uint8_t* lastbyte_addr = reinterpret_cast<volatile uint8_t*>((uintptr_t)session.recv_mr()->addr + session.recv_mr()->length-1);
+                uint8_t last_val = *lastbyte_addr;
+                auto last_valid_check = std::chrono::steady_clock::now();
+                while (true) {
+                    if (last_val != *lastbyte_addr)
+                    {
+                        recv_count++;
+                        last_val = *lastbyte_addr;
+                        if (limen::verify_pattern(session.recv_mr()->addr, args.message_size, recv_count - 1) > 0)
+                            mismatch_count++;
+                    }
+                    if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - last_valid_check) > std::chrono::seconds(2))
+                        break;  //  timeout after 2sec of no recvs
+                }
                 break;
 
         }
@@ -691,7 +746,7 @@ int main(int argc, char* argv[])
     );
     if (bad_wc_idx > -1)
     {
-        std::cout << std::format(" first_error={}",wc_status_name(wc_arr[bad_wc_idx].status));
+        std::cout << std::format(" first_error={}",limen::wc_status_name(wc_arr[bad_wc_idx].status));
     }
     std::cout << std::endl;
 
@@ -699,44 +754,43 @@ int main(int argc, char* argv[])
     if (is_client)
     {
         std::cout << "cm: disconnect requested" << std::endl;
-        rdma_disconnect(remote_conn_id.get());
+        session.disconnect();
     }
     //  wait for disconnect or timeout_wait
-    limen::Event e(ec);
-    if (e.type() != RDMA_CM_EVENT_DISCONNECTED && e.type() != RDMA_CM_EVENT_TIMEWAIT_EXIT)
-    {
-        return 7;
-    }
+    session.wait_for_disconnect(10000);
     std::cout << "cm: event DISCONNECTED" << std::endl;
 
     int reaped = 0;
     ibv_wc wc;
-    while (ibv_poll_cq(cq.get(), 1, &wc) > 0) {std::cout<< wc_to_str(&wc)<<std::endl;  ++reaped;}   /* drain: must be 0 */
+    while (ibv_poll_cq(session.cq(), 1, &wc) > 0) {std::cout<< limen::wc_to_str(&wc)<<std::endl;  ++reaped;}   /* drain: must be 0 */
     std::printf("remote-completions: %d\n", reaped);
 
     //  verify last buffer on --mode write as server
     if (args.mode == onesided_mode::WRITE && is_client==false)
     {
-        if (verify_pattern(recv_mr.get()->addr, args.message_size,args.iterations-1) > 0)
+        if (limen::verify_pattern(session.recv_mr()->addr, args.message_size,args.iterations-1) > 0)
         {
             throw limen::VerbsError(
                 std::format("verify: buffer contents DO NOT match expected pattern for {} iterations",args.iterations).c_str(),
                 EINVAL
             );
         }
+        std::cout << std::format("verify: buffer contents match expected pattern for {} iterations",args.iterations) << std::endl;
     }
-    std::cout << std::format("verify: buffer contents match expected pattern for {} iterations",args.iterations) << std::endl;
 
 
     std::printf("teardown: qp=%s cq=%s rx_mr=%s tx_mr=%s pd=%s id=%s channel=%s context=%s\n",
-                remote_conn_id.qp()      ? "ok" : "n/a",
-                cq.get()      ? "ok" : "n/a",
-                recv_mr.get() ? "ok" : "n/a",
-                send_mr.get() ? "ok" : "n/a",
-                pd.get()          ? "ok" : "n/a",
-                remote_conn_id.get() ? "ok" : "n/a",
-                ec.get() ? "ok" : "n/a",
-                remote_conn_id.get()->verbs ? "ok" : "n/a");
-    return 0;
+                session.qp()      ? "ok" : "n/a",
+                session.cq()      ? "ok" : "n/a",
+                session.recv_mr() ? "ok" : "n/a",
+                session.send_mr() ? "ok" : "n/a",
+                session.pd()          ? "ok" : "n/a",
+                session.id() ? "ok" : "n/a",
+                session.ec() ? "ok" : "n/a",
+                session.id()->verbs ? "ok" : "n/a");
+    return EXIT_SUCCESS;
+    }
+    catch (const limen::SessionError& e) { fprintf(stderr, "%s\n", e.what()); return EXIT_FAILURE; }
+    catch (const limen::VerbsError& e)   { fprintf(stderr, "%s\n", e.what()); return EXIT_FAILURE; }
 
 }

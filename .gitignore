@@ -1,4 +1,5 @@
 build/
+build-asan/
 compile_commands.json
 CMakeFiles/
 CMakeCache.txt

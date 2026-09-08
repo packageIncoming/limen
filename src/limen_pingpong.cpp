@@ -293,18 +293,18 @@ int main(int argc, char* argv[])
         limen::SessionConfig cfg{};
         cfg.recv_wr        = args.no_recv? 0:RECV_QUEUE_DEPTH;
         cfg.recv_slot_size = args.message_size;
-        cfg.recv_size      = args.message_size * std::max(cfg.recv_wr, 1u);
+        // cfg.recv_size      = args.message_size * std::max(cfg.recv_wr, 1u);
         cfg.send_wr        = args.iterations;
-        cfg.send_size      = args.message_size;
+        cfg.send_slot_size      = args.message_size;
         cfg.cqe            = COMPLETE_QUEUE_DEPTH;
         cfg.retry_count     = 7;                  // transport retries on timeout/NAK
         cfg.rnr_retry_count = args.rnr_retry;     // retries specifically on receiver-not-ready
         cfg.tcp_port            = (uint16_t)args.tcp_port;
         cfg.initiator_depth     = 1;
         cfg.responder_resources = 1;
-        cfg.access_flags        = IBV_ACCESS_LOCAL_WRITE
-                                | IBV_ACCESS_REMOTE_WRITE
-                                | IBV_ACCESS_REMOTE_READ;
+        // cfg.access_flags        = IBV_ACCESS_LOCAL_WRITE
+        //                         | IBV_ACCESS_REMOTE_WRITE
+        //                         | IBV_ACCESS_REMOTE_READ;
 
 
         limen::Session session = is_client ? 

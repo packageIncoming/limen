@@ -104,7 +104,7 @@ int limen::ConnectionId::close() noexcept
 
 void limen::ConnectionId::destroy_qp() noexcept
 {
-    if (_cm_id->qp)
+    if (_cm_id && _cm_id->qp)
     {
         rdma_destroy_qp(_cm_id);
     }

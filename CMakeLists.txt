@@ -83,9 +83,8 @@ target_link_libraries(limen_connect PRIVATE limen_app)
 add_executable(limen_pingpong src/limen_pingpong.cpp)
 target_link_libraries(limen_pingpong PRIVATE limen_app)
 
-# Uncomment once limen_onesided.cpp is ported to PendingConnection/Session.
-# add_executable(limen_onesided src/limen_onesided.cpp)
-# target_link_libraries(limen_onesided PRIVATE limen_app)
+add_executable(limen_onesided src/limen_onesided.cpp)
+target_link_libraries(limen_onesided PRIVATE limen_app)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tests

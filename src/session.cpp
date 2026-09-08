@@ -58,226 +58,14 @@ namespace limen
 
     
     //  Session functions
-    Session Session::create_client_session(const char *peer, const SessionConfig &config)
+    Session Session::create_client_session(const char* peer, const SessionConfig& config)
     {
-        EventChannel ec = EventChannel::create();
-        ConnectionId conn_id(ec,RDMA_PS_TCP);
-
-        //  construct the sockaddr_in struct that points to the server
-        sockaddr_in remote_sockaddr{};  //  describes the remote address
-        remote_sockaddr.sin_family = AF_INET;
-        remote_sockaddr.sin_port = htons(config.tcp_port);
-        if (inet_pton(AF_INET, peer, &remote_sockaddr.sin_addr) != 1)
-        {
-            throw SessionError("create_client_session:inet_pton",errno);
-        }
-
-        //  resolve addr
-        Event e;
-        if (rdma_resolve_addr(conn_id.get(), nullptr, (struct sockaddr*) &remote_sockaddr, 5000) != 0)
-        {
-            throw SessionError("create_client_session:rdma_resolve_addr", errno);
-        }
-        e = get_expected_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, 5000);
-        
-        //  resolve route
-        if (rdma_resolve_route(conn_id.get(), 5000) != 0)
-        {
-            throw SessionError("create_client_session:rdma_resolve_route", errno);
-        }
-        e = get_expected_event(ec, RDMA_CM_EVENT_ROUTE_RESOLVED, 5000);
-
-        //  get device attributes
-        ibv_context* device_context = conn_id.get()->verbs;
-        ibv_device_attr device_attr{};
-
-        if (ibv_query_device(device_context,&device_attr) != 0)
-        {
-            //  failed to get device attributes
-            throw SessionError("create_client_session:ibv_query_device",errno);
-        }
-
-        //  fill qp_init_attr
-        ibv_qp_init_attr qp_init_attr{};
-        uint32_t recv_wr = std::min(config.recv_wr, (uint32_t)device_attr.max_qp_wr);
-        uint32_t send_wr = std::min(config.send_wr, (uint32_t)device_attr.max_qp_wr);
-        int      cqe     = config.cqe > 0 ? std::min(config.cqe, device_attr.max_cqe)
-                                        : device_attr.max_cqe;
-        fill_qp_init_attr(&qp_init_attr, send_wr,recv_wr);
-
-        //  device has now been decided, create the wrapper instances
-        ProtectionDomain pd = ProtectionDomain(conn_id.get()->verbs);
-        MemoryRegion recv_mr = MemoryRegion(pd,config.recv_size,config.access_flags);
-        MemoryRegion send_mr = MemoryRegion(pd,config.send_size,config.access_flags);
-        CompletionQueue cq = CompletionQueue(conn_id.get()->verbs,cqe,nullptr,nullptr,0);
-
-        //  set send_cq and recv_cq of qp_init_attr
-        qp_init_attr.send_cq = cq.get();
-        qp_init_attr.recv_cq = cq.get();
-
-        //  create QP
-        if (rdma_create_qp(conn_id.get(), pd.get(), &qp_init_attr) != 0)
-        {
-            throw SessionError("create_client_session:rdma_create_qp", errno);
-        }
-        
-        // //  post work requests
-        for (uint32_t slot =0; slot < config.recv_wr; slot++)
-        {
-            int rc = post_recv(slot, (uint64_t)(uintptr_t)recv_mr.get()->addr, conn_id.qp(), config.recv_slot_size,  recv_mr.get()->lkey);
-            if (rc !=0)
-            {
-                //  failed to allocate slot
-                throw SessionError("create_client_session:post_recv",rc);
-            }
-        }
-
-        //  connect
-        //  fill rdma_conn_param struct
-        rdma_conn_param cp{};
-        ConnInfo outbound_cinfo = to_wire_format(ConnInfo(
-        (uint64_t)(uintptr_t)recv_mr.get()->addr,
-            recv_mr.get()->rkey,
-            recv_mr.get()->length
-        ));
-
-        cp.private_data = (void*)&outbound_cinfo;
-        cp.private_data_len = sizeof(outbound_cinfo);
-        cp.responder_resources = config.responder_resources;
-        cp.initiator_depth     = config.initiator_depth;
-        cp.retry_count         = config.retry_count;
-        cp.rnr_retry_count     = (uint8_t)config.rnr_retry_count;
-        if (rdma_connect(conn_id.get(), &cp) != 0)
-        {
-            throw SessionError("create_client_session:rdma_connect", errno);
-        }
-
-        e = get_expected_event(ec, RDMA_CM_EVENT_ESTABLISHED, 5000);
-
-        ConnInfo remote_raw{};
-        e.copy_private_data(&remote_raw, sizeof(remote_raw));
-        ConnInfo peer_info = from_wire_format(remote_raw);
-
-        Session s;
-        s._ec        = std::move(ec);
-        s._id        = std::move(conn_id);
-        s._pd        = std::move(pd);
-        s._recv_mr   = std::move(recv_mr);
-        s._send_mr   = std::move(send_mr);
-        s._cq        = std::move(cq);
-        s._peer      = peer_info;
-        s._is_client = true;
-        s._init_config = config;
-        return s;
+        return PendingConnection::resolve(peer, config).finish();
     }
-  
-    Session Session::create_server_session(const SessionConfig &config)
+
+    Session Session::create_server_session(const SessionConfig& config)
     {
-        EventChannel ec = EventChannel::create();
-        ConnectionId conn_id(ec,RDMA_PS_TCP);
-        Event e;
-        //  bind addr
-        sockaddr_in server_sockaddr{};  //  describes the local (server) address
-        server_sockaddr.sin_family = AF_INET;
-        server_sockaddr.sin_port = htons(config.tcp_port);
-        server_sockaddr.sin_addr.s_addr = INADDR_ANY;   //  side effect: conn_id.get()->verbs not set until a CONNECT_REQUEST arrives
-        if (rdma_bind_addr(conn_id.get(), (struct sockaddr*)&server_sockaddr) != 0)
-        {
-            throw SessionError("create_server_session:rdma_bind_addr", errno);
-        }
-        //  listen on addr, wait for a connect request
-        if (rdma_listen(conn_id.get(), 1) != 0)
-        {
-            throw SessionError("create_server_session:rdma_listen", errno);
-        }
-        //  this event has the new id associated with the client
-        e = get_expected_event(ec, RDMA_CM_EVENT_CONNECT_REQUEST, -1);
-
-        //  adopt event->id as 2nd identifier
-        ConnectionId client_conn_id = ConnectionId::adopt(e.id());
-
-        //  copy out payload
-        ConnInfo remote_raw{};
-        e.copy_private_data(&remote_raw, sizeof(remote_raw));
-        ConnInfo peer_info = from_wire_format(remote_raw);
-
-        //  get device attributes
-        ibv_context* device_context = client_conn_id.get()->verbs;
-        ibv_device_attr device_attr{};
-
-        if (ibv_query_device(device_context,&device_attr) != 0)
-        {
-            //  failed to get device attributes
-            throw SessionError("create_server_session:ibv_query_device",errno);
-        }
-
-        //  fill qp_init_attr
-        ibv_qp_init_attr qp_init_attr{};
-        uint32_t recv_wr = std::min(config.recv_wr, (uint32_t)device_attr.max_qp_wr);
-        uint32_t send_wr = std::min(config.send_wr, (uint32_t)device_attr.max_qp_wr);
-        int      cqe     = config.cqe > 0 ? std::min(config.cqe, device_attr.max_cqe)
-                                        : device_attr.max_cqe;
-
-        fill_qp_init_attr(&qp_init_attr, send_wr,recv_wr);
-
-        //  device has now been decided, create the wrapper instances
-        ProtectionDomain pd = ProtectionDomain(client_conn_id.get()->verbs);
-        MemoryRegion recv_mr = MemoryRegion(pd,config.recv_size,config.access_flags);
-        MemoryRegion send_mr = MemoryRegion(pd,config.send_size,config.access_flags);
-        CompletionQueue cq = CompletionQueue(client_conn_id.get()->verbs,cqe,nullptr,nullptr,0);
-
-        //  set send_cq and recv_cq of qp_init_attr
-        qp_init_attr.send_cq = cq.get();
-        qp_init_attr.recv_cq = cq.get();
-
-        //  create QP on adopted identifier
-        if (rdma_create_qp(client_conn_id.get(), pd.get(), &qp_init_attr) != 0)
-        {
-            throw SessionError("create_server_session:rdma_create_qp", errno);
-        }
-
-        //  accept w/ own payload
-        rdma_conn_param cp{};
-        ConnInfo outbound_cinfo = to_wire_format(ConnInfo(
-        (uint64_t)(uintptr_t)recv_mr.get()->addr,
-            recv_mr.get()->rkey,
-            recv_mr.get()->length
-        ));
-
-        cp.private_data = (void*)&outbound_cinfo;
-        cp.private_data_len = sizeof(outbound_cinfo);
-        cp.responder_resources = config.responder_resources;
-        cp.initiator_depth     = config.initiator_depth;
-        cp.retry_count         = config.retry_count;
-        cp.rnr_retry_count     = (uint8_t)config.rnr_retry_count;
-
-        // //  post work requests
-        for (uint32_t slot =0; slot < config.recv_wr; slot++)
-        {
-            int rc = post_recv(slot, (uint64_t)(uintptr_t)recv_mr.get()->addr, client_conn_id.qp(), config.recv_slot_size,  recv_mr.get()->lkey);
-            if (rc !=0)
-            {
-                //  failed to allocate slot
-                throw SessionError("create_client_session:post_recv",rc);
-            }
-        }
-
-        if (rdma_accept(client_conn_id.get(), &cp) != 0)
-        {
-            throw SessionError("create_server_session:rdma_accept", errno);
-        }
-        e = get_expected_event(ec, RDMA_CM_EVENT_ESTABLISHED, -1);
-        Session s;
-        s._ec        = std::move(ec);
-        s._id        = std::move(client_conn_id);
-        s._pd        = std::move(pd);
-        s._recv_mr   = std::move(recv_mr);
-        s._send_mr   = std::move(send_mr);
-        s._cq        = std::move(cq);
-        s._peer      = peer_info;
-        s._is_client = false;
-        s._init_config = config;
-        return s;
+        return PendingConnection::listen(config).finish();
     }
 
     int Session::close() noexcept 
@@ -354,5 +142,284 @@ namespace limen
     }
 
 
+    //  PendingConnection functions
+    int PendingConnection::close() noexcept
+    {
+        _id.destroy_qp();
+        _cq.close();
+        _send_mr.close();
+        _recv_mr.close();
+        _pd.close();
+        _id.close();
+        _listen_id.close();
+        _ec.close();
+        return 0;
+    }
+
+    PendingConnection::PendingConnection(PendingConnection&& o) noexcept
+    {
+        _ec        = std::move(o._ec);
+        _listen_id = std::move(o._listen_id);
+        _id        = std::move(o._id);
+        _pd        = std::move(o._pd);
+        _recv_mr   = std::move(o._recv_mr);
+        _send_mr   = std::move(o._send_mr);
+        _cq        = std::move(o._cq);
+        _peer      = o._peer;
+        _config    = o._config;
+        _is_client = o._is_client;
+        _has_peer  = o._has_peer;
+    }
+
+    PendingConnection& PendingConnection::operator=(PendingConnection&& o) noexcept
+    {
+        if (this == &o) return *this;
+        close();
+        _ec        = std::move(o._ec);
+        _listen_id = std::move(o._listen_id);
+        _id        = std::move(o._id);
+        _pd        = std::move(o._pd);
+        _recv_mr   = std::move(o._recv_mr);
+        _send_mr   = std::move(o._send_mr);
+        _cq        = std::move(o._cq);
+        _peer      = o._peer;
+        _config    = o._config;
+        _is_client = o._is_client;
+        _has_peer  = o._has_peer;
+        return *this;
+    }
+
+    PendingConnection PendingConnection::resolve(const char* peer, const SessionConfig& config)
+    {
+        EventChannel ec = EventChannel::create();
+        ConnectionId conn_id(ec, RDMA_PS_TCP);
+
+        //  construct the sockaddr_in struct that points to the server
+        sockaddr_in remote_sockaddr{};
+        remote_sockaddr.sin_family = AF_INET;
+        remote_sockaddr.sin_port   = htons(config.tcp_port);
+        if (inet_pton(AF_INET, peer, &remote_sockaddr.sin_addr) != 1)
+        {
+            throw SessionError("PendingConnection::resolve:inet_pton", errno);
+        }
+
+        //  resolve addr
+        Event e;
+        if (rdma_resolve_addr(conn_id.get(), nullptr, (struct sockaddr*)&remote_sockaddr, 5000) != 0)
+        {
+            throw SessionError("PendingConnection::resolve:rdma_resolve_addr", errno);
+        }
+        e = get_expected_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, 5000);
+
+        //  resolve route
+        if (rdma_resolve_route(conn_id.get(), 5000) != 0)
+        {
+            throw SessionError("PendingConnection::resolve:rdma_resolve_route", errno);
+        }
+        e = get_expected_event(ec, RDMA_CM_EVENT_ROUTE_RESOLVED, 5000);
+
+        //  get device attributes
+        ibv_device_attr device_attr{};
+        if (ibv_query_device(conn_id.get()->verbs, &device_attr) != 0)
+        {
+            throw SessionError("PendingConnection::resolve:ibv_query_device", errno);
+        }
+
+        //  fill qp_init_attr
+        ibv_qp_init_attr qp_init_attr{};
+        uint32_t recv_wr = std::min(config.recv_wr, (uint32_t)device_attr.max_qp_wr);
+        uint32_t send_wr = std::min(config.send_wr, (uint32_t)device_attr.max_qp_wr);
+        int      cqe     = config.cqe > 0 ? std::min(config.cqe, device_attr.max_cqe)
+                                          : device_attr.max_cqe;
+        uint32_t recv_len = config.recv_slot_size * std::max(config.recv_slots, 1u);
+        uint32_t send_len = config.send_slot_size * std::max(config.send_slots, 1u);
+        fill_qp_init_attr(&qp_init_attr, send_wr, recv_wr);
+
+        //  device has now been decided, create the wrapper instances
+        ProtectionDomain pd      = ProtectionDomain(conn_id.get()->verbs);
+        MemoryRegion     recv_mr = MemoryRegion(pd, recv_len, config.recv_access_flags);
+        MemoryRegion     send_mr = MemoryRegion(pd, send_len, config.send_access_flags);
+        CompletionQueue  cq      = CompletionQueue(conn_id.get()->verbs, cqe, nullptr, nullptr, 0);
+
+        qp_init_attr.send_cq = cq.get();
+        qp_init_attr.recv_cq = cq.get();
+
+        //  create QP
+        if (rdma_create_qp(conn_id.get(), pd.get(), &qp_init_attr) != 0)
+        {
+            throw SessionError("PendingConnection::resolve:rdma_create_qp", errno);
+        }
+
+        //  post work requests
+        for (uint32_t slot = 0; slot < recv_wr; slot++)
+        {
+            int rc = post_recv(slot, (uint64_t)(uintptr_t)recv_mr.get()->addr, conn_id.qp(),
+                               config.recv_slot_size, recv_mr.get()->lkey);
+            if (rc != 0)
+            {
+                throw SessionError("PendingConnection::resolve:post_recv", rc);
+            }
+        }
+
+        PendingConnection pc;
+        pc._ec        = std::move(ec);
+        pc._id        = std::move(conn_id);
+        pc._pd        = std::move(pd);
+        pc._recv_mr   = std::move(recv_mr);
+        pc._send_mr   = std::move(send_mr);
+        pc._cq        = std::move(cq);
+        pc._config    = config;
+        pc._is_client = true;
+        pc._has_peer  = false;   //  client learns the peer at ESTABLISHED
+        return pc;
+    }
+
+    PendingConnection PendingConnection::listen(const SessionConfig& config)
+    {
+        EventChannel ec = EventChannel::create();
+        ConnectionId listen_id(ec, RDMA_PS_TCP);
+        Event e;
+
+        //  bind addr
+        sockaddr_in server_sockaddr{};
+        server_sockaddr.sin_family      = AF_INET;
+        server_sockaddr.sin_port        = htons(config.tcp_port);
+        server_sockaddr.sin_addr.s_addr = INADDR_ANY;   //  verbs not set until CONNECT_REQUEST
+        if (rdma_bind_addr(listen_id.get(), (struct sockaddr*)&server_sockaddr) != 0)
+        {
+            throw SessionError("PendingConnection::listen:rdma_bind_addr", errno);
+        }
+        if (rdma_listen(listen_id.get(), 1) != 0)
+        {
+            throw SessionError("PendingConnection::listen:rdma_listen", errno);
+        }
+
+        //  this event has the new id associated with the client
+        e = get_expected_event(ec, RDMA_CM_EVENT_CONNECT_REQUEST, -1);
+
+        //  adopt event->id as 2nd identifier
+        ConnectionId client_conn_id = ConnectionId::adopt(e.id());
+
+        //  copy out payload
+        ConnInfo remote_raw{};
+        e.copy_private_data(&remote_raw, sizeof(remote_raw));
+        ConnInfo peer_info = from_wire_format(remote_raw);
+
+        //  get device attributes
+        ibv_device_attr device_attr{};
+        if (ibv_query_device(client_conn_id.get()->verbs, &device_attr) != 0)
+        {
+            throw SessionError("PendingConnection::listen:ibv_query_device", errno);
+        }
+
+        uint32_t recv_wr = std::min(config.recv_wr, (uint32_t)device_attr.max_qp_wr);
+        uint32_t send_wr = std::min(config.send_wr, (uint32_t)device_attr.max_qp_wr);
+        int      cqe     = config.cqe > 0 ? std::min(config.cqe, device_attr.max_cqe)
+                                          : device_attr.max_cqe;
+        uint32_t recv_len = config.recv_slot_size * std::max(config.recv_slots, 1u);
+        uint32_t send_len = config.send_slot_size * std::max(config.send_slots, 1u);
+
+        //  fill qp_init_attr
+        ibv_qp_init_attr qp_init_attr{};
+        fill_qp_init_attr(&qp_init_attr, send_wr, recv_wr);
+
+        //  device has now been decided, create the wrapper instances
+        ProtectionDomain pd      = ProtectionDomain(client_conn_id.get()->verbs);
+        MemoryRegion     recv_mr = MemoryRegion(pd, recv_len, config.recv_access_flags);
+        MemoryRegion     send_mr = MemoryRegion(pd, send_len, config.send_access_flags);
+        CompletionQueue  cq      = CompletionQueue(client_conn_id.get()->verbs, cqe, nullptr, nullptr, 0);
+
+        qp_init_attr.send_cq = cq.get();
+        qp_init_attr.recv_cq = cq.get();
+
+        //  create QP on adopted identifier
+        if (rdma_create_qp(client_conn_id.get(), pd.get(), &qp_init_attr) != 0)
+        {
+            throw SessionError("PendingConnection::listen:rdma_create_qp", errno);
+        }
+
+        //  post work requests before accept, or the first inbound send hits RNR
+        for (uint32_t slot = 0; slot < recv_wr; slot++)
+        {
+            int rc = post_recv(slot, (uint64_t)(uintptr_t)recv_mr.get()->addr, client_conn_id.qp(),
+                               config.recv_slot_size, recv_mr.get()->lkey);
+            if (rc != 0)
+            {
+                throw SessionError("PendingConnection::listen:post_recv", rc);
+            }
+        }
+
+        PendingConnection pc;
+        pc._ec        = std::move(ec);
+        pc._listen_id = std::move(listen_id);
+        pc._id        = std::move(client_conn_id);
+        pc._pd        = std::move(pd);
+        pc._recv_mr   = std::move(recv_mr);
+        pc._send_mr   = std::move(send_mr);
+        pc._cq        = std::move(cq);
+        pc._peer      = peer_info;
+        pc._config    = config;
+        pc._is_client = false;
+        pc._has_peer  = true;    //  arrived with CONNECT_REQUEST
+        return pc;
+    }
+
+    Session PendingConnection::finish() &&
+    {
+        //  fill rdma_conn_param struct
+        rdma_conn_param cp{};
+        ConnInfo outbound_cinfo = to_wire_format(ConnInfo(
+            (uint64_t)(uintptr_t)_recv_mr.get()->addr,
+            _recv_mr.get()->rkey,
+            _recv_mr.get()->length
+        ));
+
+        cp.private_data        = (void*)&outbound_cinfo;
+        cp.private_data_len    = sizeof(outbound_cinfo);
+        cp.responder_resources = _config.responder_resources;
+        cp.initiator_depth     = _config.initiator_depth;
+        cp.retry_count         = _config.retry_count;
+        cp.rnr_retry_count     = (uint8_t)_config.rnr_retry_count;
+
+        Event e;
+        if (_is_client)
+        {
+            if (rdma_connect(_id.get(), &cp) != 0)
+            {
+                throw SessionError("PendingConnection::finish:rdma_connect", errno);
+            }
+            e = get_expected_event(_ec, RDMA_CM_EVENT_ESTABLISHED, 5000);
+
+            ConnInfo remote_raw{};
+            e.copy_private_data(&remote_raw, sizeof(remote_raw));
+            _peer     = from_wire_format(remote_raw);
+            _has_peer = true;
+        }
+        else
+        {
+            if (rdma_accept(_id.get(), &cp) != 0)
+            {
+                throw SessionError("PendingConnection::finish:rdma_accept", errno);
+            }
+            e = get_expected_event(_ec, RDMA_CM_EVENT_ESTABLISHED, -1);
+        }
+
+        Session s;
+        s._ec          = std::move(_ec);
+        s._id          = std::move(_id);
+        s._pd          = std::move(_pd);
+        s._recv_mr     = std::move(_recv_mr);
+        s._send_mr     = std::move(_send_mr);
+        s._cq          = std::move(_cq);
+        s._peer        = _peer;
+        s._has_peer    = _has_peer;
+        s._is_client   = _is_client;
+        s._init_config = _config;
+        //  negotiated values from the ESTABLISHED event, not what was requested.
+        //  the CM can grant less than asked for, and R9 reports the effective limit.
+        s._init_depth  = e.initiator_depth();
+        s._resp_res    = e.responder_resources();
+        return s;
+    }
 
 }
