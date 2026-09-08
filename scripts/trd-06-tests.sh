@@ -2,16 +2,20 @@
 # trd-06-tests.sh — Limen RDMA Transport Project
 # TRD-06: One-Sided Operations
 #
-#   ./scripts/trd-06-tests.sh                                            build checks
-#   ./scripts/trd-06-tests.sh --peer 10.0.0.1 --gid 3                    full gate
-#   ./scripts/trd-06-tests.sh --peer 10.0.0.1 --gid 3 --ssh you@10.0.0.1 automatic
+#   ./scripts/trd-06-tests.sh                                       build checks
+#   ./scripts/trd-06-tests.sh --peer 10.0.0.1                       full gate, manual peer
+#   ./scripts/trd-06-tests.sh --peer 10.0.0.1 --ssh you@10.0.0.1    two hosts, automatic
+#   ./scripts/trd-06-tests.sh --peer 192.168.100.2 \
+#       --dev rocep1s0f0 --peer-dev rocep4s0f0 --peer-cmd 'sudo limen-b'
+#                                                                   one host, two namespaces
 #
 # Exit 0 only when every test passes and none was skipped.
 
 set -uo pipefail
 
 BIN="./build/limen_onesided"
-DEV=""; GID=""; PEER=""; SSH_PEER=""
+DEV=""; GID=""; PEER=""; SSH_PEER=""; PEER_DEV=""; PEER_CMD=""
+SRV_LOG=""   # set once TMPDIR exists; local-peer server output
 TCP_BASE=18800
 PASS=0; FAIL=0; SKIP=0
 
@@ -26,11 +30,17 @@ hdr() { echo -e "\n${B}$1${N}"; }
 
 TMPDIR="$(mktemp -d)"; PORT_SEQ=0
 cleanup() {
-  [[ -n "$SSH_PEER" ]] && ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
-      "pkill -f limen_onesided" >/dev/null 2>&1 || true
+  if [[ -n "$PEER_CMD" ]]; then
+    $PEER_CMD pkill -f limen_onesided >/dev/null 2>&1 || true
+    sudo pkill -f limen_onesided      >/dev/null 2>&1 || true
+  elif [[ -n "$SSH_PEER" ]]; then
+    ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
+        "pkill -f limen_onesided" >/dev/null 2>&1 || true
+  fi
   rm -rf "$TMPDIR"
 }
 trap cleanup EXIT INT TERM
+SRV_LOG="$TMPDIR/limen-srv6.log"
 next_port() { PORT_SEQ=$((PORT_SEQ + 1)); echo $((TCP_BASE + PORT_SEQ)); }
 
 while [[ $# -gt 0 ]]; do
@@ -39,36 +49,76 @@ while [[ $# -gt 0 ]]; do
     --gid)  GID="${2:-}";  shift 2 ;;
     --peer) PEER="${2:-}"; shift 2 ;;
     --ssh)  SSH_PEER="${2:-}"; shift 2 ;;
-    -h|--help) echo "usage: $0 [--dev NAME] [--gid N] [--peer IP] [--ssh user@host]"; exit 1 ;;
+    --peer-dev) PEER_DEV="${2:-}"; shift 2 ;;
+    --peer-cmd) PEER_CMD="${2:-}"; shift 2 ;;
+    -h|--help)
+      echo "usage: $0 [--dev NAME] [--gid N] [--peer IP] [--ssh user@host]"
+      echo "          [--peer-dev NAME] [--peer-cmd 'sudo limen-b']"
+      exit 1 ;;
     *) echo "unknown argument: $1"; exit 1 ;;
   esac
 done
 
 echo -e "${B}=== Limen TRD-06: One-Sided Operations ===${N}"
 
+# start_peer <port> "<server args>"
+#   --peer-cmd : local launcher (a namespace wrapper such as 'sudo limen-b')
+#   --ssh      : second host
+#   neither    : prompt the operator
+start_peer() {
+  local port="$1" extra="${2:-}"
+  : >"$SRV_LOG"
+  if [[ -n "$PEER_CMD" ]]; then
+    $PEER_CMD "$BIN" -d "$PEER_DEV" -t "$port" $extra >"$SRV_LOG" 2>&1 &
+    sleep 2
+  elif [[ -n "$SSH_PEER" ]]; then
+    ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
+      "cd '$(pwd)' && nohup $BIN -d $PEER_DEV -t $port $extra >/tmp/limen-srv6.log 2>&1 & disown" \
+      >/dev/null 2>&1 || true
+    sleep 2
+  else
+    echo "      on the peer:  $BIN -d $PEER_DEV -t $port $extra" >&2
+    read -rp "      press enter once it is running... " >&2
+  fi
+}
+
+kill_peer() {
+  local port="$1"
+  if [[ -n "$PEER_CMD" ]]; then
+    $PEER_CMD pkill -f "limen_onesided.*-t $port" >/dev/null 2>&1 || true
+    sudo pkill -f "limen_onesided.*-t $port"      >/dev/null 2>&1 || true
+  elif [[ -n "$SSH_PEER" ]]; then
+    ssh -o BatchMode=yes "$SSH_PEER" \
+        "pkill -f 'limen_onesided.*-t $port'" >/dev/null 2>&1 || true
+  fi
+}
+
 # run_pair "<server args>" "<client args>" <timeout>  -> client output + __EXIT__n
 run_pair() {
   local sargs="$1" cargs="$2" tmo="${3:-60}" port
   port=$(next_port)
-  if [[ -n "$SSH_PEER" ]]; then
-    ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
-      "cd '$(pwd)' && nohup $BIN -d $DEV -t $port $sargs >/tmp/limen-srv6.log 2>&1 & disown" \
-      >/dev/null 2>&1 || true
-    sleep 2
-  else
-    echo "      on the peer:  $BIN -d $DEV -t $port $sargs" >&2
-    read -rp "      press enter once it is running... " >&2
-  fi
+  start_peer "$port" "$sargs"
   timeout "$tmo" "$BIN" -d "$DEV" -t "$port" $cargs "$PEER" 2>&1
   local rc=$?
-  [[ -n "$SSH_PEER" ]] && ssh -o BatchMode=yes "$SSH_PEER" \
-      "pkill -f 'limen_onesided.*-t $port'" >/dev/null 2>&1 || true
+  # the local launcher runs in the foreground of a background job; give the
+  # server a moment to print its teardown block before the log is read
+  [[ -n "$PEER_CMD" ]] && sleep 1
+  kill_peer "$port"
   echo "__EXIT__${rc}"
 }
 exit_of()  { grep -oE '__EXIT__[0-9]+' <<<"$1" | grep -oE '[0-9]+$'; }
+
+# server_log -> the peer's stdout+stderr, or empty when it cannot be reached
 server_log() {
-  [[ -n "$SSH_PEER" ]] && ssh -o BatchMode=yes "$SSH_PEER" "cat /tmp/limen-srv6.log" 2>/dev/null || true
+  if [[ -n "$PEER_CMD" ]]; then
+    cat "$SRV_LOG" 2>/dev/null || true
+  elif [[ -n "$SSH_PEER" ]]; then
+    ssh -o BatchMode=yes "$SSH_PEER" "cat /tmp/limen-srv6.log" 2>/dev/null || true
+  fi
 }
+
+# peer_reachable: true when the suite can start a server without an operator
+peer_reachable() { [[ -n "$PEER_CMD" || -n "$SSH_PEER" ]]; }
 
 # ══ Build ═════════════════════════════════════════════════════════════
 BUILD_OK=0
@@ -154,7 +204,7 @@ test_rdma_write() {                                                   # R2
   fi
   local srv; srv=$(server_log)
   if [[ -z "$srv" ]]; then
-    sk "cannot read the server log without --ssh; verify by hand"
+    sk "cannot read the server log without --ssh or --peer-cmd; verify by hand"
   elif grep -qiE '^verify:.*match' <<<"$srv" && ! grep -qiE 'DO NOT match' <<<"$srv"; then
     ok "write completed and the peer verified its buffer"
   else
@@ -166,7 +216,7 @@ test_receiver_passive() {                                             # R3
   hdr "R3: the peer reports zero completions during a plain write"
   capture_write
   local srv; srv=$(server_log)
-  [[ -n "$srv" ]] || { sk "requires --ssh to read the server's output"; return; }
+  [[ -n "$srv" ]] || { sk "requires --ssh or --peer-cmd to read the server's output"; return; }
   local n
   n=$(grep -m1 -oE '^remote-completions: [0-9]+' <<<"$srv" | grep -oE '[0-9]+$' || echo "")
   if [[ -z "$n" ]]; then
@@ -221,7 +271,7 @@ test_write_with_imm() {                                               # R6
   [[ "$rc" -ne 0 ]] && { no "client exited $rc"; return; }
   local srv; srv=$(server_log)
   if [[ -z "$srv" ]]; then
-    sk "requires --ssh to confirm the peer received the immediate value"
+    sk "requires --ssh or --peer-cmd to confirm the peer received the immediate value"
   elif grep -qiE 'RECV_RDMA_WITH_IMM|imm' <<<"$srv"; then
     ok "peer reported an immediate-data completion"
   else
@@ -232,7 +282,7 @@ test_write_with_imm() {                                               # R6
 test_imm_is_two_sided() {                                             # R6
   hdr "R6: immediate mode produces non-zero remote completions"
   local srv; srv=$(server_log)
-  [[ -n "$srv" ]] || { sk "requires --ssh"; return; }
+  [[ -n "$srv" ]] || { sk "requires --ssh or --peer-cmd"; return; }
   local n
   n=$(grep -m1 -oE '^remote-completions: [0-9]+' <<<"$srv" | grep -oE '[0-9]+$' || echo "")
   if [[ -z "$n" ]]; then
@@ -278,7 +328,10 @@ run_regression() {
 
 test_trd03_regression() {                                             # R10
   hdr "R10: the TRD-03 suite still passes"
-  local r; r=$(run_regression 3 --dev "$DEV" --gid "$GID" --peer "$PEER" ${SSH_PEER:+--ssh "$SSH_PEER"})
+  local r; r=$(run_regression 3 --dev "$DEV" --gid "$GID" --peer "$PEER" \
+                 ${SSH_PEER:+--ssh "$SSH_PEER"} \
+                 ${PEER_DEV:+--peer-dev "$PEER_DEV"} \
+                 ${PEER_CMD:+--peer-cmd "$PEER_CMD"})
   case "$r" in
     PASS)    ok "two-sided transfer unaffected" ;;
     MISSING) sk "scripts/trd-03-tests.sh not present" ;;
@@ -289,7 +342,10 @@ test_trd03_regression() {                                             # R10
 
 test_trd05_regression() {                                             # R10
   hdr "R10: the TRD-05 suite still passes"
-  local r; r=$(run_regression 5 --dev "$DEV" --gid "$GID" --peer "$PEER" ${SSH_PEER:+--ssh "$SSH_PEER"})
+  local r; r=$(run_regression 5 --dev "$DEV" --gid "$GID" --peer "$PEER" \
+                 ${SSH_PEER:+--ssh "$SSH_PEER"} \
+                 ${PEER_DEV:+--peer-dev "$PEER_DEV"} \
+                 ${PEER_CMD:+--peer-cmd "$PEER_CMD"})
   case "$r" in
     PASS)    ok "connection management unaffected" ;;
     MISSING) sk "scripts/trd-05-tests.sh not present" ;;
@@ -308,18 +364,11 @@ test_no_leaks() {                                                     # R10
     local name="${spec%%:*}" rest="${spec#*:}"
     local sargs="${rest%%:*}" cargs="${rest#*:}"
     port=$(next_port)
-    if [[ -n "$SSH_PEER" ]]; then
-      ssh -o BatchMode=yes "$SSH_PEER" \
-        "cd '$(pwd)' && nohup $BIN -d $DEV -t $port $sargs >/dev/null 2>&1 & disown" \
-        >/dev/null 2>&1 || true
-      sleep 2
-    else
-      echo "      on the peer:  $BIN -d $DEV -t $port $sargs"
-      read -rp "      press enter once it is running... "
-    fi
+    start_peer "$port" "$sargs"
     log="$TMPDIR/vg-${name}.log"
     timeout 150 valgrind --leak-check=full --show-leak-kinds=definite \
       "$BIN" -d "$DEV" -t "$port" $cargs "$PEER" >/dev/null 2>"$log" || true
+    kill_peer "$port"
     lost=$(grep -oE 'definitely lost: [0-9,]+ bytes' "$log" | grep -oE '[0-9,]+' | tr -d ',' || echo "")
     [[ -z "$lost" ]] && { no "could not parse valgrind output for ${name} — see $log"; return; }
     [[ "$lost" -gt "$worst" ]] && worst="$lost"
@@ -339,13 +388,21 @@ test_flag_ordering_explained
 test_lastbyte_recorded
 test_lastbyte_explained
 
+# Cache sudo credentials up front so backgrounded peer launches never block
+# on a password prompt in the middle of the suite.
+if [[ "$PEER_CMD" == sudo* ]]; then
+  sudo -v || { echo "sudo credentials required for --peer-cmd"; exit 1; }
+fi
+
 if [[ -z "$DEV" ]] && command -v ibv_devices >/dev/null 2>&1; then
   DEV=$(ibv_devices 2>/dev/null | awk 'NR>2 && NF {print $1; exit}' || true)
 fi
+# a two-namespace host has a second adapter; two hosts share a device name
+[[ -z "$PEER_DEV" ]] && PEER_DEV="$DEV"
 
-if [[ -z "$PEER" || -z "$DEV" ]]; then
+if [[ -z "$PEER" || -z "$GID" || -z "$DEV" ]]; then
   hdr "R1-R10: two-node checks"
-  sk "requires --peer and a device"
+  sk "requires --peer, --gid, and a device"
   sk "  (test_descriptor_validated)"
   sk "  (test_rdma_write)"
   sk "  (test_receiver_passive)"
@@ -359,7 +416,13 @@ if [[ -z "$PEER" || -z "$DEV" ]]; then
   sk "  (test_trd05_regression)"
   sk "  (test_no_leaks)"
 else
-  echo -e "\n${B}Device ${DEV}, peer ${PEER}${N}"
+  if [[ -n "$PEER_CMD" ]]; then
+    echo -e "\n${B}Device ${DEV}, peer ${PEER} on ${PEER_DEV} via '${PEER_CMD}'${N}"
+  elif [[ -n "$SSH_PEER" ]]; then
+    echo -e "\n${B}Device ${DEV}, peer ${PEER} on ${PEER_DEV} via ssh ${SSH_PEER}${N}"
+  else
+    echo -e "\n${B}Device ${DEV}, peer ${PEER} on ${PEER_DEV}, manual launch${N}"
+  fi
   test_descriptor_validated
   test_rdma_write
   test_receiver_passive

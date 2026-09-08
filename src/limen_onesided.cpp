@@ -403,13 +403,12 @@ int main(int argc, char* argv[])
     limen::SessionConfig cfg{};
     cfg.recv_wr = (!is_client && args.mode == onesided_mode::IMM) ? RECV_QUEUE_DEPTH : 0;
     if (!is_client && args.mode == onesided_mode::IMM)
-        cfg.recv_slots = RECV_QUEUE_DEPTH/2;
+        cfg.recv_slots = cfg.recv_wr;
     if (!is_client && args.mode == onesided_mode::FLAG)
         cfg.recv_slots = 2;    //  1= default amount used for recv, 2-> slot 0 is reserved for the flag 
     
     cfg.recv_slot_size = args.message_size;
-
-    cfg.send_wr        = args.iterations;
+    cfg.send_wr = args.iterations * (args.mode == onesided_mode::FLAG ? 2 : 1);
     cfg.send_slots     = SEND_QUEUE_DEPTH/2;
     if (is_client && args.mode == onesided_mode::FLAG)
         cfg.send_slots++;   //  the first slot is reserved as the flag payload slot 
@@ -469,6 +468,8 @@ int main(int argc, char* argv[])
     uint32_t mismatch_count = 0;
     ibv_qp_attr qp_attr;    //  used for querying the QP when something goes wrong (WC status!= SUCCESS)
     ibv_qp_init_attr init_attr; //  used for querying QP when something goes wrong (WC status != SUCCESS)
+    int reaped = 0;
+
 
     if (is_client)
     {
@@ -489,6 +490,9 @@ int main(int argc, char* argv[])
                             //  are bad & have to be flushed accordingly
                             std::cout << std::format("qp_num={:#08x}\n",session.qp()->qp_num);
                             std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
+                            std::cout << std::format("completion: wr_id={:#018x} status={} vendor_err={:#08x}\n",
+                                                    wc.wr_id, limen::wc_status_name(wc.status), wc.vendor_err);
+                            std::cout << "gates: MR access flags and QP qp_access_flags must both permit it\n";
                             ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &init_attr);
                             std::cout << "qp_state_after_error: "  << limen::qp_state_to_str(session.qp()->state) <<  std::endl;
                             bad_wc_idx = 0;
@@ -533,6 +537,9 @@ int main(int argc, char* argv[])
                             //  if the status is not successful then WCs from this one onward
                             //  are bad & have to be flushed accordingly
                             std::cout << std::format("qp_num={:#08x}\n",session.qp()->qp_num);
+                            std::cout << std::format("completion: wr_id={:#018x} status={} vendor_err={:#08x}\n",
+                                                    wc.wr_id, limen::wc_status_name(wc.status), wc.vendor_err);
+                            std::cout << "gates: MR access flags and QP qp_access_flags must both permit it\n";
                             std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
                             ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &init_attr);
                             std::cout << "qp_state_after_error: "  << limen::qp_state_to_str(session.qp()->state) <<  std::endl;
@@ -578,11 +585,22 @@ int main(int argc, char* argv[])
                         {
                             //  if the status is not successful then WCs from this one onward
                             //  are bad & have to be flushed accordingly
-                            std::cout << std::format("qp_num={:#08x}\n",session.qp()->qp_num);
-                            std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
-                            ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &init_attr);
-                            std::cout << "qp_state_after_error: "  << limen::qp_state_to_str(session.qp()->state) <<  std::endl;
+                            wc_arr[0]  = wc;          //  keep the failing completion; first_error reads it
                             bad_wc_idx = 0;
+
+                            std::cout << std::format("qp_num={:#08x}\n", session.qp()->qp_num);
+                            std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
+                            std::cout << std::format("completion: wr_id={:#018x} status={} vendor_err={:#08x}\n",
+                                                    wc.wr_id, limen::wc_status_name(wc.status), wc.vendor_err);
+                            std::cout << std::format("rkey=0x{:06x} (bad_rkey={})\n",
+                                                    peer_info.rkey, args.bad_rkey ? "yes" : "no");
+                            std::cout << "gates: MR access flags and QP qp_access_flags must both permit it\n";
+
+                            ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &init_attr);
+                            std::cout << "qp_state_after_error: "
+                                    << (qp_attr.qp_state == IBV_QPS_ERR ? "ERR"
+                                                                        : limen::qp_state_to_str(qp_attr.qp_state))
+                                    << std::endl;
                             break;
                         }
                         if (wc.opcode == IBV_WC_RDMA_WRITE)
@@ -680,10 +698,38 @@ int main(int argc, char* argv[])
             case onesided_mode::FLAG:
             {
                 //  flag is always slot 0 of the recv buffer, specifically the first 8 bytes
-                volatile uint64_t* flag_addr = reinterpret_cast<uint64_t*>(session.recv_mr()->addr);
-                while (*flag_addr < args.iterations) {}//   wait
+                volatile uint64_t* flag_addr = reinterpret_cast<volatile uint64_t*>(session.recv_mr()->addr);
+                auto last_progress = std::chrono::steady_clock::now();
+                uint64_t seen = *flag_addr;
+                uint32_t spins = 0;
+
+                while (*flag_addr < args.iterations)
+                {
+                    if (*flag_addr != seen)
+                    {
+                        seen = *flag_addr;
+                        last_progress = std::chrono::steady_clock::now();
+                    }
+                    //  the clock call is far more expensive than the load it
+                    //  guards, and polling it every pass widens the sampling
+                    //  window this mode is meant to demonstrate
+                    if (++spins >= 4096)
+                    {
+                        spins = 0;
+                        if (std::chrono::steady_clock::now() - last_progress
+                            > std::chrono::seconds(5))
+                        {
+                            std::cout << std::format(
+                                "flag: stalled at {} of {} after 5s\n",
+                                seen, args.iterations);
+                            break;
+                        }
+                    }
+                }
+                recv_count = seen;
                 //  NOTE: Having the client wait for the server to acknowledge a received write would just
                 //  turn this into two-sided RC, so instead we just wait here.
+                break;
             }
             case onesided_mode::IMM:
                 //  server polls cq and reaps IBV_WC_RECV_RDMA_WITH_IMM
@@ -709,8 +755,10 @@ int main(int argc, char* argv[])
                             //  we cannot perform verify_pattern here since the region can be written to while we check it
                             //  also, technically we could do repost_recv(0) every time & it makes no difference since
                             //  the address comes from the client not the local machine
+                            std::cout << limen::wc_to_str(&wc) << std::endl;
                             session.repost_recv(slot_num);
                             recv_count++;
+                            reaped++;
                         }
                     }
                 }
@@ -760,22 +808,26 @@ int main(int argc, char* argv[])
     session.wait_for_disconnect(10000);
     std::cout << "cm: event DISCONNECTED" << std::endl;
 
-    int reaped = 0;
     ibv_wc wc;
     while (ibv_poll_cq(session.cq(), 1, &wc) > 0) {std::cout<< limen::wc_to_str(&wc)<<std::endl;  ++reaped;}   /* drain: must be 0 */
     std::printf("remote-completions: %d\n", reaped);
 
     //  verify last buffer on --mode write as server
-    if (args.mode == onesided_mode::WRITE && is_client==false)
+    if (args.mode == onesided_mode::WRITE && is_client == false)
     {
-        if (limen::verify_pattern(session.recv_mr()->addr, args.message_size,args.iterations-1) > 0)
+        if (limen::verify_pattern(session.recv_mr()->addr, args.message_size, args.iterations - 1) > 0)
         {
-            throw limen::VerbsError(
-                std::format("verify: buffer contents DO NOT match expected pattern for {} iterations",args.iterations).c_str(),
-                EINVAL
-            );
+            std::cout << std::format(
+                "verify: buffer contents DO NOT match expected pattern for {} iterations",
+                args.iterations) << std::endl;
+            mismatch_count++;
         }
-        std::cout << std::format("verify: buffer contents match expected pattern for {} iterations",args.iterations) << std::endl;
+        else
+        {
+            std::cout << std::format(
+                "verify: buffer contents match expected pattern for {} iterations",
+                args.iterations) << std::endl;
+        }
     }
 
 
@@ -788,9 +840,12 @@ int main(int argc, char* argv[])
                 session.id() ? "ok" : "n/a",
                 session.ec() ? "ok" : "n/a",
                 session.id()->verbs ? "ok" : "n/a");
+    //  a failed completion is a completion-status error, not a clean run
+    if (bad_wc_idx > -1)      return EXIT_COMPLETION_STATUS_ERROR;
+    if (mismatch_count > 0)   return EXIT_PAYLOAD_VERIFICATION_ERROR;
     return EXIT_SUCCESS;
     }
-    catch (const limen::SessionError& e) { fprintf(stderr, "%s\n", e.what()); return EXIT_FAILURE; }
-    catch (const limen::VerbsError& e)   { fprintf(stderr, "%s\n", e.what()); return EXIT_FAILURE; }
-
+    catch (const limen::SessionError& e) { fprintf(stderr, "%s\n", e.what()); return EXIT_CONNECTION_MANAGER_FAILURE; }
+    catch (const limen::VerbsError& e)   { fprintf(stderr, "%s\n", e.what()); return EXIT_VERB_ERROR; }
+    catch (const std::exception& e)      { fprintf(stderr, "unhandled: %s\n", e.what()); return EXIT_VERB_ERROR; }
 }

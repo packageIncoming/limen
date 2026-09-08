@@ -33,6 +33,20 @@ namespace
         return ibv_post_recv(queue_pair, &wr,  &bad);
     }
 
+    //  A CM step that times out or delivers the wrong event is a connection
+    //  failure, not a verb failure. cm.cpp cannot throw SessionError without
+    //  inverting the layering, so the translation happens here.
+    limen::Event expect_event(limen::EventChannel& ec,
+                            rdma_cm_event_type   want,
+                            int                  timeout_ms,
+                            const char*          where)
+    {
+        try {
+            return limen::get_expected_event(ec, want, timeout_ms);
+        } catch (const limen::VerbsError& e) {
+            throw limen::SessionError(where, e.error());
+        }
+    }
 }
 
 namespace limen 
@@ -191,6 +205,7 @@ namespace limen
 
     PendingConnection PendingConnection::resolve(const char* peer, const SessionConfig& config)
     {
+
         EventChannel ec = EventChannel::create();
         ConnectionId conn_id(ec, RDMA_PS_TCP);
 
@@ -209,15 +224,15 @@ namespace limen
         {
             throw SessionError("PendingConnection::resolve:rdma_resolve_addr", errno);
         }
-        e = get_expected_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, 5000);
-
+        e = expect_event(ec, RDMA_CM_EVENT_ADDR_RESOLVED, 5000,
+                         "PendingConnection::resolve:ADDR_RESOLVED");
         //  resolve route
         if (rdma_resolve_route(conn_id.get(), 5000) != 0)
         {
             throw SessionError("PendingConnection::resolve:rdma_resolve_route", errno);
         }
-        e = get_expected_event(ec, RDMA_CM_EVENT_ROUTE_RESOLVED, 5000);
-
+        e = expect_event(ec, RDMA_CM_EVENT_ROUTE_RESOLVED, 5000,
+                         "PendingConnection::resolve:ROUTE_RESOLVED");
         //  get device attributes
         ibv_device_attr device_attr{};
         if (ibv_query_device(conn_id.get()->verbs, &device_attr) != 0)
@@ -231,6 +246,11 @@ namespace limen
         uint32_t send_wr = std::min(config.send_wr, (uint32_t)device_attr.max_qp_wr);
         int      cqe     = config.cqe > 0 ? std::min(config.cqe, device_attr.max_cqe)
                                           : device_attr.max_cqe;
+        //  the pre-post loop indexes slots, so the region must hold them
+        if (recv_wr > std::max(config.recv_slots, 1u))
+        {
+            throw SessionError("PendingConnection::resolve:recv_wr exceeds recv_slots", EINVAL);
+        }
         uint32_t recv_len = config.recv_slot_size * std::max(config.recv_slots, 1u);
         uint32_t send_len = config.send_slot_size * std::max(config.send_slots, 1u);
         fill_qp_init_attr(&qp_init_attr, send_wr, recv_wr);
@@ -295,8 +315,8 @@ namespace limen
         }
 
         //  this event has the new id associated with the client
-        e = get_expected_event(ec, RDMA_CM_EVENT_CONNECT_REQUEST, -1);
-
+        e = expect_event(ec, RDMA_CM_EVENT_CONNECT_REQUEST, -1,
+                         "PendingConnection::listen:CONNECT_REQUEST");
         //  adopt event->id as 2nd identifier
         ConnectionId client_conn_id = ConnectionId::adopt(e.id());
 
@@ -316,6 +336,11 @@ namespace limen
         uint32_t send_wr = std::min(config.send_wr, (uint32_t)device_attr.max_qp_wr);
         int      cqe     = config.cqe > 0 ? std::min(config.cqe, device_attr.max_cqe)
                                           : device_attr.max_cqe;
+        //  the pre-post loop indexes slots, so the region must hold them
+        if (recv_wr > std::max(config.recv_slots, 1u))
+        {
+            throw SessionError("PendingConnection::listen:recv_wr exceeds recv_slots", EINVAL);
+        }
         uint32_t recv_len = config.recv_slot_size * std::max(config.recv_slots, 1u);
         uint32_t send_len = config.send_slot_size * std::max(config.send_slots, 1u);
 
@@ -388,8 +413,8 @@ namespace limen
             {
                 throw SessionError("PendingConnection::finish:rdma_connect", errno);
             }
-            e = get_expected_event(_ec, RDMA_CM_EVENT_ESTABLISHED, 5000);
-
+            e = expect_event(_ec, RDMA_CM_EVENT_ESTABLISHED, 5000,
+                            "PendingConnection::finish:ESTABLISHED");
             ConnInfo remote_raw{};
             e.copy_private_data(&remote_raw, sizeof(remote_raw));
             _peer     = from_wire_format(remote_raw);
@@ -401,7 +426,8 @@ namespace limen
             {
                 throw SessionError("PendingConnection::finish:rdma_accept", errno);
             }
-            e = get_expected_event(_ec, RDMA_CM_EVENT_ESTABLISHED, -1);
+            e = expect_event(_ec, RDMA_CM_EVENT_ESTABLISHED, -1,
+                            "PendingConnection::finish:ESTABLISHED");
         }
 
         Session s;
