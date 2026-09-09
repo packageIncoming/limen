@@ -546,7 +546,7 @@ int main(int argc, char* argv[])
                         if (wc.opcode == IBV_WC_RDMA_READ)
                         {
                             //  verify the pattern
-                            int slot_num = limen::Session::slot_of(wc.wr_id);
+                            int slot_num = limen::Session::remove_tags(wc.wr_id);
                             void* read_dest_addr = reinterpret_cast<void*>(limen::slot_addr((uint64_t)(uintptr_t)session.send_mr()->addr,slot_num,args.message_size));
                             std::cout << limen::wc_to_str(&wc) << std::endl;
                             if(limen::verify_pattern(read_dest_addr, args.message_size, 0) >0) mismatch_count++;

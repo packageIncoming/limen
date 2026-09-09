@@ -12,6 +12,7 @@
 
 constexpr uint64_t RECV_WRID_TAG  = 0x1ULL << 63;
 constexpr uint64_t SEND_WRID_TAG  = 0x1ULL << 62;
+constexpr uint64_t SEND_MR_BYTE_CAP = 64ull << 20;   // 64 MiB of registered send memory
 
 enum class reap_mode { POLL, EVENT };
 
@@ -44,16 +45,16 @@ void parse_argv(int arg, char* argv[], pingpong_parsed_args* args_container);
 
 void print_help(bool to_error=false);
 
-void print_reset_init_fail(int rc, ibv_qp_attr* qp_attr);
-
-void print_init_rtr_fail(int rc, ibv_qp_attr* qp_attr);
-
-void print_rtr_rts_fail(int rc, ibv_qp_attr* qp_attr);
-
-int post_recv(uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t message_size, uint32_t lkey);
-
-int post_send(bool signaled, uint32_t slot, uint64_t buff_addr, ibv_qp* queue_pair,  uint32_t message_size, uint32_t lkey);
-
+int post_send(
+    bool signaled,
+    uint32_t seq,
+    uint32_t num_slots,
+    uint64_t buff_addr, 
+    ibv_qp* queue_pair, 
+    uint32_t message_size,
+    uint32_t lkey,
+    bool inline_enabled
+);
 
 //  calls ec::wait(timeout)
 limen::Event get_expected_event(limen::EventChannel& ec, rdma_cm_event_type event_type, int timeout_ms);

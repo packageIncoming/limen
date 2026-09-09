@@ -87,7 +87,7 @@ public:
 
     //  replenish recvs
     int      repost_recv(uint32_t slot) noexcept;   // returns ibv_post_recv rc
-    static uint32_t slot_of(uint64_t wr_id) noexcept;
+    static uint32_t remove_tags(uint64_t wr_id) noexcept;
     static bool     is_recv_wrid(uint64_t wr_id) noexcept;
 
     //  getters for private data members

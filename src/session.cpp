@@ -146,7 +146,7 @@ namespace limen
 
         return post_recv(slot, (uint64_t)(uintptr_t)_recv_mr.get()->addr, qp(), _init_config.recv_slot_size, _recv_mr.get()->lkey);
     }
-    uint32_t Session::slot_of(uint64_t wr_id) noexcept
+    uint32_t Session::remove_tags(uint64_t wr_id) noexcept
     {
         return static_cast<uint32_t>(wr_id & 0xFFFFFFFFULL);
     }
@@ -242,10 +242,9 @@ namespace limen
 
         //  fill qp_init_attr
         ibv_qp_init_attr qp_init_attr{};
-        uint32_t recv_wr = std::min(config.recv_wr, (uint32_t)device_attr.max_qp_wr);
-        uint32_t send_wr = std::min(config.send_wr, (uint32_t)device_attr.max_qp_wr);
-        int      cqe     = config.cqe > 0 ? std::min(config.cqe, device_attr.max_cqe)
-                                          : device_attr.max_cqe;
+        uint32_t recv_wr = std::min(config.recv_wr, (uint32_t)device_attr.max_qp_wr/2);
+        uint32_t send_wr = std::min(config.send_wr, (uint32_t)device_attr.max_qp_wr/2);
+        int cqe = config.cqe > 0 ? std::min(config.cqe, device_attr.max_cqe): device_attr.max_cqe;
         //  the pre-post loop indexes slots, so the region must hold them
         if (recv_wr > std::max(config.recv_slots, 1u))
         {
@@ -339,21 +338,23 @@ namespace limen
             throw SessionError("PendingConnection::listen:ibv_query_device", errno);
         }
 
-        uint32_t recv_wr = std::min(config.recv_wr, (uint32_t)device_attr.max_qp_wr);
-        uint32_t send_wr = std::min(config.send_wr, (uint32_t)device_attr.max_qp_wr);
-        int      cqe     = config.cqe > 0 ? std::min(config.cqe, device_attr.max_cqe)
-                                          : device_attr.max_cqe;
+
+        uint32_t recv_len = config.recv_slot_size * std::max(config.recv_slots, 1u);
+        uint32_t send_len = config.send_slot_size * std::max(config.send_slots, 1u);
+
+        //  fill qp_init_attr
+        //  NOTE: certain adapters evenly split max_qp_wr across send and recv work requests
+        ibv_qp_init_attr qp_init_attr{};
+        uint32_t recv_wr = std::min(config.recv_wr, (uint32_t)device_attr.max_qp_wr/2);
+        uint32_t send_wr = std::min(config.send_wr, (uint32_t)device_attr.max_qp_wr/2);
+        int cqe = config.cqe > 0 ? std::min(config.cqe, device_attr.max_cqe): device_attr.max_cqe;
+        fill_qp_init_attr(&qp_init_attr, send_wr, recv_wr);
+
         //  the pre-post loop indexes slots, so the region must hold them
         if (recv_wr > std::max(config.recv_slots, 1u))
         {
             throw SessionError("PendingConnection::listen:recv_wr exceeds recv_slots", EINVAL);
         }
-        uint32_t recv_len = config.recv_slot_size * std::max(config.recv_slots, 1u);
-        uint32_t send_len = config.send_slot_size * std::max(config.send_slots, 1u);
-
-        //  fill qp_init_attr
-        ibv_qp_init_attr qp_init_attr{};
-        fill_qp_init_attr(&qp_init_attr, send_wr, recv_wr);
 
         //  device has now been decided, create the wrapper instances
         ProtectionDomain pd      = ProtectionDomain(client_conn_id.get()->verbs);
