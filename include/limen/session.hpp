@@ -25,8 +25,6 @@ struct SessionConfig {
     uint32_t recv_wr             = 1;       // recv queue depth 
     uint32_t recv_slots          = 0;       // recv slots pre-posted; 0 for pure one-sided
     uint32_t recv_slot_size      = 0;       // bytes per receive slot
-    //  registered length is recv_wr * recv_slot_size, and this is the region
-    //  whose addr/rkey/length go out in the private data: the peer writes here
 
     //  send region: queue depth and slot count are independent. a WR is a
     //  descriptor in the adapter, a slot is payload in your memory. inline
@@ -34,7 +32,7 @@ struct SessionConfig {
     uint32_t send_wr             = 1;       // send queue depth, clamped to max_qp_wr
     uint32_t send_slots          = 1;       // ring depth for buffer reuse (TRD-07 R4)
     uint32_t send_slot_size      = 0;       // bytes per send slot
-    //  registered length is send_slots * send_slot_size, local only, never exposed
+    int      cqe                 = 0;       // completion queue capacity, shared send+recv; 0 = device max
 
     //  MR permissions, split by region: minimum privilege per TRD-01 R7
     int recv_access_flags        = IBV_ACCESS_LOCAL_WRITE
@@ -42,7 +40,8 @@ struct SessionConfig {
                                  | IBV_ACCESS_REMOTE_READ;
     int send_access_flags        = IBV_ACCESS_LOCAL_WRITE;
 
-    int      cqe                 = 0;       // completion queue capacity, shared send+recv; 0 = device max
+    bool     use_comp_channel    = false;
+
     uint8_t  initiator_depth     = 1;       // outbound RDMA READs you will have outstanding
     uint8_t  responder_resources = 1;       // inbound RDMA READs you will service
     uint8_t  retry_count         = 7;       // transport retries on timeout or NAK
@@ -85,6 +84,14 @@ public:
     ibv_cq*     cq() const noexcept{return _cq.get();}
     rdma_event_channel* ec() const noexcept {return _ec.get();}
 
+    //  the CQ's completion channel, or nullptr when use_comp_channel was false.
+    //  distinct from ec(), which is the CM event channel.
+    ibv_comp_channel* comp_channel() const noexcept {return _comp_channel.get();}
+    int comp_channel_fd() const noexcept {return _comp_channel.fd();}
+    int req_notify_cq(int solicited_only)   {return _cq.req_notify_cq(solicited_only);}
+    int get_cq_event()  noexcept {return _comp_channel.get_cq_event(nullptr, nullptr);}
+    int ack_cq_events(int nevents) noexcept {return _cq.ack_cq_events(nevents);};
+
     //  replenish recvs
     int      repost_recv(uint32_t slot) noexcept;   // returns ibv_post_recv rc
     static uint32_t remove_tags(uint64_t wr_id) noexcept;
@@ -92,9 +99,10 @@ public:
 
     //  getters for private data members
     ConnInfo peer()  const noexcept {return _peer;};   // host byte order, validated non-zero
-    bool has_peer() {return _has_peer;}
-    bool is_client() {return _is_client;}
-    
+    bool has_peer()  const noexcept {return _has_peer;}
+    bool is_client() const noexcept {return _is_client;}
+
+    //  getters for granted capacities
     uint8_t negotiated_initiator_depth()     const noexcept {return _caps.initiator_depth;}
     uint8_t negotiated_responder_resources() const noexcept {return _caps.responder_resources;}
     uint32_t max_send_wr() const noexcept {return _caps.max_send_wr;}
@@ -103,6 +111,7 @@ public:
 
     SessionConfig* config_ptr() noexcept{return &_init_config;}
 
+    //  exit/disconnect functions
     int  disconnect() noexcept;                    // rdma_disconnect
     void wait_for_disconnect(int timeout_ms);      // DISCONNECTED or TIMEWAIT_EXIT
 
@@ -113,6 +122,9 @@ private:
     ProtectionDomain _pd;
     MemoryRegion _recv_mr;
     MemoryRegion _send_mr;
+    //  declared before _cq to read in creation order; destruction order is
+    //  hand-sequenced in close(), where the CQ must go first.
+    CompletionChannel _comp_channel;
     CompletionQueue _cq;
 
     bool          _has_peer = false;
@@ -142,11 +154,13 @@ public:
     PendingConnection(PendingConnection&&) noexcept;
     PendingConnection& operator=(PendingConnection&&) noexcept;
 
-    // rdma_resolve_addr + rdma_resolve_route, then PD, MRs, CQ, QP, recv posts.
+    // rdma_resolve_addr + rdma_resolve_route, then PD, MRs, comp channel, CQ,
+    // QP, recv posts.
     static PendingConnection resolve(const char* peer, const SessionConfig&);
 
     // rdma_bind_addr + rdma_listen, blocks for CONNECT_REQUEST, adopts the
-    // new id, snapshots peer ConnInfo, then PD, MRs, CQ, QP, recv posts.
+    // new id, snapshots peer ConnInfo, then PD, MRs, comp channel, CQ, QP,
+    // recv posts.
     static PendingConnection listen(const SessionConfig&);
 
     // Pre-exchange access. Writes here are ordered before the peer can reach
@@ -156,6 +170,7 @@ public:
     ibv_qp*      qp()      const noexcept {return _id.qp();}
     ibv_cq*      cq()      const noexcept {return _cq.get();}
     ibv_context* verbs()   const noexcept {return _id.get()->verbs;}
+    ibv_comp_channel* comp_channel() const noexcept {return _comp_channel.get();}
 
     // Server only: arrived with CONNECT_REQUEST, host byte order.
     // Client: not yet known, has_peer() is false until finish().
@@ -163,6 +178,8 @@ public:
     bool     has_peer() const noexcept {return _has_peer;};
     bool     is_client() const noexcept {return _is_client;};
 
+    //  valid after the QP is created; initiator_depth and responder_resources
+    //  stay zero until finish() reads them from the ESTABLISHED event.
     uint32_t max_send_wr() const noexcept {return _caps.max_send_wr;}
     uint32_t max_recv_wr() const noexcept {return _caps.max_recv_wr;}
     uint32_t max_inline_data() const noexcept {return _caps.max_inline_data;}
@@ -183,6 +200,7 @@ private:
     ProtectionDomain _pd;
     MemoryRegion    _recv_mr;
     MemoryRegion    _send_mr;
+    CompletionChannel _comp_channel;   // empty unless config.use_comp_channel
     CompletionQueue _cq;
     ConnInfo        _peer{};
     SessionConfig   _config{};

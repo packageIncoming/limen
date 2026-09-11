@@ -138,6 +138,61 @@ int limen::ProtectionDomain::close() noexcept
     return rc;
 }
 
+//  CompletionChannel functions
+
+limen::CompletionChannel::CompletionChannel(const Context& device_context)
+{
+    ibv_comp_channel* channel = ibv_create_comp_channel(device_context.get());
+    if (channel == nullptr)
+    {
+        //  failed to create completion channel
+        int e = errno;
+        std::fprintf(stderr, "ibv_create_comp_channel: %s\n", strerror(e));
+        throw VerbsError("ibv_create_comp_channel", e);
+    }
+    _h = ResourceHandle<ibv_comp_channel, ibv_destroy_comp_channel>(channel);
+}
+
+//  Same, against a context this object does not own (rdma_cm_id->verbs).
+limen::CompletionChannel::CompletionChannel(ibv_context* device_context)
+{
+    ibv_comp_channel* channel = ibv_create_comp_channel(device_context);
+    if (channel == nullptr)
+    {
+        //  failed to create completion channel
+        int e = errno;
+        std::fprintf(stderr, "ibv_create_comp_channel: %s\n", strerror(e));
+        throw VerbsError("ibv_create_comp_channel", e);
+    }
+    _h = ResourceHandle<ibv_comp_channel, ibv_destroy_comp_channel>(channel);
+}
+
+int limen::CompletionChannel::close() noexcept
+{
+    if (_h.get()) { trace_release("comp_channel"); }
+    int rc = _h.close();
+    if (rc != 0)
+    {
+        std::fprintf(stderr, "ibv_destroy_comp_channel: %s\n", strerror(rc));
+        return rc;
+    }
+    return rc;
+}
+
+int limen::CompletionChannel::get_cq_event(ibv_cq** out_cq, void** out_cq_ctx) noexcept
+{
+    if (_h.get() == nullptr) return EINVAL;
+
+    void* ctx = nullptr;
+    ibv_cq* cq = nullptr;
+    if (ibv_get_cq_event(_h.get(), &cq, &ctx) != 0)
+    {
+        return errno;
+    }
+    if (out_cq_ctx != nullptr) *out_cq_ctx = ctx;
+    if (out_cq != nullptr) *out_cq_ctx = cq;
+    return 0;
+}
 
 //  CompletionQueue functions
 limen::CompletionQueue::CompletionQueue(const Context& device_context, int cqe, void* cq_context, ibv_comp_channel* channel, int comp_vector)     
@@ -191,6 +246,20 @@ int limen::CompletionQueue::close() noexcept
     return rc;
 }
 
+int limen::CompletionQueue::req_notify_cq(int solicited_only) noexcept
+{
+    if (_h.get() == nullptr)          return EINVAL;
+    if (_h.get()->channel == nullptr) return ENOTSUP;
+    return ibv_req_notify_cq(_h.get(), solicited_only);
+}
+
+int limen::CompletionQueue::ack_cq_events(int nevents) noexcept 
+{
+    if (_h.get() == nullptr) return EINVAL;
+    if (_h.get()->channel == nullptr) return ENOTSUP;
+    ibv_ack_cq_events(_h.get(), nevents);
+    return 0;
+}
 
 //  QueuePair functions
 

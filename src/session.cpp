@@ -87,6 +87,7 @@ namespace limen
     {
         _id.destroy_qp();
         _cq.close();
+        _comp_channel.close();
         _send_mr.close();
         _recv_mr.close();
         _pd.close();
@@ -105,6 +106,7 @@ namespace limen
         _pd = std::move(o._pd);
         _recv_mr = std::move(o._recv_mr);
         _send_mr = std::move(o._send_mr);
+        _comp_channel = std::move(o._comp_channel);
         _cq = std::move(o._cq);
         _peer = o._peer;
         _has_peer = o._has_peer;
@@ -140,8 +142,7 @@ namespace limen
         }
     }
 
-
-    int      Session::repost_recv(uint32_t slot) noexcept
+    int Session::repost_recv(uint32_t slot) noexcept
     {
 
         return post_recv(slot, (uint64_t)(uintptr_t)_recv_mr.get()->addr, qp(), _init_config.recv_slot_size, _recv_mr.get()->lkey);
@@ -161,6 +162,7 @@ namespace limen
     {
         _id.destroy_qp();
         _cq.close();
+        _comp_channel.close();   //  after the CQ; see Session::close()
         _send_mr.close();
         _recv_mr.close();
         _pd.close();
@@ -178,9 +180,11 @@ namespace limen
         _pd        = std::move(o._pd);
         _recv_mr   = std::move(o._recv_mr);
         _send_mr   = std::move(o._send_mr);
+        _comp_channel = std::move(o._comp_channel);
         _cq        = std::move(o._cq);
         _peer      = o._peer;
         _config    = o._config;
+        _caps      = o._caps;
         _is_client = o._is_client;
         _has_peer  = o._has_peer;
     }
@@ -195,9 +199,11 @@ namespace limen
         _pd        = std::move(o._pd);
         _recv_mr   = std::move(o._recv_mr);
         _send_mr   = std::move(o._send_mr);
+        _comp_channel = std::move(o._comp_channel);
         _cq        = std::move(o._cq);
         _peer      = o._peer;
         _config    = o._config;
+        _caps      = o._caps;
         _is_client = o._is_client;
         _has_peer  = o._has_peer;
         return *this;
@@ -241,6 +247,7 @@ namespace limen
         }
 
         //  fill qp_init_attr
+        //  NOTE: certain adapters evenly split max_qp_wr across send and recv work requests
         ibv_qp_init_attr qp_init_attr{};
         uint32_t recv_wr = std::min(config.recv_wr, (uint32_t)device_attr.max_qp_wr/2);
         uint32_t send_wr = std::min(config.send_wr, (uint32_t)device_attr.max_qp_wr/2);
@@ -254,11 +261,19 @@ namespace limen
         uint32_t send_len = config.send_slot_size * std::max(config.send_slots, 1u);
         fill_qp_init_attr(&qp_init_attr, send_wr, recv_wr);
 
-        //  device has now been decided, create the wrapper instances
+        //  device has now been decided, create the wrapper instances.
+        //  the channel, if requested, must exist before the CQ: ibv_create_cq
+        //  takes it as an argument and there is no way to attach one later.
+        //  an empty CompletionChannel yields nullptr, which is poll mode.
         ProtectionDomain pd      = ProtectionDomain(conn_id.get()->verbs);
         MemoryRegion     recv_mr = MemoryRegion(pd, recv_len, config.recv_access_flags);
         MemoryRegion     send_mr = MemoryRegion(pd, send_len, config.send_access_flags);
-        CompletionQueue  cq      = CompletionQueue(conn_id.get()->verbs, cqe, nullptr, nullptr, 0);
+        CompletionChannel comp_channel;
+        if (config.use_comp_channel)
+        {
+            comp_channel = CompletionChannel(conn_id.get()->verbs);
+        }
+        CompletionQueue  cq      = CompletionQueue(conn_id.get()->verbs, cqe, nullptr, comp_channel.get(), 0);
         GrantedCaps caps{};
         qp_init_attr.send_cq = cq.get();
         qp_init_attr.recv_cq = cq.get();
@@ -292,6 +307,7 @@ namespace limen
         pc._pd        = std::move(pd);
         pc._recv_mr   = std::move(recv_mr);
         pc._send_mr   = std::move(send_mr);
+        pc._comp_channel = std::move(comp_channel);
         pc._cq        = std::move(cq);
         pc._config    = config;
         pc._is_client = true;
@@ -356,11 +372,17 @@ namespace limen
             throw SessionError("PendingConnection::listen:recv_wr exceeds recv_slots", EINVAL);
         }
 
-        //  device has now been decided, create the wrapper instances
+        //  device has now been decided, create the wrapper instances.
+        //  channel before CQ; see the note in resolve().
         ProtectionDomain pd      = ProtectionDomain(client_conn_id.get()->verbs);
         MemoryRegion     recv_mr = MemoryRegion(pd, recv_len, config.recv_access_flags);
         MemoryRegion     send_mr = MemoryRegion(pd, send_len, config.send_access_flags);
-        CompletionQueue  cq      = CompletionQueue(client_conn_id.get()->verbs, cqe, nullptr, nullptr, 0);
+        CompletionChannel comp_channel;
+        if (config.use_comp_channel)
+        {
+            comp_channel = CompletionChannel(client_conn_id.get()->verbs);
+        }
+        CompletionQueue  cq      = CompletionQueue(client_conn_id.get()->verbs, cqe, nullptr, comp_channel.get(), 0);
         GrantedCaps caps{};
 
         qp_init_attr.send_cq = cq.get();
@@ -397,6 +419,7 @@ namespace limen
         pc._pd        = std::move(pd);
         pc._recv_mr   = std::move(recv_mr);
         pc._send_mr   = std::move(send_mr);
+        pc._comp_channel = std::move(comp_channel);
         pc._cq        = std::move(cq);
         pc._peer      = peer_info;
         pc._config    = config;
@@ -453,6 +476,7 @@ namespace limen
         s._pd          = std::move(_pd);
         s._recv_mr     = std::move(_recv_mr);
         s._send_mr     = std::move(_send_mr);
+        s._comp_channel = std::move(_comp_channel);
         s._cq          = std::move(_cq);
         s._peer        = _peer;
         s._has_peer    = _has_peer;

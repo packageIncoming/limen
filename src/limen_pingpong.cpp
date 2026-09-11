@@ -1,6 +1,7 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #include <ostream>
+#include <sys/poll.h>
 #endif
 
 #include "limen/verbs.hpp"
@@ -241,6 +242,7 @@ void parse_argv(int argc, char* argv[], pingpong_parsed_args* args)
         args->addr = argv[optind];
     }
 }
+
 void print_help(bool to_error)
 {
     const char* str =
@@ -280,7 +282,8 @@ int post_send(
     wr.next = nullptr;
     wr.wr_id = seq | SEND_WRID_TAG;
     wr.opcode =  IBV_WR_SEND;
-    wr.send_flags =   IBV_SEND_FENCE ;
+    wr.send_flags =   IBV_SEND_FENCE;
+    
     if (inline_enabled)
     {
         wr.send_flags |= IBV_SEND_INLINE;
@@ -290,24 +293,7 @@ int post_send(
         wr.send_flags |= IBV_SEND_SIGNALED;
     }
 
-    int rc = 0;
-
-    rc = ibv_post_send(queue_pair, &wr, &bad);
-
-    return rc;
-}
-
-//  helper method, decrements the value at sends_until_signal and if it's 0 that means a signal should be sent;
-//      it then replenishes the value to counter_start
-bool send_counter_update(uint32_t* sends_until_signal, uint32_t counter_start)
-{
-    *sends_until_signal = *sends_until_signal-1;
-    if (*sends_until_signal == 0)
-    {
-        *sends_until_signal = counter_start;
-        return true;
-    }
-    return false;
+    return ibv_post_send(queue_pair, &wr, &bad);
 }
 
 void report_config_mode(const pingpong_parsed_args& args, const limen::SessionConfig& cfg)
@@ -372,37 +358,264 @@ void report_config_mode(const pingpong_parsed_args& args, const limen::SessionCo
     ) << std::endl;
 }
 
+bool can_post(RunConfig &run_config, RunState &state)
+{
+    uint64_t outstanding_sends = state.posted - state.covered;
+    bool has_work = run_config.is_client ? true : state.responses_owed>0;
+    return (
+        has_work && 
+        state.posted < run_config.iterations && 
+        (outstanding_sends < run_config.eff_pipeline) &&
+        (run_config.inline_ok || state.covered+ run_config.eff_pipeline>state.posted)
+    );
+}
+
+
+//  0 on success 1 on fail
+int post_one(limen::Session &session, RunConfig &run_config, RunState &state)
+{
+    uint64_t send_slot_num = state.posted % run_config.send_slots;
+    void* send_addr = reinterpret_cast<void*>(limen::slot_addr((uint64_t)(uintptr_t)session.send_mr()->addr, send_slot_num, run_config.message_size));
+    limen::fill_pattern(send_addr, run_config.message_size, state.posted);
+    bool signal_this_event =  (state.posted % run_config.eff_signal_every == 0 || (state.posted+1 == run_config.iterations));
+    
+    int rc = post_send(
+        signal_this_event,
+        state.posted,
+        run_config.send_slots,
+        (uint64_t)(uintptr_t)session.send_mr()->addr, session.qp(),
+        run_config.message_size,
+        session.send_mr()->lkey,
+        run_config.inline_ok
+    );
+    if (rc != 0)
+    {
+        fprintf(stderr,"post_one:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
+        return EXIT_VERB_ERROR;
+    }
+    state.posted++;
+    if (run_config.is_client == false)
+    {
+        state.responses_owed--;
+    }
+
+    return 0;
+}
+
+//  returns 0 on successful WC, 1 if the WC is not successful, -1 on unexpected error 
+int handle_wc(ibv_wc& wc, limen::Session &session, RunConfig &run_config, RunState &state)
+{
+    ibv_qp_init_attr qp_init_attr{};
+    ibv_qp_attr      qp_attr{};
+    if (wc.status != IBV_WC_SUCCESS)
+    {
+        //  if the status is not successful then WCs from this one onward
+        //  are bad & have to be flushed accordingly
+        std::cout << std::format("qp_num={:#08x}\n",session.qp()->qp_num);
+        std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
+        ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &qp_init_attr);
+        std::cout << "qp_state_after_error: " << limen::qp_state_to_str(qp_attr.cur_qp_state)  << std::endl;
+        if (state.first_error_status == IBV_WC_SUCCESS)
+            state.first_error_status = wc.status;
+        return 1;
+    }
+    else
+    {
+        //  successful, increment counters
+        if (wc.opcode == IBV_WC_SEND)
+        {
+            uint64_t send_seq_num = limen::Session::remove_tags(wc.wr_id);
+            state.covered = send_seq_num+1;
+            state.send_completions++;
+        }
+        else if(wc.opcode == IBV_WC_RECV)
+        {
+            //  verify the payload
+            uint32_t recv_slot_num = limen::Session::remove_tags(wc.wr_id);
+            void* recv_addr = reinterpret_cast<void*>(
+                limen::slot_addr((uint64_t)(uintptr_t)session.recv_mr()->addr, recv_slot_num, run_config.message_size));
+            if (limen::verify_pattern(recv_addr, wc.byte_len, state.recv_count) > 0) state.mismatches++;
+            //  repost the recv
+            int rc = session.repost_recv(recv_slot_num);
+            if (rc !=0)
+            {
+                //  failed to allocate slot
+                fprintf(stderr,"handle_wc:post_recv %s (%s)\n",strerrorname_np(rc),strerror(rc));
+                return -1;
+            }
+            state.recv_count++;
+            if (run_config.is_client == false)
+            {
+                state.responses_owed++;
+            }
+        }
+
+    }
+    return 0;
+}
+
+
+int drain(limen::Session &session, RunConfig &run_config, RunState &state)
+{
+    int handled = 0;
+
+    //  poll->handle() to clear out what's present
+    ibv_wc wc;
+    while (ibv_poll_cq(session.cq(),1,&wc)>0) 
+    {
+        if (handle_wc(wc,session,run_config,state) <0) return -1;
+        std::cout << limen::wc_to_str(wc) << std::endl;
+        handled++;
+    }
+    return handled;
+}
+
+//  handles reaping cqe in event mode
+int reap_event(limen::Session &session, RunConfig &run_config, RunState &state)
+{
+    int handled = 0;
+    ibv_wc wc{};
+
+    //  poll->handle() to clear out what's present
+    handled = drain(session,run_config,state);
+    if (handled < 0) return -1;
+    if (handled > 0) return handled;        // caller may be able to post now
+
+    //  arm()
+    if (session.req_notify_cq(0) !=0) return -1;
+
+    //  poll()->handle() to get race polls
+    if (!run_config.broken_arming_enabled)
+    {
+        int n = drain(session, run_config, state);
+        if (n < 0) return -1;
+        if (n > 0) { state.race_polls_hit++; return n; }
+    }
+
+    //poll on completion channel fd
+    pollfd pfd{};
+    pfd.fd = session.comp_channel_fd();
+    pfd.events = POLLIN;
+    int poll_result = poll(&pfd, 1, run_config.poll_timeout_ms);
+    if (poll_result == 0)
+    {
+        state.timeout = true;
+        return handled;
+    } 
+    else if (poll_result <0)
+    {
+        if (errno == EINTR) return handled;
+        return -1;
+    }
+
+    //  get_cq_event()
+    if (session.get_cq_event() != 0) return handled;
+    state.events_received++;
+
+    //  poll()->handle()
+    int start_count = handled;
+    while (ibv_poll_cq(session.cq(),1,&wc)>0) 
+    {
+        if (handle_wc(wc,session,run_config,state) <0) return -1;
+        std::cout << limen::wc_to_str(wc) << std::endl;
+        handled++;
+    }
+    if (start_count == handled)
+        state.empty_events++;   // no completions 
+
+    //  ack()
+    if (state.events_received - state.events_acked >= 64)
+    {
+        if (session.ack_cq_events(64)!=0)
+            return -1;
+        state.events_acked +=64;
+    }
+
+    return handled;   
+}
+
+//  handles reaping cqe in poll mode
+int reap_poll(limen::Session &session, RunConfig &run_config, RunState &state)
+{
+    return  drain(session, run_config, state);
+}
+
+
+
+//  returns # of successful reaps or -1 on fail
+int reap(limen::Session &session, RunConfig &run_config, RunState &state)
+{
+    return run_config.wc_reap_mode == reap_mode::EVENT ? 
+        reap_event(session,run_config,state) : 
+        reap_poll(session,run_config,state);
+}
+
 int main(int argc, char* argv[])
 {
     try
     {
         pingpong_parsed_args args{};
-        parse_argv(argc,argv,&args);
+        parse_argv(argc, argv, &args);
 
-        int rc = 0;
-        int exit_rc=0;
+        if (args.unsignaled)
+        {
+            args.signal_every = std::min(args.pipeline,UINT64_MAX);
+        }
+
+        int  exit_rc = EXIT_SUCCESS;
         bool is_client = false;
 
-        ibv_qp_init_attr qp_init_attr{};
-        ibv_qp_attr qp_attr{};
+        //  Everything sizes off the pipeline depth. The QP does not exist yet, so
+        //  query the device and pre-clamp so creation cannot fail. The granted
+        //  max_send_wr can still come back lower, so eff_pipeline is re-clamped
+        //  after finish().
+        uint32_t dev_max_qp_wr = 0;
+        {
+            limen::Context probe(args.device_name);   //  requires -d
+            ibv_device_attr da{};
+            if (ibv_query_device(probe.get(), &da) != 0)
+            {
+                throw limen::SessionError("ibv_query_device (pipeline pre-clamp)", errno);
+            }
+            dev_max_qp_wr = (uint32_t)da.max_qp_wr;
+            //  Exit early on invalid resource request 
+            if (args.signal_every >= dev_max_qp_wr)
+            {
+                std::fprintf(stderr,
+                    "--signal-every %" PRIu64 " must be less than device max_qp_wr (%u)\n",
+                    args.signal_every, dev_max_qp_wr);
+                return EXIT_USAGE_ERROR;
+            }
+        }
+
+        //  A window wider than the ring stalls at the ring; a period wider than the
+        //  window deadlocks, because only a signalled completion reopens the window.
+        //  Collapsing all three onto one number makes both unreachable.
+        uint64_t max_send_slots = std::max<uint64_t>(1, SEND_MR_BYTE_CAP / args.message_size);
+        uint64_t eff_pipeline = std::min({ args.pipeline,(uint64_t)dev_max_qp_wr,max_send_slots });
+        uint64_t eff_signal_every = std::min<uint64_t>(args.signal_every, eff_pipeline);
 
         limen::SessionConfig cfg{};
-
-        uint64_t requested_send_slots = std::max<uint64_t>(args.pipeline, args.signal_every);
-        uint64_t max_send_slots= std::max<uint64_t>(1, SEND_MR_BYTE_CAP / args.message_size);
 
         cfg.recv_wr        = args.no_recv ? 0 : RECV_QUEUE_DEPTH;
         cfg.recv_slots     = cfg.recv_wr;          // a receive consumes one of each
         cfg.recv_slot_size = args.message_size;
-        cfg.send_slots = std::min(requested_send_slots, max_send_slots);
-        cfg.send_wr = cfg.send_slots * 4;
+
+        cfg.send_slots     = eff_pipeline;         // one slot per in-flight send, no more
+        cfg.send_wr        = std::max<uint64_t>(eff_pipeline * 4, 64);
         cfg.send_slot_size = args.message_size;
-        cfg.cqe            = COMPLETE_QUEUE_DEPTH;
+
+        //  Sends in flight plus posted receives must both fit, or the CQ overruns,
+        //  which arrives as an async catastrophic event rather than a poll error.
+        cfg.cqe            = (int)(cfg.send_wr + cfg.recv_wr + 16);
+
         cfg.retry_count     = 7;                  // transport retries on timeout/NAK
         cfg.rnr_retry_count = args.rnr_retry;     // retries specifically on receiver-not-ready
         cfg.tcp_port            = (uint16_t)args.tcp_port;
         cfg.initiator_depth     = 1;
         cfg.responder_resources = 1;
+
+        cfg.use_comp_channel = (args.reap == reap_mode::EVENT);
 
         //  Perform --report-config path & exit early
         if (args.report_config)
@@ -431,17 +644,9 @@ int main(int argc, char* argv[])
             limen::Session::create_client_session(args.addr, cfg) : 
             limen::Session::create_server_session(cfg);
         
-        //  Exit early on invalid resource request 
-        if (args.signal_every >= session.max_send_wr())
-        {
-            std::fprintf(stderr,
-                "--signal-every %" PRIu64 " must be less than the granted send queue depth (%u)\n",
-                args.signal_every, session.max_send_wr());
-            return EXIT_USAGE_ERROR;
-        }
-        
-        uint32_t eff_pipeline = std::min<uint32_t>(args.pipeline, session.max_send_wr());
-        uint32_t signal_every = std::min<uint32_t>(args.signal_every,eff_pipeline);
+        //  Clamp again against the granted maximum, update eff_signal_every in response too                
+        eff_pipeline = std::min<uint64_t>(eff_pipeline, session.max_send_wr());
+        eff_signal_every = std::min<uint64_t>(eff_signal_every, eff_pipeline);
 
         //  apply moderate
         const char* moderation = "off";
@@ -465,14 +670,45 @@ int main(int argc, char* argv[])
             }
         }
 
+        //  figure out if inline applies
+        bool inline_enabled = args.inline_data;
+        if (inline_enabled && session.max_inline_data() < args.message_size)
+        {
+            std::cout << 
+            std::format(
+                "inline requested but message size ({} bytes) > max_inline_data ({} bytes)\n\tinlining will not apply, use smaller message size",
+                args.message_size,
+                session.max_inline_data()
+            ) << std::endl;
+            inline_enabled = false;
+        }
+        //  now create RunConfig which stores final values for configurations
+        RunConfig run_config{};
+        run_config.iterations = args.iterations;
+        run_config.message_size = args.message_size;
+        run_config.eff_pipeline = eff_pipeline;
+        run_config.eff_signal_every = eff_signal_every;
+        run_config.send_slots = cfg.send_slots; //  always valid since it's sized to pipeline depth or to the maximum memory size
+        run_config.granted_send_wr = session.max_send_wr();
+        run_config.inline_ok = inline_enabled;
+        run_config.is_client = is_client;
+        run_config.wc_reap_mode = args.reap;
+        run_config.rnr_retry = args.rnr_retry;
+        run_config.unsignaled = args.unsignaled;
+        run_config.broken_arming_enabled = args.broken_arming;
+
+        /////////////////////////////////////////
+        // END OF SETUP
+        ////////////////////////////////////////
+
         //  print configuration information
         std::cout << std::format(
             "config: inline={}(max={}) signal_every={} pipeline={} reap={} moderation={}",
-            args.inline_data ? "on":"off",
+            run_config.inline_ok? "on":"off",
             session.max_inline_data(),
-            signal_every,
-            eff_pipeline,
-            args.reap == reap_mode::POLL? "poll": "event",
+            run_config.eff_signal_every,
+            run_config.eff_pipeline,
+            run_config.wc_reap_mode == reap_mode::POLL? "poll": "event",
             moderation
         ) << std::endl;
 
@@ -483,15 +719,14 @@ int main(int argc, char* argv[])
             session.peer().rkey,
             session.peer().length
         );
-
         //  print pingpong-specific information
         std::cout << std::format(
             "pingpong: role={} iterations={} size={} signaled={} rnr_retry={}",
             is_client ? "client" : "server",
-            args.iterations,
-            args.message_size,
-            args.unsignaled ? "no" : "yes",
-            args.rnr_retry
+            run_config.iterations,
+            run_config.message_size,
+            run_config.unsignaled ? "no" : "yes",
+            run_config.rnr_retry
         ) << std::endl;
 
         //  print queue information
@@ -507,208 +742,94 @@ int main(int argc, char* argv[])
             std::printf("cm: event ESTABLISHED\n");
         }
 
-        //  figure out if inline applies
-        bool inline_enabled = args.inline_data;
-        if (inline_enabled && session.max_inline_data() < args.message_size)
-        {
-            std::cout << 
-            std::format(
-                "inline requested but message size ({} bytes) > max_inline_data ({} bytes)\n\tinlining will not apply, use smaller message size",
-                args.message_size,
-                session.max_inline_data()
-            ) << std::endl;
-            inline_enabled = false;
-        }
-
-
-        //  pingpong variables & trackers
-        bool signaled = !(args.unsignaled);
-        std::array<ibv_wc, COMPLETE_QUEUE_DEPTH> wc_arr;
-        int bad_wc_idx = -1; //  also acts as first error index 
-        uint32_t send_count = 0;
-        uint32_t send_completions = 0;
-        uint32_t recv_count = 0;
-        uint32_t mismatch_count = 0;
-        uint32_t sends_until_signal = signal_every;
-        uint32_t expected_send_completion_count = static_cast<uint32_t>(
-            std::ceil(static_cast<float>(args.iterations) / signal_every)
-        );
-
-        //  post the initial send work request only if you're the client
-        if (is_client)
-        {
-            uint32_t send_slot_num = send_count % cfg.send_slots;
-            void* send_addr = reinterpret_cast<void*>(limen::slot_addr((uint64_t)(uintptr_t)session.send_mr()->addr, send_slot_num, args.message_size));
-            limen::fill_pattern(send_addr, args.message_size, send_count);
-            bool signal_this_event = send_counter_update(&sends_until_signal, signal_every);
-            if (send_count+1 == args.iterations)
-                signal_this_event = true;   //  we want to signal on the last event
-            rc = post_send(
-                signaled && signal_this_event,
-                send_count,
-                cfg.send_slots,
-                (uint64_t)(uintptr_t)session.send_mr()->addr, session.qp(),
-                args.message_size,
-                session.send_mr()->lkey,
-                inline_enabled
-            );
-            if (rc !=0)
-            {
-                //  failed to allocate slot
-                fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
-                exit_rc = EXIT_VERB_ERROR;
-                return exit_rc;
-            }
-            send_count++;
-        }
+        //  now create RunState which stores variables and counters relevant to the pingpong loop
+        RunState state{};
 
         //####################//
         // MAIN PINGPONG LOOP //
+        // client sends #[pipeline] SENDs, server responds to each one by one 
         //####################//
         std::chrono::time_point last_valid_check = std::chrono::steady_clock::now();
-        uint32_t covered_sends=0;
-        uint32_t outstanding_sends = send_count;
         //  poll for completion in a loop w/ 10 second timeout
         while (true)
         {
-            std::cout << "covered: " << covered_sends << " outstanding: " <<outstanding_sends << std::endl;
-            while (send_count - covered_sends >= eff_pipeline)
+                
+            while (can_post(run_config,state))
+                if (post_one(session,run_config,state) != 0) return EXIT_VERB_ERROR;
+
+
+            int reap_count =reap(session,run_config,state); 
+            if ( reap_count <0) return EXIT_VERB_ERROR;
+            
+            if (state.first_error_status != IBV_WC_SUCCESS )  break;
+            if (state.timeout == true)
             {
-                int cqe_count = ibv_poll_cq(session.cq(),COMPLETE_QUEUE_DEPTH,wc_arr.data());
-                if (cqe_count < 0)
-                {
-                    //  error
-                    fprintf(stderr,"main:ibv_poll_cq error\n");
-                    exit_rc = EXIT_VERB_ERROR;
-                    return exit_rc;
-                }
-                if (cqe_count > 0)
-                {
-                    //  completions reported, handle them
-                    for (int i =0; i < cqe_count; i++)
-                    {
-                        ibv_wc* wc = &wc_arr[i];
-                        std::cout << limen::wc_to_str(wc) << std::endl;
-
-                        if (wc_arr[i].status != IBV_WC_SUCCESS)
-                        {
-                            //  if the status is not successful then WCs from this one onward
-                            //  are bad & have to be flushed accordingly
-                            std::cout << std::format("qp_num={:#08x}\n",session.qp()->qp_num);
-                            std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
-                            ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &qp_init_attr);
-                            std::cout << "qp_state_after_error: ERR"  << std::endl;
-                            bad_wc_idx = i;
-                            break;
-                        }
-                        else
-                        {
-                            //  successful, increment counters
-                            if (wc->opcode == IBV_WC_SEND)
-                            {
-                                uint32_t send_seq_num = limen::Session::remove_tags(wc->wr_id);
-                                std::cout<< "received completion for send id " << send_seq_num << std::endl;
-                                covered_sends = send_seq_num+1;
-                                send_completions++;
-                            }
-                            else if(wc->opcode == IBV_WC_RECV)
-                            {
-                                //  verify the payload
-                                uint32_t recv_slot_num = limen::Session::remove_tags(wc->wr_id);
-                                void* recv_addr = reinterpret_cast<void*>(
-                                    limen::slot_addr((uint64_t)(uintptr_t)session.recv_mr()->addr, recv_slot_num, args.message_size));
-                                if (limen::verify_pattern(recv_addr, wc->byte_len, recv_count) > 0) mismatch_count++;
-                                //  repost the recv
-                                rc = session.repost_recv(recv_slot_num);
-                                if (rc !=0)
-                                {
-                                    //  failed to allocate slot
-                                    fprintf(stderr,"main:post_recv %s (%s)\n",strerrorname_np(rc),strerror(rc));
-                                    exit_rc = EXIT_VERB_ERROR;
-                                    return exit_rc;
-                                }
-                                recv_count++;
-
-
-                            }
-
-                        }
-                    }
-
-                }
+                fprintf(stderr,"main:reap_event loop timeout\n");
+                exit_rc = EXIT_COMPLETION_CHANNEL_TIMEOUT;
+                break;
             }
 
-            outstanding_sends = send_count - covered_sends;
-            //  post reply
-            //  the client will execute (n+1) SENDs since it executed the initial
-            //  SEND before the loop; this prevents sending that n+1th 
-            if ((uint64_t)send_count < args.iterations && (outstanding_sends < eff_pipeline))
-            {
-                uint32_t send_slot_num = send_count % cfg.send_slots;
-                void* send_addr = reinterpret_cast<void*>(limen::slot_addr((uint64_t)(uintptr_t)session.send_mr()->addr, send_slot_num, args.message_size));
-                limen::fill_pattern(send_addr, args.message_size, send_count);
-                bool signal_this_event = send_counter_update(&sends_until_signal, signal_every);
-                std::cout << "send_count " << send_count << std::endl;
-                if (send_count+1 == args.iterations )
-                    signal_this_event = true;
-                rc = post_send(
-                    signaled && signal_this_event,
-                    send_count,
-                    cfg.send_slots,
-                    (uint64_t)(uintptr_t)session.send_mr()->addr, session.qp(),
-                    args.message_size,
-                    session.send_mr()->lkey,
-                    inline_enabled
-                );
-                if (rc != 0)
-                {
-                    fprintf(stderr,"main:post_send %s (%s)\n",strerrorname_np(rc),strerror(rc));
-                    exit_rc = EXIT_VERB_ERROR;
-                    return exit_rc;
-                }
-                send_count++;
-            }
-            //  update last_valid check
-            if (bad_wc_idx > -1) break;
-            if ((uint64_t)recv_count >= args.iterations
-                && (args.unsignaled || send_completions >= expected_send_completion_count)) break;
-            last_valid_check = std::chrono::steady_clock::now();
+            if (reap_count >0)
+                //  update last_valid check
+                last_valid_check = std::chrono::steady_clock::now();
+            
             //  if its been more than 10sec without a valid (cqe_count>0) check then break as timeout
             if (std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - last_valid_check) > std::chrono::seconds(10))
             {
                 fprintf(stderr,"main:ibv_poll_cq loop timeout (10sec)\n");
                 exit_rc = EXIT_COMPLETION_STATUS_ERROR;
-                return exit_rc;
+                break;
             }
+
+            //  Successful completion exit
+            if (state.recv_count      >= run_config.iterations
+                && state.posted       >= run_config.iterations
+                && state.covered      >= run_config.iterations
+                && state.responses_owed == 0) break;
         }
 
         std::cout << std::format(
-            "result: iterations={} sent={} received={} mismatches={} send_completions={}",
-            args.iterations,
-            send_count,
-            recv_count,
-            mismatch_count,
-            send_completions
+            "result: iterations={} sent={} received={} send_completions={} mismatches={} ",
+            run_config.iterations,
+            state.posted,
+            state.recv_count,
+            state.send_completions,
+            state.mismatches
         );
-        if (bad_wc_idx > -1)
-        {
-            std::cout << std::format(" first_error={}",limen::wc_status_name(wc_arr[bad_wc_idx].status));
-        }
+
+        if (state. first_error_status != IBV_WC_SUCCESS)
+            std::cout << std::format(" first_error={}",limen::wc_status_name(state.first_error_status));
+        
         std::cout << std::endl;
+
+        //  ack remaining WCs
+        uint32_t owed = (state.events_received - state.events_acked);
+        if (owed > 0)
+        {
+            session.ack_cq_events(owed);
+            state.events_acked += owed;
+        }
+
+        std::cout << std::format(
+            "events: received={} acked={} empty_events={} race_polls_hit={}",
+            state.events_received,
+            state.events_acked,
+            state.empty_events,
+            state.race_polls_hit
+        ) << std::endl;
 
         //  send disconnect if client
         if (is_client)
         {
             std::cout << "cm: disconnect requested" << std::endl;
             session.disconnect();
-
         }
         //  wait for disconnect or timeout_wait
         session.wait_for_disconnect(10000); // wait 10sec for disconnect
-
         std::cout << "cm: event DISCONNECTED" << std::endl;
 
 
+        //  print out teardown diagnostics
         std::printf("teardown: qp=%s cq=%s rx_mr=%s tx_mr=%s pd=%s id=%s channel=%s context=%s\n",
                     session.qp()      ? "ok" : "n/a",
                     session.cq()      ? "ok" : "n/a",
@@ -717,8 +838,9 @@ int main(int argc, char* argv[])
                     session.pd()          ? "ok" : "n/a",
                     session.id() ? "ok" : "n/a",
                     session.ec() ? "ok" : "n/a",
-                    session.id()->verbs ? "ok" : "n/a");
-        return 0;
+                    session.id()->verbs ? "ok" : "n/a"
+                );
+        return exit_rc;
     }
     catch (const limen::SessionError& e) { fprintf(stderr, "%s\n", e.what()); return EXIT_CONNECTION_MANAGER_FAILURE; }
     catch (const limen::VerbsError& e)   { fprintf(stderr, "%s\n", e.what()); return EXIT_VERB_ERROR; }

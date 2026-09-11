@@ -18,5 +18,5 @@ int main() {
     check<limen::CompletionQueue>();
     check<limen::QueuePair>();
     check<limen::Endpoint>();
-
+    check<limen::CompletionChannel>();
 }

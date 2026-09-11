@@ -10,4 +10,5 @@ namespace limen {
     const char* wc_status_name(ibv_wc_status s);
     const char* wc_opcode_str(ibv_wc_opcode op);
     std::string wc_to_str(const ibv_wc* wc);
+    std::string wc_to_str(const ibv_wc& wc);
 }

@@ -149,4 +149,41 @@ namespace limen
 
     }
 
+    std::string wc_to_str(const ibv_wc& wc)
+    {
+        if (wc.status == IBV_WC_SUCCESS)
+        {
+            //  successful
+            if (wc.opcode == IBV_WC_RECV)
+            {
+                return std::format(
+                    "completion: wr_id={:#016x} opcode={} status={} byte_len={}",
+                    wc.wr_id,
+                    wc_opcode_str(wc.opcode),
+                    wc_status_name(wc.status),
+                    wc.byte_len
+                );
+            }
+            else {
+                return std::format(
+                    "completion: wr_id={:#016x} opcode={} status={}",
+                    wc.wr_id,
+                    wc_opcode_str(wc.opcode),
+                    wc_status_name(wc.status)
+                );
+            }
+        }
+        else 
+        {
+            //  unsuccessful
+            return std::format(
+                "completion: wr_id={:#016x} status={} vendor_err={:#08x}", 
+                wc.wr_id,
+                wc_status_name(wc.status),
+                wc.vendor_err
+            );
+        }
+
+    }
+
 }

@@ -1,7 +1,6 @@
 #pragma once
 #include <climits>
 #include <infiniband/verbs.h>
-#include "limen/cm.hpp"
 
 
 #define SEND_QUEUE_DEPTH 16
@@ -41,6 +40,43 @@ typedef struct pingpong_parsed_args {
 
     const char* addr{nullptr};
 } pingpong_parsed_args;
+
+struct RunConfig {           
+    uint64_t iterations;
+    uint64_t message_size;
+    uint64_t eff_pipeline;
+    uint64_t eff_signal_every;
+    uint64_t send_slots;
+    uint32_t granted_send_wr;
+    bool     inline_ok;
+    bool     is_client;
+    bool unsignaled;
+    bool broken_arming_enabled;
+    reap_mode wc_reap_mode;
+    int rnr_retry;
+    uint64_t poll_timeout_ms{5000};
+
+};
+
+struct RunState {
+    uint64_t posted{0};            
+    uint64_t covered{0};            
+    uint64_t recv_count{0};
+    uint64_t send_completions{0};
+    uint64_t mismatches{0};
+
+    uint64_t responses_owed{0};
+
+    uint64_t events_received{0};    
+    uint64_t events_acked{0};       
+    uint64_t empty_events{0};    
+    uint64_t race_polls_hit{0};
+
+    bool timeout{false};
+
+    ibv_wc_status first_error_status{IBV_WC_SUCCESS};
+};
+
 void parse_argv(int arg, char* argv[], pingpong_parsed_args* args_container);
 
 void print_help(bool to_error=false);
@@ -55,8 +91,3 @@ int post_send(
     uint32_t lkey,
     bool inline_enabled
 );
-
-//  calls ec::wait(timeout)
-limen::Event get_expected_event(limen::EventChannel& ec, rdma_cm_event_type event_type, int timeout_ms);
-
-void fill_qp_init_attr(ibv_qp_init_attr* qp_init_attr, ibv_device_attr* device_attr, pingpong_parsed_args* args);

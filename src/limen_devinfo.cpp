@@ -82,6 +82,8 @@ void print_port_info(ibv_port_attr* attr)
         case IBV_PORT_ACTIVE_DEFER:
             state = "PORT_ACTIVE_DEFER";
             break;
+        default:
+            state = "UNKNOWN";
     }
 
     //  figure out link layer
@@ -95,6 +97,9 @@ void print_port_info(ibv_port_attr* attr)
             break;
         case IBV_LINK_LAYER_UNSPECIFIED:
             link_layer = "Unspecified";
+            break;
+        default:
+            link_layer = "Unknown";
             break;
     }
 

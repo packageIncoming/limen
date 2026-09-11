@@ -117,7 +117,11 @@ public:
     ibv_cq *get()   const noexcept {return _h.get();}        
     int size() const noexcept { return _h.get() ? _h.get()->cqe : 0;}      
     explicit operator bool() const noexcept { return static_cast<bool>(_h);}
-    int close() noexcept;       
+    int close() noexcept;     
+
+    int req_notify_cq(int solicited_only) noexcept;
+    int ack_cq_events(int nevents) noexcept;
+  
 private:
     limen::ResourceHandle<ibv_cq, ibv_destroy_cq> _h;               
 };
@@ -209,8 +213,6 @@ public:
     ibv_cq* get_cq() const noexcept {return _cq.get();}
     ibv_qp* get_qp() const noexcept {return _qp.get();}
 
-
-
 private:
     Context _ctx;
     ProtectionDomain _pd;
@@ -218,6 +220,30 @@ private:
     MemoryRegion _send_mr;
     CompletionQueue _cq;
     QueuePair _qp;
+};
+
+class CompletionChannel {
+public:
+    CompletionChannel() noexcept = default;
+    explicit CompletionChannel(const Context& device_context);
+    //  borrowed context (e.g. rdma_cm_id->verbs), not owned by this object
+    explicit CompletionChannel(ibv_context* device_context);
+    ~CompletionChannel() noexcept {close();}
+    CompletionChannel(const CompletionChannel&)                = delete;
+    CompletionChannel& operator=(const CompletionChannel&)     = delete;
+    CompletionChannel(CompletionChannel&&) noexcept            = default;
+    CompletionChannel& operator=(CompletionChannel&&) noexcept = default;
+
+    ibv_comp_channel *get() const noexcept {return _h.get();}
+    int fd() const noexcept {return _h.get() ? _h.get()->fd : -1;}
+    explicit operator bool() const noexcept { return static_cast<bool>(_h);}
+    int close() noexcept;
+
+    int get_cq_event(ibv_cq** out_cq, void** out_cq_ctx) noexcept; 
+
+
+private:
+    limen::ResourceHandle<ibv_comp_channel, ibv_destroy_comp_channel> _h;
 };
 
 } /* namespace limen */
