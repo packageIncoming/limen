@@ -64,6 +64,7 @@ target_link_libraries(limen PUBLIC ${IBVERBS_LIB} ${RDMACM_LIB})
 # ─────────────────────────────────────────────────────────────────────────────
 add_library(limen_app STATIC
   src/cli.cpp
+  src/harness.cpp
 )
 
 target_link_libraries(limen_app PUBLIC limen)
@@ -85,6 +86,9 @@ target_link_libraries(limen_pingpong PRIVATE limen_app)
 
 add_executable(limen_onesided src/limen_onesided.cpp)
 target_link_libraries(limen_onesided PRIVATE limen_app)
+
+add_executable(limen_bench src/limen_bench.cpp)
+target_link_libraries(limen_bench PRIVATE limen_app)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tests
