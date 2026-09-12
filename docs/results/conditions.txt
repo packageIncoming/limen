@@ -1,13 +1,16 @@
 conditions:
-  date            2026-09-12T03:10:38-0700
+  date            2026-09-12T14:34:54-0700
   os              Ubuntu 24.04.4 LTS
-  kernel          Linux 7.0.0-30-generic
+  kernel          Linux 7.0.0-31-generic
   cpus            8
+  affinity        2
+  smt             on, siblings 2,6
   governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
   clocksource     tsc
   device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=1024
   numa_node       -1
-  clock_floor_ns  29
+  clock_floor_ns  28
   mode            latency
   message_size    4096
   iterations      100

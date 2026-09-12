@@ -1,18 +1,21 @@
 role: client
 conditions:
-  date            2026-09-12T03:12:35-0700
+  date            2026-09-12T14:36:52-0700
   os              Ubuntu 24.04.4 LTS
-  kernel          Linux 7.0.0-30-generic
+  kernel          Linux 7.0.0-31-generic
   cpus            8
+  affinity        2
+  smt             on, siblings 2,6
   governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
   clocksource     tsc
   device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=1024
   numa_node       -1
-  clock_floor_ns  18
+  clock_floor_ns  19
   mode            sweep
   message_size    64
-  iterations      20000
-  warmup          2000
+  iterations      100000
+  warmup          5000
   runs            9
   rate            0
   inline          off
@@ -20,33 +23,38 @@ conditions:
   pipeline        1
   reap            poll
 
-noise floor: 0.28% over 9 runs (medians us: 4.318 4.322 4.325 4.322 4.323 4.316 4.326 4.318 4.314)
+noise floor: 0.21% over 9 runs (medians us: 4.325 4.323 4.330 4.328 4.321 4.326 4.330 4.328 4.327)
 
 json: wrote docs/results/sweep-64b.json
-size sweep, latency at depth 1 and bandwidth at depth 64 (noise floor 0.28%)
-  size(B)    iters   med(us)   p90(us)   p99(us) p99.9(us)      Gbit/s     msg/s
-       64   100000      4.32      5.55      7.84     12.61       0.261    509180
-      128   100000      4.48      5.69      7.86     12.32       0.517    505097
-      256   100000      5.74      5.90      8.31     13.84       1.008    492081
-      512   100000      6.03      6.29      8.81     14.64       1.883    459618
-     1024    65536      6.80      7.81     10.38     14.88       0.307     37451
-     2048    32768      7.62      8.71     11.82     17.48       5.296    323260
-     4096    16384      9.41      9.69     16.25     23.00       7.794    237856
-     8192     8192     12.31     12.74     22.39     29.99      11.008    167973
-    16384     4096     17.61     18.99     33.11     42.58      14.014    106915
-    32768     2048     28.96     32.08     51.90     65.40      16.237     61940
-    65536     1024     51.85     61.34     79.48     93.60      18.270     34847
-   131072      512     97.44    113.87    130.64    149.54      18.946     18069
-   262144      256    188.78    209.90    243.61    281.33      20.340      9699
-   524288      200    372.26    391.02    401.86    458.23      20.338      4849
-  1048576      200    748.53    755.81    775.09    814.79      20.200      2408
+size sweep, latency at depth 1 and bandwidth at depth 64 (latency noise floor 0.21%)
+  size(B)    iters  bw_iters   med(us)   p90(us)   p99(us) p99.9(us)      Gbit/s     msg/s
+       64   100000    100000      4.33      5.55      7.77     13.05       0.024     47567
+      128   100000    100000      4.51      5.71      7.84     11.63       0.526    513396
+      256   100000    100000      5.74      5.92      8.16     12.74       1.015    495847
+      512   100000    100000      6.03      6.30      8.93     14.64       1.906    465447
+     1024    65536     65536      6.82      7.82     10.48     14.57       3.343    408031
+     2048    32768     32768      7.63      8.72     11.91     16.76       5.501    335742
+     4096    16384     16384      9.40      9.70     15.96     23.20       8.305    253457
+     8192     8192      8192     12.34     12.80     22.20     32.07      10.644    162412
+    16384     4096      4096     17.63     19.14     33.85     47.51      13.468    102753
+    32768     2048      2048     28.96     33.01     50.10     63.17      16.308     62210
+    65536     1024      2000     52.02     60.52     77.85     93.96      18.369     35036
+   131072      512      2000     97.49    114.70    125.69    138.88      20.023     19095
+   262144      256      2000    189.24    209.58    233.93    258.86      20.435      9744
+   524288      200      2000    372.90    391.94    438.27    472.55      19.165      4569
+  1048576      200      2000    747.68    756.26    760.33    765.11      18.972      2262
 
-option sweep at size=64, baseline depth 16 (noise floor 0.28%)
-option               med(us)      delta   p99(us)  eff_pipe   eff_sig  verdict
-baseline               31.16          -     48.58        16         1  -
-inline=on              31.27      +0.4%     48.37        16         1  SIGNIFICANT (worse)
-signal_every=16        31.17      +0.0%     48.37        16        16  within noise
-pipeline=1              4.32     -86.1%      8.18         1         1  SIGNIFICANT
-reap=event             30.63      -1.7%     45.22        16         1  SIGNIFICANT
-op=write                   -          -         -         -         -  not implemented, post_one emits IBV_WR_SEND only
+option sweep at size=64, baseline depth 16
+floor 0.07% over 9 runs, measured in the baseline configuration
+option               med(us)      delta   p99(us)     noise  eff_pipe   eff_sig  verdict
+baseline               31.16          -     43.83     0.07%        16         1  -
+inline=on              31.13      -0.1%     43.28     0.14%        16         1  within noise
+signal_every=16        31.14      -0.1%     43.94     0.12%        16        16  within noise
+pipeline=1              4.33     -86.1%      7.74     0.21%         1         1  SIGNIFICANT
+reap=event             30.66      -1.6%     44.46     0.70%        16         1  SIGNIFICANT
+op=write                   -          -         -         -         -         -  not implemented, post_one emits IBV_WR_SEND only
+
+note: pipeline=1 also takes the closed-loop branch in run_once, so depth
+      and code path are confounded in that row. its delta is queueing
+      delay from 16 in flight, not a property of the send path.
 

@@ -495,6 +495,7 @@ RunResult run_once(const limen::SessionConfig& cfg, RunConfig& rc, const BenchPl
 
     RunState state{};
     if (plan.collect_samples) r.samples.reserve(plan.record);
+    if (plan.scheduled)       r.late_ns.reserve(plan.record);
 
     //  the measured window opens when the warmup-th operation retires, not at
     //  connect. zero until then.
@@ -559,10 +560,14 @@ RunResult run_once(const limen::SessionConfig& cfg, RunConfig& rc, const BenchPl
                     if (now < intended) break;
 
                     //  late. do NOT sleep, the lateness is the measurement.
+                    //  record the magnitude: a spin loop sampling every ~200 ns
+                    //  overshoots by nanoseconds on nearly every slot, which is
+                    //  not the same event as falling a whole interval behind.
                     if (now > intended)
                     {
-                        r.behind++;
                         uint64_t late = now - intended;
+                        r.behind++;
+                        r.late_ns.push_back(late);
                         if (late > r.max_late_ns) r.max_late_ns = late;
                     }
                 }
@@ -611,7 +616,7 @@ RunResult run_once(const limen::SessionConfig& cfg, RunConfig& rc, const BenchPl
 
             if (std::chrono::steady_clock::now() - last_progress > std::chrono::seconds(30))
             {
-                std::fprintf(stderr, "run_once: 10sec without a completion\n");
+                std::fprintf(stderr, "run_once: 30s without a completion\n");
                 r.rc = EXIT_COMPLETION_STATUS_ERROR;
                 break;
             }
@@ -634,7 +639,6 @@ RunResult run_once(const limen::SessionConfig& cfg, RunConfig& rc, const BenchPl
         session.ack_cq_events(owed);
         state.events_acked += owed;
     }
-
 
     session.disconnect();
 
@@ -798,15 +802,84 @@ static void now_iso8601(char* out, size_t n)
     std::strftime(out, n, "%Y-%m-%dT%H:%M:%S%z", std::localtime(&now));
 }
 
+int first_affinity_cpu()
+{
+    cpu_set_t s;
+    CPU_ZERO(&s);
+    if (sched_getaffinity(0, sizeof s, &s) != 0) return -1;
+    for (int i = 0; i < CPU_SETSIZE; i++)
+        if (CPU_ISSET(i, &s)) return i;
+    return -1;
+}
+
+void affinity_str(char* out, size_t n)
+{
+    cpu_set_t s;
+    CPU_ZERO(&s);
+    out[0] = '\0';
+    if (sched_getaffinity(0, sizeof s, &s) != 0) { std::snprintf(out, n, "unknown"); return; }
+
+    long online = sysconf(_SC_NPROCESSORS_ONLN);
+    if (CPU_COUNT(&s) >= (int)online) { std::snprintf(out, n, "unpinned (all %ld)", online); return; }
+
+    size_t used = 0;
+    for (int i = 0; i < CPU_SETSIZE && used + 8 < n; i++)
+        if (CPU_ISSET(i, &s))
+            used += (size_t)std::snprintf(out + used, n - used, "%s%d", used ? "," : "", i);
+}
+
+void cstate_str(int cpu, char* out, size_t n)
+{
+    out[0] = '\0';
+    if (cpu < 0) { std::snprintf(out, n, "unknown"); return; }
+
+    size_t used = 0;
+    for (int i = 0; i < 16; i++)
+    {
+        char path[256], name[64], dis[64];
+
+        std::snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cpuidle/state%d/name", cpu, i);
+        read_first_line(path, name, sizeof name);
+        if (!name[0]) break;
+
+        std::snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cpuidle/state%d/disable", cpu, i);
+        read_first_line(path, dis, sizeof dis);
+
+        if (used + 24 >= n) break;
+        used += (size_t)std::snprintf(out + used, n - used, "%s%s:%s",
+                                      used ? " " : "", name, dis[0] == '1' ? "off" : "on");
+    }
+    if (!out[0]) std::snprintf(out, n, "no cpuidle");
+}
+
 void print_conditions(const bench_parsed_args& args, uint64_t clock_floor_ns)
 {
     char os[256];     read_os_pretty(os, sizeof os);
-    char gov[64];     read_first_line("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", gov, sizeof gov);
     char clksrc[64];  read_first_line("/sys/devices/system/clocksource/clocksource0/current_clocksource", clksrc, sizeof clksrc);
     char datebuf[64]; now_iso8601(datebuf, sizeof datebuf);
 
     utsname u{};
     uname(&u);
+
+    int  pinned = first_affinity_cpu();
+    char affinity[128]; affinity_str(affinity, sizeof affinity);
+    char cstates[256];  cstate_str(pinned, cstates, sizeof cstates);
+
+    char path[256];
+    char gov[64];
+    std::snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_governor", pinned >= 0 ? pinned : 0);
+    read_first_line(path, gov, sizeof gov);
+
+    char siblings[64];
+    siblings[0] = '\0';
+    if (pinned >= 0)
+    {
+        std::snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/topology/thread_siblings_list", pinned);
+        read_first_line(path, siblings, sizeof siblings);
+    }
+
+    char smt[64];
+    read_first_line("/sys/devices/system/cpu/smt/control", smt, sizeof smt);
 
     char devinfo[256];
     std::snprintf(devinfo, sizeof devinfo, "%s (query failed)", args.device_name ? args.device_name : "none");
@@ -818,8 +891,8 @@ void print_conditions(const bench_parsed_args& args, uint64_t clock_floor_ns)
         ibv_query_device(probe.get(), &da);
         ibv_query_port(probe.get(), 1, &pa);
         std::snprintf(devinfo, sizeof devinfo,
-            "%s fw=%s max_qp_wr=%d max_cqe=%d active_mtu=%s",
-            args.device_name, da.fw_ver, da.max_qp_wr, da.max_cqe, mtu_str(pa.active_mtu));
+                      "%s fw=%s max_qp_wr=%d max_cqe=%d active_mtu=%s",
+                      args.device_name, da.fw_ver, da.max_qp_wr, da.max_cqe, mtu_str(pa.active_mtu));
     }
     catch (const std::exception&) {}
 
@@ -834,7 +907,13 @@ void print_conditions(const bench_parsed_args& args, uint64_t clock_floor_ns)
     std::printf("  os              %s\n", os[0] ? os : "unknown");
     std::printf("  kernel          %s %s\n", u.sysname, u.release);
     std::printf("  cpus            %ld\n", sysconf(_SC_NPROCESSORS_ONLN));
+    std::printf("  affinity        %s\n", affinity[0] ? affinity : "unknown");
+    std::printf("  smt             %s%s%s\n",
+                smt[0] ? smt : "unknown",
+                siblings[0] ? ", siblings " : "",
+                siblings[0] ? siblings : "");
     std::printf("  governor        %s\n", gov[0] ? gov : "unknown");
+    std::printf("  cstates         %s\n", cstates);
     std::printf("  clocksource     %s\n", clksrc[0] ? clksrc : "unknown");
     std::printf("  device          %s\n", devinfo);
     std::printf("  numa_node       %s\n", numa[0] ? numa : "unknown");
@@ -884,9 +963,31 @@ void print_bandwidth(const RunResult& r, uint64_t message_size)
                 mib_s, gbit_s, msg_s, message_size, sec, r.ops_recorded);
 }
 
-void print_schedule(const RunResult& r)
+void print_schedule(const RunResult& r, uint64_t interval_ns)
 {
-    std::printf("schedule: behind=%" PRIu64 " max_late_us=%.2f\n", r.behind, r.max_late_ns / 1000.0);
+    std::vector<uint64_t> late = r.late_ns;
+
+    if (late.empty())
+    {
+        std::printf("schedule: on time for all %" PRIu64 " recorded ops\n", r.ops_recorded);
+    }
+    else
+    {
+        Stats st = compute(late);
+
+        uint64_t missed = 0;
+        if (interval_ns > 0)
+            for (uint64_t v : late)
+                if (v > interval_ns) missed++;
+
+        std::printf("schedule: late=%zu/%" PRIu64 " ops  p50=%.3f us  p99=%.3f us  max=%.2f us\n",
+                    late.size(), r.ops_recorded,
+                    st.p50 / 1000.0, st.p99 / 1000.0, st.max / 1000.0);
+        std::printf("          past a full %.2f us slot: %" PRIu64 " (%.2f%%)\n",
+                    interval_ns / 1000.0, missed,
+                    r.ops_recorded > 0 ? (double)missed / (double)r.ops_recorded * 100.0 : 0.0);
+    }
+
     std::printf("batching: max=%" PRIu64 " mean=%.2f over %" PRIu64 " reaps\n\n",
                 r.max_batch,
                 r.batches > 0 ? (double)r.batched_recvs / (double)r.batches : 0.0,
@@ -895,6 +996,12 @@ void print_schedule(const RunResult& r)
 
 void print_noise_floor(const MultiRunResult& m, bool time_units)
 {
+    if (m.medians_ns.size() < 2)
+    {
+        std::printf("noise floor: n/a, %zu run\n\n", m.medians_ns.size());
+        return;
+    }
+
     std::printf("noise floor: %.2f%% over %zu runs (%s:",
                 m.noise_pct, m.medians_ns.size(), time_units ? "medians us" : "elapsed s");
 
@@ -916,12 +1023,33 @@ int write_json(const char* path, const bench_parsed_args& args, const MultiRunRe
     }
 
     char os[256];     read_os_pretty(os, sizeof os);
-    char gov[64];     read_first_line("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", gov, sizeof gov);
     char clksrc[64];  read_first_line("/sys/devices/system/clocksource/clocksource0/current_clocksource", clksrc, sizeof clksrc);
     char datebuf[64]; now_iso8601(datebuf, sizeof datebuf);
 
     utsname u{};
     uname(&u);
+
+    int  pinned = first_affinity_cpu();
+    char affinity[128]; affinity_str(affinity, sizeof affinity);
+    char cstates[256];  cstate_str(pinned, cstates, sizeof cstates);
+
+    char path_buf[256];
+    char gov[64];
+    std::snprintf(path_buf, sizeof path_buf, "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_governor", pinned >= 0 ? pinned : 0);
+    read_first_line(path_buf, gov, sizeof gov);
+
+    char siblings[64];
+    siblings[0] = '\0';
+    if (pinned >= 0)
+    {
+        std::snprintf(path_buf, sizeof path_buf, "/sys/devices/system/cpu/cpu%d/topology/thread_siblings_list", pinned);
+        read_first_line(path_buf, siblings, sizeof siblings);
+    }
+
+    char smt[64];
+    read_first_line("/sys/devices/system/cpu/smt/control", smt, sizeof smt);
+
+    uint64_t interval_ns = args.rate > 0 ? 1000000000ull / args.rate : 0;
 
     std::fprintf(f, "{\n");
     std::fprintf(f, "  \"conditions\": {\n");
@@ -929,7 +1057,12 @@ int write_json(const char* path, const bench_parsed_args& args, const MultiRunRe
     std::fprintf(f, "    \"os\": \"%s\",\n", os);
     std::fprintf(f, "    \"kernel\": \"%s\",\n", u.release);
     std::fprintf(f, "    \"cpus\": %ld,\n", sysconf(_SC_NPROCESSORS_ONLN));
-    std::fprintf(f, "    \"governor\": \"%s\",\n", gov);
+    std::fprintf(f, "    \"affinity\": \"%s\",\n", affinity[0] ? affinity : "unknown");
+    std::fprintf(f, "    \"pinned_cpu\": %d,\n", pinned);
+    std::fprintf(f, "    \"smt\": \"%s\",\n", smt[0] ? smt : "unknown");
+    std::fprintf(f, "    \"thread_siblings\": \"%s\",\n", siblings[0] ? siblings : "unknown");
+    std::fprintf(f, "    \"governor\": \"%s\",\n", gov[0] ? gov : "unknown");
+    std::fprintf(f, "    \"cstates\": \"%s\",\n", cstates);
     std::fprintf(f, "    \"clocksource\": \"%s\",\n", clksrc);
     std::fprintf(f, "    \"clock_floor_ns\": %" PRIu64 ",\n", clock_floor_ns);
     std::fprintf(f, "    \"device\": \"%s\"\n", args.device_name ? args.device_name : "");
@@ -942,6 +1075,7 @@ int write_json(const char* path, const bench_parsed_args& args, const MultiRunRe
     std::fprintf(f, "    \"warmup\": %" PRIu64 ",\n", args.warmup);
     std::fprintf(f, "    \"runs\": %" PRIu64 ",\n", args.runs);
     std::fprintf(f, "    \"rate\": %" PRIu64 ",\n", args.rate);
+    std::fprintf(f, "    \"interval_ns\": %" PRIu64 ",\n", interval_ns);
     std::fprintf(f, "    \"inline\": %s,\n", args.inline_data ? "true" : "false");
     std::fprintf(f, "    \"signal_every\": %" PRIu64 ",\n", args.signal_every);
     std::fprintf(f, "    \"pipeline\": %" PRIu64 ",\n", args.pipeline);
@@ -960,19 +1094,33 @@ int write_json(const char* path, const bench_parsed_args& args, const MultiRunRe
     {
         const RunResult& r = m.runs[i];
 
+        std::vector<uint64_t> late = r.late_ns;
+        Stats ls{};
+        uint64_t missed = 0;
+        if (!late.empty())
+        {
+            ls = compute(late);
+            if (interval_ns > 0)
+                for (uint64_t v : late)
+                    if (v > interval_ns) missed++;
+        }
+
         std::fprintf(f, "    {\n");
-        std::fprintf(f, "      \"ops\": %" PRIu64 ",\n",             r.ops_recorded);
-        std::fprintf(f, "      \"bytes\": %" PRIu64 ",\n",           r.bytes);
-        std::fprintf(f, "      \"elapsed_ns\": %" PRIu64 ",\n",      r.elapsed_ns);
-        std::fprintf(f, "      \"behind\": %" PRIu64 ",\n",          r.behind);
-        std::fprintf(f, "      \"max_late_ns\": %" PRIu64 ",\n",     r.max_late_ns);
-        std::fprintf(f, "      \"max_batch\": %" PRIu64 ",\n",       r.max_batch);
-        std::fprintf(f, "      \"batches\": %" PRIu64 ",\n",         r.batches);
-        std::fprintf(f, "      \"batched_recvs\": %" PRIu64 ",\n",   r.batched_recvs);
-        std::fprintf(f, "      \"granted_inline\": %u,\n",           r.granted_inline);
-        std::fprintf(f, "      \"eff_pipeline\": %" PRIu64 ",\n",    r.eff_pipeline);
+        std::fprintf(f, "      \"ops\": %" PRIu64 ",\n",              r.ops_recorded);
+        std::fprintf(f, "      \"bytes\": %" PRIu64 ",\n",            r.bytes);
+        std::fprintf(f, "      \"elapsed_ns\": %" PRIu64 ",\n",       r.elapsed_ns);
+        std::fprintf(f, "      \"late_count\": %" PRIu64 ",\n",       r.behind);
+        std::fprintf(f, "      \"late_p50_ns\": %.1f,\n",             ls.p50);
+        std::fprintf(f, "      \"late_p99_ns\": %.1f,\n",             ls.p99);
+        std::fprintf(f, "      \"late_max_ns\": %" PRIu64 ",\n",      r.max_late_ns);
+        std::fprintf(f, "      \"missed_slots\": %" PRIu64 ",\n",     missed);
+        std::fprintf(f, "      \"max_batch\": %" PRIu64 ",\n",        r.max_batch);
+        std::fprintf(f, "      \"batches\": %" PRIu64 ",\n",          r.batches);
+        std::fprintf(f, "      \"batched_recvs\": %" PRIu64 ",\n",    r.batched_recvs);
+        std::fprintf(f, "      \"granted_inline\": %u,\n",            r.granted_inline);
+        std::fprintf(f, "      \"eff_pipeline\": %" PRIu64 ",\n",     r.eff_pipeline);
         std::fprintf(f, "      \"eff_signal_every\": %" PRIu64 ",\n", r.eff_signal_every);
-        std::fprintf(f, "      \"inline_applied\": %s,\n",           r.inline_applied ? "true" : "false");
+        std::fprintf(f, "      \"inline_applied\": %s,\n",            r.inline_applied ? "true" : "false");
         std::fprintf(f, "      \"samples_ns\": [");
         for (size_t k = 0; k < r.samples.size(); ++k)
             std::fprintf(f, "%s%" PRIu64, k > 0 ? "," : "", r.samples[k]);
@@ -985,7 +1133,6 @@ int write_json(const char* path, const bench_parsed_args& args, const MultiRunRe
     std::printf("json: wrote %s\n", path);
     return 0;
 }
-
 // ------------------------------------------------------------------ R6
 
 static RunConfig make_run_config(const bench_parsed_args& a, const limen::SessionConfig& cfg)
@@ -1033,20 +1180,65 @@ static RunResult run_cell(const bench_parsed_args& a, const char* peer)
     return r;
 }
 
-static const char* verdict(double delta_pct, double noise_pct)
+struct CellResult {
+    bool     ok{false};
+    double   med_us{0.0};
+    double   p99_us{0.0};
+    double   noise_pct{0.0};
+    uint64_t runs_ok{0};
+    uint64_t eff_pipeline{0};
+    uint64_t eff_signal_every{0};
+};
+
+//  runs one configuration `runs` times. the median and p99 come from every
+//  sample merged; the noise floor comes from the spread of the per-run medians,
+//  measured in this exact configuration rather than borrowed from another.
+static CellResult run_cell_repeated(const bench_parsed_args& a, const char* peer, uint64_t runs)
 {
-    if (std::fabs(delta_pct) <= noise_pct) return "within noise";
-    return delta_pct < 0 ? "SIGNIFICANT" : "SIGNIFICANT (worse)";
+    CellResult out{};
+    std::vector<double>   medians;
+    std::vector<uint64_t> merged;
+
+    for (uint64_t i = 0; i < runs; ++i)
+    {
+        bench_parsed_args one = a;
+        one.runs = 1;
+
+        RunResult r = run_cell(one, peer);
+        if (r.rc != 0 || r.samples.empty()) continue;
+
+        std::vector<uint64_t> s = r.samples;
+        medians.push_back(compute(s).p50);
+        merged.insert(merged.end(), r.samples.begin(), r.samples.end());
+
+        out.eff_pipeline     = r.eff_pipeline;
+        out.eff_signal_every = r.eff_signal_every;
+    }
+
+    if (medians.empty()) return out;
+
+    Stats st   = compute(merged);
+    out.med_us = st.p50 / 1000.0;
+    out.p99_us = st.p99 / 1000.0;
+
+    double mean = std::accumulate(medians.begin(), medians.end(), 0.0) / medians.size();
+    auto [lo, hi] = std::minmax_element(medians.begin(), medians.end());
+
+    out.noise_pct = (medians.size() > 1 && mean > 0.0) ? (*hi - *lo) / mean * 100.0 : 0.0;
+    out.runs_ok   = medians.size();
+    out.ok        = true;
+    return out;
 }
 
 void sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_pct)
 {
-    std::printf("size sweep, latency at depth 1 and bandwidth at depth %" PRIu64 " (noise floor %.2f%%)\n",
-                args.pipeline > 1 ? args.pipeline : 64, noise_pct);
-    std::printf("%9s %8s %9s %9s %9s %9s %11s %9s\n",
-                "size(B)", "iters", "med(us)", "p90(us)", "p99(us)", "p99.9(us)", "Gbit/s", "msg/s");
-
     uint64_t bw_depth = args.pipeline > 1 ? args.pipeline : 64;
+
+    std::printf("size sweep, latency at depth 1 and bandwidth at depth %" PRIu64
+                " (latency noise floor %.2f%%)\n", bw_depth, noise_pct);
+    std::printf("%9s %8s %9s %9s %9s %9s %9s %11s %9s\n",
+                "size(B)", "iters", "bw_iters", "med(us)", "p90(us)", "p99(us)", "p99.9(us)",
+                "Gbit/s", "msg/s");
 
     for (uint64_t size = 64; size <= 1048576; size <<= 1)
     {
@@ -1063,9 +1255,16 @@ void sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_p
         RunResult rl = run_cell(lat, peer);
         if (rl.rc != 0 || rl.samples.empty()) continue;
 
+        //  bandwidth needs enough ops to fill and drain the pipeline many times
+        //  over. the latency count bottoms out at 200, which is only three
+        //  pipeline fills at depth 64 and produces unrepeatable figures.
+        uint64_t bw_iters = std::clamp<uint64_t>((64ull * 1024 * 1024) / size, 2000, 100000);
+
         bench_parsed_args bw = lat;
-        bw.mode     = bench_mode::BANDWIDTH;
-        bw.pipeline = bw_depth;
+        bw.mode       = bench_mode::BANDWIDTH;
+        bw.pipeline   = bw_depth;
+        bw.iterations = bw_iters;
+        bw.warmup     = std::min<uint64_t>(args.warmup, bw_iters / 4);
 
         RunResult rb = run_cell(bw, peer);
 
@@ -1075,8 +1274,8 @@ void sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_p
         double gbit_s = (rb.rc == 0 && sec > 0) ? (double)rb.bytes * 8.0 / sec / 1e9 : 0.0;
         double msg_s  = (rb.rc == 0 && sec > 0) ? (double)rb.ops_recorded / sec      : 0.0;
 
-        std::printf("%9" PRIu64 " %8" PRIu64 " %9.2f %9.2f %9.2f %9.2f %11.3f %9.0f\n",
-                    size, iters,
+        std::printf("%9" PRIu64 " %8" PRIu64 " %9" PRIu64 " %9.2f %9.2f %9.2f %9.2f %11.3f %9.0f\n",
+                    size, iters, bw_iters,
                     st.p50 / 1000.0, st.p90 / 1000.0, st.p99 / 1000.0, st.p999 / 1000.0,
                     gbit_s, msg_s);
         std::fflush(stdout);
@@ -1084,7 +1283,13 @@ void sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_p
     std::printf("\n");
 }
 
-void sweep_options(const bench_parsed_args& args, const char* peer, double noise_pct)
+static const char* verdict(double delta_pct, double noise_pct)
+{
+    if (std::fabs(delta_pct) <= noise_pct) return "within noise";
+    return delta_pct < 0 ? "SIGNIFICANT" : "SIGNIFICANT (worse)";
+}
+
+void sweep_options(const bench_parsed_args& args, const char* peer)
 {
     struct Cell {
         const char* label;
@@ -1095,6 +1300,7 @@ void sweep_options(const bench_parsed_args& args, const char* peer, double noise
     };
 
     const uint64_t BASE_DEPTH = 16;
+    const uint64_t runs       = args.runs > 0 ? args.runs : 1;
 
     const Cell cells[] = {
         { "baseline",        false, 1,  BASE_DEPTH, reap_mode::POLL  },
@@ -1104,58 +1310,76 @@ void sweep_options(const bench_parsed_args& args, const char* peer, double noise
         { "reap=event",      false, 1,  BASE_DEPTH, reap_mode::EVENT },
     };
 
-    std::printf("option sweep at size=%" PRIu64 ", baseline depth %" PRIu64 " (noise floor %.2f%%)\n",
-                args.message_size, BASE_DEPTH, noise_pct);
-    std::printf("%-18s %9s %10s %9s %9s %9s  %s\n",
-                "option", "med(us)", "delta", "p99(us)", "eff_pipe", "eff_sig", "verdict");
-
-    double baseline_med = 0.0;
-
-    for (const Cell& c : cells)
-    {
+    auto configure = [&](const Cell& c) {
         bench_parsed_args a = args;
         a.mode          = bench_mode::LATENCY;
         a.inline_data   = c.inline_data;
         a.signal_every  = c.signal_every;
         a.pipeline      = c.pipeline;
         a.reap          = c.reap;
-        a.runs          = 1;
         a.broken_arming = false;
+        return a;
+    };
 
-        RunResult r = run_cell(a, peer);
-        if (r.rc != 0 || r.samples.empty())
+    //  the floor is measured in the baseline configuration itself. a floor taken
+    //  at depth 1 says nothing about the repeatability of a depth-16 median, and
+    //  using one to gate the other makes every verdict below meaningless.
+    CellResult base = run_cell_repeated(configure(cells[0]), peer, runs);
+    if (!base.ok)
+    {
+        std::printf("option sweep at size=%" PRIu64 ": baseline failed, no verdicts\n\n",
+                    args.message_size);
+        return;
+    }
+
+    std::printf("option sweep at size=%" PRIu64 ", baseline depth %" PRIu64 "\n",
+                args.message_size, BASE_DEPTH);
+    std::printf("floor %.2f%% over %" PRIu64 " runs, measured in the baseline configuration\n",
+                base.noise_pct, base.runs_ok);
+    std::printf("%-18s %9s %10s %9s %9s %9s %9s  %s\n",
+                "option", "med(us)", "delta", "p99(us)", "noise", "eff_pipe", "eff_sig", "verdict");
+
+    std::printf("%-18s %9.2f %10s %9.2f %8.2f%% %9" PRIu64 " %9" PRIu64 "  %s\n",
+                cells[0].label, base.med_us, "-", base.p99_us, base.noise_pct,
+                base.eff_pipeline, base.eff_signal_every, "-");
+    std::fflush(stdout);
+
+    for (size_t i = 1; i < sizeof(cells) / sizeof(cells[0]); ++i)
+    {
+        const Cell& c = cells[i];
+
+        CellResult r = run_cell_repeated(configure(c), peer, runs);
+        if (!r.ok)
         {
-            std::printf("%-18s %9s %10s %9s %9s %9s  %s\n", c.label, "-", "-", "-", "-", "-", "failed");
+            std::printf("%-18s %9s %10s %9s %9s %9s %9s  %s\n",
+                        c.label, "-", "-", "-", "-", "-", "-", "failed");
             continue;
         }
 
-        Stats st   = compute(r.samples);
-        double med = st.p50 / 1000.0;
+        double delta_pct = (r.med_us - base.med_us) / base.med_us * 100.0;
 
-        if (baseline_med == 0.0)
-        {
-            baseline_med = med;
-            std::printf("%-18s %9.2f %10s %9.2f %9" PRIu64 " %9" PRIu64 "  %s\n",
-                        c.label, med, "-", st.p99 / 1000.0, r.eff_pipeline, r.eff_signal_every, "-");
-            std::fflush(stdout);
-            continue;
-        }
-
-        double delta_pct = (med - baseline_med) / baseline_med * 100.0;
+        //  a delta is only real if it clears the spread of both configurations
+        double gate = std::max(base.noise_pct, r.noise_pct);
 
         char deltabuf[16];
         std::snprintf(deltabuf, sizeof deltabuf, "%+.1f%%", delta_pct);
 
-        std::printf("%-18s %9.2f %10s %9.2f %9" PRIu64 " %9" PRIu64 "  %s\n",
-                    c.label, med, deltabuf, st.p99 / 1000.0,
-                    r.eff_pipeline, r.eff_signal_every, verdict(delta_pct, noise_pct));
+        std::printf("%-18s %9.2f %10s %9.2f %8.2f%% %9" PRIu64 " %9" PRIu64 "  %s\n",
+                    c.label, r.med_us, deltabuf, r.p99_us, r.noise_pct,
+                    r.eff_pipeline, r.eff_signal_every, verdict(delta_pct, gate));
         std::fflush(stdout);
     }
 
-    std::printf("%-18s %9s %10s %9s %9s %9s  %s\n",
-                "op=write", "-", "-", "-", "-", "-", "not implemented, post_one emits IBV_WR_SEND only");
-    std::printf("\n");
+    std::printf("%-18s %9s %10s %9s %9s %9s %9s  %s\n",
+                "op=write", "-", "-", "-", "-", "-", "-",
+                "not implemented, post_one emits IBV_WR_SEND only");
+    std::printf("\nnote: pipeline=1 also takes the closed-loop branch in run_once, so depth\n");
+    std::printf("      and code path are confounded in that row. its delta is queueing\n");
+    std::printf("      delay from 16 in flight, not a property of the send path.\n\n");
 }
+
+
+
 
 // ------------------------------------------------------------------ main
 
@@ -1199,8 +1423,8 @@ int main(int argc, char* argv[])
 
         if (args.mode == bench_mode::SWEEP)
         {
-            //  the floor is measured with the same shape the sweep cells use:
-            //  latency, depth 1, at the requested size.
+            //  this floor gates the size sweep only. the option sweep measures
+            //  its own, in the configuration it actually compares against.
             bench_parsed_args base = args;
             base.mode     = bench_mode::LATENCY;
             base.pipeline = 1;
@@ -1222,7 +1446,7 @@ int main(int argc, char* argv[])
             if (args.json_path) write_json(args.json_path, args, m, clock_floor_ns);
 
             sweep_sizes(args, args.peer, m.noise_pct);
-            sweep_options(args, args.peer, m.noise_pct);
+            sweep_options(args, args.peer);
             return EXIT_SUCCESS;
         }
 
@@ -1240,7 +1464,7 @@ int main(int argc, char* argv[])
             std::vector<uint64_t> s = m.runs.back().samples;
             Stats st = compute(s);
             print_stats(st, plan.scheduled ? "response_time" : "service_time");
-            if (plan.scheduled) print_schedule(m.runs.back());
+            if (plan.scheduled) print_schedule(m.runs.back(), plan.interval_ns);
         }
         else
         {

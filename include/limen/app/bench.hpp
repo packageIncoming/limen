@@ -97,6 +97,7 @@ struct RunResult {
     uint64_t bytes{0};
     uint64_t elapsed_ns{0};
 
+    std::vector<uint64_t> late_ns;
     uint64_t behind{0};
     uint64_t max_late_ns{0};
 
@@ -111,6 +112,7 @@ struct RunResult {
 
     int      rc{0};
 };
+
 
 struct MultiRunResult {
     std::vector<RunResult> runs;
@@ -145,10 +147,10 @@ void print_clock_floor(uint64_t floor_ns, uint64_t smallest_expected_ns);
 void print_conditions(const bench_parsed_args& args, uint64_t clock_floor_ns);
 void print_stats(const Stats& st, const char* quantity);
 void print_bandwidth(const RunResult& r, uint64_t message_size);
-void print_schedule(const RunResult& r);
 void print_noise_floor(const MultiRunResult& m, bool time_units);
 
 int write_json(const char* path, const bench_parsed_args& args, const MultiRunResult& m, uint64_t clock_floor_ns);
 
+void print_schedule(const RunResult& r, uint64_t interval_ns);
 void sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_pct);
-void sweep_options(const bench_parsed_args& args, const char* peer, double noise_pct);
+void sweep_options(const bench_parsed_args& args, const char* peer);
