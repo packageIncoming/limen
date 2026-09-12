@@ -117,7 +117,10 @@ int handle_wc(ibv_wc& wc, limen::Session &session, RunConfig &run_config, RunSta
         ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &qp_init_attr);
         std::cout << "qp_state_after_error: " << limen::qp_state_to_str(qp_attr.cur_qp_state)  << std::endl;
         if (state.first_error_status == IBV_WC_SUCCESS)
+        {
+            std::fprintf(stderr, "wc error: %s (%d) wr_id=%#lx\n", ibv_wc_status_str(wc.status), wc.status, wc.wr_id);
             state.first_error_status = wc.status;
+        }
         return 1;
     }
     else

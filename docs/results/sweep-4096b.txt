@@ -1,0 +1,52 @@
+role: client
+conditions:
+  date            2026-09-12T03:14:20-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-30-generic
+  cpus            8
+  governor        performance
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=1024
+  numa_node       -1
+  clock_floor_ns  29
+  mode            sweep
+  message_size    4096
+  iterations      20000
+  warmup          2000
+  runs            9
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.21% over 9 runs (medians us: 9.402 9.399 9.410 9.402 9.394 9.391 9.390 9.396 9.398)
+
+json: wrote docs/results/sweep-4096b.json
+size sweep, latency at depth 1 and bandwidth at depth 64 (noise floor 0.21%)
+  size(B)    iters   med(us)   p90(us)   p99(us) p99.9(us)      Gbit/s     msg/s
+       64   100000      4.32      5.55      7.79     12.00       0.261    508947
+      128   100000      4.47      5.69      7.75     12.04       0.515    503257
+      256   100000      5.74      5.91      8.03     13.07       0.989    483129
+      512   100000      6.02      6.28      8.71     14.00       1.884    459960
+     1024    65536      6.80      7.81     10.25     14.09       3.304    403337
+     2048    32768      7.63      8.71     11.74     16.82       5.269    321585
+     4096    16384      9.40      9.67     16.09     23.67       7.661    233808
+     8192     8192     12.31     12.78     22.67     30.29      10.937    166893
+    16384     4096     17.63     19.01     32.61     43.47      13.804    105319
+    32768     2048     28.90     31.63     47.61     62.15      16.642     63485
+    65536     1024     52.44     62.50     87.93    109.27      17.897     34136
+   131072      512     97.28    115.29    131.00    152.86      18.813     17942
+   262144      256    188.86    209.71    236.76    282.59      20.316      9687
+   524288      200    374.88    394.29    430.62    776.47      20.158      4806
+  1048576      200    749.98    755.21    760.41    791.03      20.406      2433
+
+option sweep at size=4096, baseline depth 16 (noise floor 0.21%)
+option               med(us)      delta   p99(us)  eff_pipe   eff_sig  verdict
+baseline               71.43          -     89.29        16         1  -
+inline=on              71.49      +0.1%     90.85        16         1  within noise
+signal_every=16        69.28      -3.0%     97.18        16        16  SIGNIFICANT
+pipeline=1              9.40     -86.8%     16.02         1         1  SIGNIFICANT
+reap=event             61.88     -13.4%     95.41        16         1  SIGNIFICANT
+op=write                   -          -         -         -         -  not implemented, post_one emits IBV_WR_SEND only
+

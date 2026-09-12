@@ -1,0 +1,21 @@
+conditions:
+  date            2026-09-12T03:10:38-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-30-generic
+  cpus            8
+  governor        performance
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=1024
+  numa_node       -1
+  clock_floor_ns  29
+  mode            latency
+  message_size    4096
+  iterations      100
+  warmup          10
+  runs            1
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
