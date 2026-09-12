@@ -5,9 +5,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Default to an optimized build. Without this, single-config generators leave
-# CMAKE_BUILD_TYPE empty and GCC compiles at -O0, which makes any TRD-08
-# latency or throughput number meaningless.
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
 endif()
@@ -19,8 +16,6 @@ if(LIMEN_ASAN)
   add_link_options(-fsanitize=address)
 endif()
 
-# Every target in this project wants these. trd-04's test_builds counts
-# warnings, so a new source file must not be able to opt out by omission.
 add_compile_options(-Wall -Wextra)
 
 # Find RDMA packages
@@ -32,14 +27,6 @@ find_path(RDMACM_INCLUDE_DIR rdma/rdma_cma.h REQUIRED)
 message(STATUS "libibverbs: ${IBVERBS_LIB}")
 message(STATUS "librdmacm: ${RDMACM_LIB}")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# The transport. Public surface is whatever <limen.hpp> reaches.
-# Named "limen" because the trd-04 probes link with -llimen.
-#
-# src/verbs.cpp must remain compilable on its own with only -libverbs:
-# trd-04 builds two probes as `$CXX probe.cpp src/verbs.cpp -libverbs`.
-# Do not let it depend on another TU in this target.
-# ─────────────────────────────────────────────────────────────────────────────
 add_library(limen STATIC
   src/verbs.cpp
   src/cm.cpp
@@ -56,12 +43,6 @@ target_include_directories(limen PUBLIC
 
 target_link_libraries(limen PUBLIC ${IBVERBS_LIB} ${RDMACM_LIB})
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Binary-only helpers: argv parsing and program exit codes. Deliberately a
-# separate target so nothing under include/limen/app/ can reach the transport's
-# public surface, and so the static-contract tests below prove the library
-# links without any CLI code.
-# ─────────────────────────────────────────────────────────────────────────────
 add_library(limen_app STATIC
   src/cli.cpp
   src/harness.cpp

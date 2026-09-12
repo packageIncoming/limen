@@ -1,3 +1,5 @@
+[![build](https://github.com/packageIncoming/limen/actions/workflows/build.yml/badge.svg)](https://github.com/packageIncoming/limen/actions/workflows/build.yml)
+
 <p align="center">
   <img src="assets/limen-logo-dark-trim.png" alt="Limen" width="600">
 </p>

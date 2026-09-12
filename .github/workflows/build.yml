@@ -1,0 +1,34 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install RDMA headers
+        run: sudo apt-get update && sudo apt-get install -y libibverbs-dev librdmacm-dev
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Static contract tests
+        run: ./build/static_contract && ./build/cm_static_contract
+
+      - name: Compile-fail tests must not compile
+        run: |
+          for t in copy_must_not_compile no_raw_private_data; do
+            if cmake --build build --target "$t" 2>/dev/null; then
+              echo "FAIL: $t compiled and must not have"
+              exit 1
+            fi
+            echo "ok: $t rejected"
+          done
