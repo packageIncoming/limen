@@ -83,11 +83,6 @@ namespace limen
         return PendingConnection::listen(config).finish();
     }
 
-    Session Session::accept_on(Listener& listener, const SessionConfig& config)
-    {
-        return PendingConnection::accept_on(listener, config).finish();
-    }
-
     int Session::close() noexcept 
     {
         _id.destroy_qp();
@@ -321,55 +316,6 @@ namespace limen
         return pc;
     }
 
-    Listener Listener::bind(const SessionConfig& config)
-    {
-        Listener l;
-        l._ec = EventChannel::create();
-        l._id = ConnectionId(l._ec, RDMA_PS_TCP);
-
-        sockaddr_in server_sockaddr{};
-        server_sockaddr.sin_family      = AF_INET;
-        server_sockaddr.sin_port        = htons(config.tcp_port);
-        server_sockaddr.sin_addr.s_addr = INADDR_ANY;   //  verbs not set until CONNECT_REQUEST
-        if (rdma_bind_addr(l._id.get(), (struct sockaddr*)&server_sockaddr) != 0)
-        {
-            throw SessionError("Listener::bind:rdma_bind_addr", errno);
-        }
-        //  backlog of 4, not 1. a client that abandons a REQ on timeout and
-        //  retries leaves the earlier REQ queued; a backlog of 1 turns that
-        //  into a rejected reconnect.
-        if (rdma_listen(l._id.get(), 4) != 0)
-        {
-            throw SessionError("Listener::bind:rdma_listen", errno);
-        }
-        return l;
-    }
-
-    PendingConnection PendingConnection::accept_on(Listener& listener, const SessionConfig& config)
-    {
-        //  block for a connection request on the long-lived listener
-        Event e = expect_event(listener.ec(), RDMA_CM_EVENT_CONNECT_REQUEST, -1,
-                               "PendingConnection::accept_on:CONNECT_REQUEST");
-
-        ConnInfo remote_raw{};
-        e.copy_private_data(&remote_raw, sizeof(remote_raw));
-        ConnInfo peer_info = from_wire_format(remote_raw);
-
-        ConnectionId client_conn_id = ConnectionId::adopt(e.id());
-
-        //  rdma_migrate_id blocks until every event for this id has been acked,
-        //  so release this one before moving the id off the listener's channel.
-        e.ack();
-
-        EventChannel ec = EventChannel::create();
-        if (rdma_migrate_id(client_conn_id.get(), ec.get()) != 0)
-        {
-            throw SessionError("PendingConnection::accept_on:rdma_migrate_id", errno);
-        }
-
-        return build_accepted(std::move(ec), std::move(client_conn_id), peer_info, config);
-    }
-
     PendingConnection PendingConnection::listen(const SessionConfig& config)
     {
         EventChannel ec = EventChannel::create();
@@ -401,23 +347,11 @@ namespace limen
         e.copy_private_data(&remote_raw, sizeof(remote_raw));
         ConnInfo peer_info = from_wire_format(remote_raw);
 
-        PendingConnection pc = build_accepted(std::move(ec), std::move(client_conn_id),
-                                              peer_info, config);
-        pc._listen_id = std::move(listen_id);
-        return pc;
-    }
-
-    //  everything from ibv_query_device through the pre-accept recv posts.
-    PendingConnection PendingConnection::build_accepted(EventChannel ec,
-                                                        ConnectionId client_conn_id,
-                                                        ConnInfo     peer_info,
-                                                        const SessionConfig& config)
-    {
         //  get device attributes
         ibv_device_attr device_attr{};
         if (ibv_query_device(client_conn_id.get()->verbs, &device_attr) != 0)
         {
-            throw SessionError("PendingConnection::build_accepted:ibv_query_device", errno);
+            throw SessionError("PendingConnection::listen:ibv_query_device", errno);
         }
 
 
@@ -435,7 +369,7 @@ namespace limen
         //  the pre-post loop indexes slots, so the region must hold them
         if (recv_wr > std::max(config.recv_slots, 1u))
         {
-            throw SessionError("PendingConnection::build_accepted:recv_wr exceeds recv_slots", EINVAL);
+            throw SessionError("PendingConnection::listen:recv_wr exceeds recv_slots", EINVAL);
         }
 
         //  device has now been decided, create the wrapper instances.
@@ -457,7 +391,7 @@ namespace limen
         //  create QP on adopted identifier
         if (rdma_create_qp(client_conn_id.get(), pd.get(), &qp_init_attr) != 0)
         {
-            throw SessionError("PendingConnection::build_accepted:rdma_create_qp", errno);
+            throw SessionError("PendingConnection::listen:rdma_create_qp", errno);
         }
 
         //  now we can fill _caps
@@ -474,12 +408,13 @@ namespace limen
                                config.recv_slot_size, recv_mr.get()->lkey);
             if (rc != 0)
             {
-                throw SessionError("PendingConnection::build_accepted:post_recv", rc);
+                throw SessionError("PendingConnection::listen:post_recv", rc);
             }
         }
 
         PendingConnection pc;
         pc._ec        = std::move(ec);
+        pc._listen_id = std::move(listen_id);
         pc._id        = std::move(client_conn_id);
         pc._pd        = std::move(pd);
         pc._recv_mr   = std::move(recv_mr);

@@ -118,6 +118,8 @@ struct MultiRunResult {
     std::vector<RunResult> runs;
     std::vector<double>    medians_ns;
     double                 noise_pct{0.0};
+    uint64_t               requested{0};   // runs asked for
+    uint64_t               dropped{0};     // runs that failed and were excluded
 };
 
 inline uint64_t time_ns()
@@ -152,5 +154,5 @@ void print_noise_floor(const MultiRunResult& m, bool time_units);
 int write_json(const char* path, const bench_parsed_args& args, const MultiRunResult& m, uint64_t clock_floor_ns);
 
 void print_schedule(const RunResult& r, uint64_t interval_ns);
-void sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_pct);
-void sweep_options(const bench_parsed_args& args, const char* peer);
+int  sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_pct);
+int  sweep_options(const bench_parsed_args& args, const char* peer);

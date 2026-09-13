@@ -6,18 +6,18 @@
  PCIe relax order: ON
  ibv_wr* API     : ON
  TX depth        : 1
- Mtu             : 1024[B]
+ Mtu             : 4096[B]
  Link type       : Ethernet
  GID index       : 3
  Max inline data : 236[B]
  rdma_cm QPs	 : OFF
  Data ex. method : Ethernet
 ---------------------------------------------------------------------------------------
- local address: LID 0000 QPN 0x0a39 PSN 0x6901a3
+ local address: LID 0000 QPN 0x1112 PSN 0x3a46d
  GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:02
- remote address: LID 0000 QPN 0x0268 PSN 0xfb33c9
+ remote address: LID 0000 QPN 0x08f0 PSN 0x83bc88
  GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
 ---------------------------------------------------------------------------------------
  #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
- 2       100000          1.11           9.57         1.23     	       1.46        	0.18   		2.40    		4.72   
+ 2       100000          1.12           9.29         1.23     	       1.43        	0.16   		2.37    		4.33   
 ---------------------------------------------------------------------------------------

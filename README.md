@@ -12,6 +12,10 @@
   C++20 &middot; libibverbs &middot; librdmacm &middot; CMake
 </p>
 
+<p align="center">
+  Mert Isik &middot; <a href="https://github.com/packageIncoming">github.com/packageIncoming</a> &middot; <a href="https://linkedin.com/in/mert-c-isik">linkedin.com/in/mert-c-isik</a> &middot; mertisik329@gmail.com
+</p>
+
 ---
 
 ## What Limen is
@@ -30,8 +34,8 @@ Limen implements that path directly against `libibverbs` and `librdmacm`:
   registered memory is pinned and the adapter holds its address
 - Poll-based and event-driven completion reaping, including the race that event-driven
   reaping has to close
-- Five tunable mechanisms on the send path: inline data, send signalling period, pipeline
-  depth, reaping mode, and CQ moderation
+- Tunable send path: inline data, send signalling period, pipeline depth, reaping mode,
+  and CQ moderation
 
 It runs on ConnectX-4 Lx over a 25G link. It is a learning artifact rather than a
 production library, and [what it leaves out](#what-is-left-out) is stated below.
@@ -45,7 +49,7 @@ libLimen
 ├── verbs.hpp/cpp     Context, ProtectionDomain, MemoryRegion,
 │                     CompletionQueue, CompletionChannel
 ├── cm.hpp/cpp        EventChannel, ConnectionId, Event
-└── session.hpp/cpp   PendingConnection -> Session
+└── session.hpp/cpp   Listener, PendingConnection -> Session
 
 app layer
 ├── harness.cpp       can_post, post_one, handle_wc, drain, reap
@@ -62,6 +66,14 @@ handle becomes copyable or a raw pointer escapes.
 valid, before `rdma_connect` or `rdma_accept`. `PendingConnection` is that window made
 into a type, with its own set of legal operations. `finish() &&` consumes it and moves
 every resource into a `Session`.
+
+### The listener
+
+`Listener` owns the bind and is separate from `Session`, because a server that accepts
+more than one connection has to stay bound between them. `accept_on()` takes a connection
+request off the listener and `rdma_migrate_id`s the accepted id onto its own event
+channel, so the `Session` still destroys everything it uses without taking the bind with
+it.
 
 ### Teardown order
 
@@ -80,7 +92,7 @@ posted - recv_count   < max_outstanding    // requests offered to the peer
 ```
 
 A send completion means the adapter has read the buffer, not that the peer replied. Those
-are different resources and conflating them is a defect this project shipped and then
+are different resources, and conflating them is a defect this project shipped and then
 found by measuring.
 
 ### Completion reaping
@@ -130,53 +142,60 @@ Quick check that the fabric is alive:
 | `latency` | closed loop, one operation outstanding, timed from issue. Service time. |
 | `response` | open loop at `--rate`, timed from the intended send time. Response time. |
 | `bandwidth` | sustained bytes over elapsed time with operations in flight. |
-| `sweep` | size sweep 64 B to 1 MB, plus an option matrix over the five send-path switches. |
+| `sweep` | size sweep 64 B to 1 MB, plus an option matrix over the send-path switches. |
 
-Every figure it reports carries its conditions and a measured run-to-run noise floor, and
-no difference smaller than that floor is claimed as a result. Headline numbers:
+Every figure carries its conditions and a measured run-to-run noise floor, and no
+difference smaller than that floor is marked significant.
 
 | | |
 |---|---|
-| median round trip, 2 B | 3.88 µs |
-| bandwidth, 64 KB | 18.6 Gbit/s |
-| versus `perftest` on the same card | 85% of its bandwidth, 1.6x its median latency |
+| median round trip, 2 B | 3.85 µs, noise floor 0.18% over 9 runs |
+| 64 KiB throughput, per direction | 17.7 to 19.7 Gbit/s over 9 runs, median 19.6 |
+| `ib_send_lat` median in the same session, doubled for `rtt_factor` | 2.46 µs |
 
-**Full methodology, every result table, and the conditions they were taken under are in
-[`docs/benchmark-report.md`](docs/benchmark-report.md).** Raw JSON for every run cited
-there is in [`docs/results/`](docs/results/).
+The throughput figure is per direction of a two-sided echo: every message counted also
+crossed the wire back as a reply of equal size. `ib_send_bw` is one way and reports
+22.55 Gbit/s in the same session. Those are not the same quantity and the report does not
+divide them.
 
-> The transport is hand-written. The measurement harness (`src/limen_bench.cpp`) was
-> written with AI assistance against a measurement design I specified: which quantities to
-> measure, how runs are repeated, how the noise floor gates a result, and what counts as a
-> finding. Every number in the report came off my hardware and I can defend how it was
-> produced.
+**Methods, every table, and the conditions everything was taken under are in
+[`docs/benchmark-report.md`](docs/benchmark-report.md).** Raw JSON for every run is in
+[`docs/results/`](docs/results/).
+
+> The transport is hand-written. The measurement harness (`src/limen_bench.cpp`), parts of
+> the debugging that followed, and this report were done with AI assistance against a
+> measurement design I specified: which quantities to measure, how runs are repeated, how
+> the noise floor gates a result, and what counts as a finding. Every number came off my
+> hardware and I can defend how it was produced, including the ones that turned out to be
+> wrong.
 
 ---
 
 ## What is left out
 
 - **`--op write` and `--op read` are parsed and ignored by the harness.** `post_one`
-  emits `IBV_WR_SEND` only. One-sided operations are implemented and exercised by
-  `limen_onesided`, but they are not benchmarked, so the two-sided versus one-sided row of
-  the option sweep is absent.
-- **Both endpoints share one host.** Two cards, two network namespaces, no switch, no
-  cross-host PCIe path, no fabric congestion. A two-machine rerun with no code changes is
-  the highest-value follow-up.
-- **Active MTU is 1024, not 4096.** That caps payload efficiency at about 92.6% of the
-  wire before anything else, and it applies equally to the reference tool.
-- **One timestamp per completion batch.** Under pipelining, every completion reaped in one
-  call shares the timestamp taken after that call returned, which biases the earliest
-  member upward. Mean batch size was 1.00 in every run cited, so it never fired. True
-  per-completion arrival needs `IBV_WC_EX_WITH_COMPLETION_TIMESTAMP`, which this transport
-  does not use.
+  emits `IBV_WR_SEND` only, so the two-sided versus one-sided row of the option sweep is
+  absent. One-sided operations are implemented and exercised by `limen_onesided`.
+- **Both endpoints share one host.** Two cards, two network namespaces, a DAC cable
+  between them. No switch, no cross-host PCIe path, no fabric congestion. A two-machine
+  rerun with no code changes is the highest-value follow-up.
 - **Single connection, single queue pair.** No shared receive queue, no atomics, no memory
   windows, no multi-connection event loop.
-- **No cycle counters, cache-miss profiling, or flame graphs.** The report establishes
-  *whether*, not *why*. Several of its observations are left without a mechanism rather
-  than given a guess.
-- **`verdict()` has no margin beyond the floor.** Any delta larger than the measured noise
-  floor is marked significant, so a result at 1.4x the floor is reported the same way as
-  one at 60x.
+- **Throughput cells in the size sweep run once each.** Four of fifteen sizes do not
+  reproduce between the two sweeps and are flagged in place in the report. The 64 KiB
+  figure above is a separate 9-run measurement.
+- **The harness cannot batch completions.** `drain` calls `ibv_poll_cq(cq, 1, &wc)`, one
+  per call, so the reported mean batch size of 1.00 is a property of the reap loop rather
+  than an observation about the workload.
+- **CQ moderation is implemented but not swept.** It is a flag, not a cell in the option
+  matrix.
+- **No cycle counters, cache profiling, or flame graphs.** The report establishes what,
+  not why. Observations are left without a mechanism rather than given a guess.
+- **`verdict()` has no margin beyond the floor.** A delta at 1.4x the floor is marked the
+  same way as one at 60x.
+- **`--mode response` does not flag saturation.** Past capacity it prints a 75 ms median
+  inside a percentile table formatted the same as a 3.9 µs one. The divergence is expected;
+  the presentation does not say so.
 
 ---
 

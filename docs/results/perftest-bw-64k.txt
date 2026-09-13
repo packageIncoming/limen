@@ -8,18 +8,18 @@
  ibv_wr* API     : ON
  TX depth        : 64
  CQ Moderation   : 1
- Mtu             : 1024[B]
+ Mtu             : 4096[B]
  Link type       : Ethernet
  GID index       : 3
  Max inline data : 0[B]
  rdma_cm QPs	 : OFF
  Data ex. method : Ethernet
 ---------------------------------------------------------------------------------------
- local address: LID 0000 QPN 0x0a3a PSN 0xd8f94
+ local address: LID 0000 QPN 0x1113 PSN 0x4cb731
  GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:02
- remote address: LID 0000 QPN 0x0269 PSN 0x711a98
+ remote address: LID 0000 QPN 0x08f1 PSN 0xb401c
  GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
 ---------------------------------------------------------------------------------------
  #bytes     #iterations    BW peak[MB/sec]    BW average[MB/sec]   MsgRate[Mpps]
- 65536      100000           0.00               2604.70		   0.041675
+ 65536      100000           0.00               2688.64		   0.043018
 ---------------------------------------------------------------------------------------

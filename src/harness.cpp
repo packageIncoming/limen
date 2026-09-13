@@ -5,6 +5,7 @@
 #include <format>
 #include <iostream>
 #include <sys/poll.h>
+#include <cinttypes>
 
 
 
@@ -102,24 +103,73 @@ int post_one(limen::Session &session, RunConfig &run_config, RunState &state)
     return 0;
 }
 
+int drain_async_events(limen::Session& session)
+{
+    rdma_cm_id* id = session.id();
+    if (id == nullptr || id->verbs == nullptr) return 0;
+
+    int drained = 0;
+    for (;;)
+    {
+        pollfd pfd{};
+        pfd.fd     = id->verbs->async_fd;
+        pfd.events = POLLIN;
+        if (poll(&pfd, 1, 0) <= 0) break;          // nothing queued, do not block
+
+        ibv_async_event ev{};
+        if (ibv_get_async_event(id->verbs, &ev) != 0) break;
+        std::fprintf(stderr, "          async event: %s\n",
+                     ibv_event_type_str(ev.event_type));
+        ibv_ack_async_event(&ev);
+        drained++;
+    }
+    return drained;
+}
+
 //  returns 0 on successful WC, 1 if the WC is not successful, -1 on unexpected error 
 int handle_wc(ibv_wc& wc, limen::Session &session, RunConfig &run_config, RunState &state)
 {
 
     if (wc.status != IBV_WC_SUCCESS)
     {
-        ibv_qp_init_attr qp_init_attr{};
-        ibv_qp_attr      qp_attr{};
-        //  if the status is not successful then WCs from this one onward
-        //  are bad & have to be flushed accordingly
-        std::cout << std::format("qp_num={:#08x}\n",session.qp()->qp_num);
-        std::cout << "\tnote: opcode and byte_len are not valid on an error completion\n";
-        ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &qp_init_attr);
-        std::cout << "qp_state_after_error: " << limen::qp_state_to_str(qp_attr.cur_qp_state)  << std::endl;
+        state.error_count++;
+
+        //  Only the FIRST error carries a cause. Once a QP moves to ERR every
+        //  remaining work request on it is reaped as IBV_WC_WR_FLUSH_ERR, which
+        //  means "the queue was torn down" and nothing else. Printing a block
+        //  per flushed WR produces hundreds of lines that all say the same
+        //  non-thing and bury the one line that matters, so the report is
+        //  emitted once, on stderr, next to the status string.
         if (state.first_error_status == IBV_WC_SUCCESS)
         {
-            std::fprintf(stderr, "wc error: %s (%d) wr_id=%#lx\n", ibv_wc_status_str(wc.status), wc.status, wc.wr_id);
+            ibv_qp_init_attr qp_init_attr{};
+            ibv_qp_attr      qp_attr{};
+            ibv_query_qp(session.qp(), &qp_attr, IBV_QP_STATE, &qp_init_attr);
+
             state.first_error_status = wc.status;
+            state.first_error_vendor = wc.vendor_err;
+            state.first_error_wr_id  = wc.wr_id;
+
+            std::fprintf(stderr,
+                "wc error: %s (%d) vendor_err=0x%x on %s wr_id=%#lx seq=%u\n"
+                "          qp=%#x qp_state=%s role=%s size=%" PRIu64 "\n"
+                "          posted=%" PRIu64 " covered=%" PRIu64 " recv=%" PRIu64
+                " owed=%" PRIu64 " pipeline=%" PRIu64 "\n"
+                "          (opcode and byte_len are not valid on an error completion)\n",
+                ibv_wc_status_str(wc.status), (int)wc.status, wc.vendor_err,
+                limen::Session::is_recv_wrid(wc.wr_id) ? "RECV" : "SEND",
+                wc.wr_id, limen::Session::remove_tags(wc.wr_id),
+                session.qp()->qp_num,
+                limen::qp_state_to_str(qp_attr.cur_qp_state).c_str(),
+                run_config.is_client ? "client" : "server",
+                run_config.message_size,
+                state.posted, state.covered, state.recv_count,
+                state.responses_owed, run_config.eff_pipeline);
+
+            //  the adapter usually files an async event for the same failure,
+            //  and it is more specific than the completion status
+            drain_async_events(session);
+            std::fflush(stderr);
         }
         return 1;
     }

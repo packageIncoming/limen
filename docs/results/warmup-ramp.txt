@@ -1,3 +1,4 @@
+role: client
 conditions:
   date            2026-09-12T18:57:41-0700
   os              Ubuntu 24.04.4 LTS
@@ -12,13 +13,22 @@ conditions:
   numa_node       -1
   clock_floor_ns  29
   mode            latency
-  message_size    4096
-  iterations      100
-  warmup          10
+  message_size    2
+  iterations      5000
+  warmup          0
   runs            1
   rate            0
-  inline          off
+  inline          requested
   signal_every    1
   pipeline        1
   reap            poll
 
+noise floor: n/a, 1 run
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 2.81   3.84   4.13   6.02   15.19 
+mean (us):    3.97   max (us): 35.19  stddev (us): 0.80  
+median/mean:  0.965
+
+json: wrote docs/results/warmup-ramp.json

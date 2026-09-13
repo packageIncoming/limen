@@ -57,6 +57,35 @@ struct GrantedCaps {
     uint8_t  responder_resources = 0;
 };
 
+// A bound, listening rdma_cm_id that outlives the sessions accepted through it.
+//
+// PendingConnection::listen() binds, listens, accepts once, and then drops the
+// listening id when the PendingConnection temporary dies inside finish(). A
+// server that accepts more than one connection therefore has no listener at all
+// between sessions, and every reconnect races the rebind. Listener holds the
+// bind for the life of the process; accept_on() takes one connection off it and
+// migrates the new id to its own event channel.
+class Listener {
+public:
+    Listener() noexcept = default;
+    ~Listener() noexcept = default;
+    Listener(const Listener&)            = delete;
+    Listener& operator=(const Listener&) = delete;
+    Listener(Listener&&) noexcept        = default;
+    Listener& operator=(Listener&&) noexcept = default;
+
+    //  rdma_bind_addr + rdma_listen. Throws SessionError.
+    static Listener bind(const SessionConfig& config);
+
+    EventChannel& ec()       noexcept { return _ec; }
+    rdma_cm_id*   id() const noexcept { return _id.get(); }
+    bool          valid() const noexcept { return _id.get() != nullptr; }
+
+private:
+    EventChannel _ec;
+    ConnectionId _id;
+};
+
 class Session {
 friend class PendingConnection;
 public:
@@ -72,6 +101,13 @@ public:
     //  create a session (client or server mode)
     static Session create_client_session(const char* peer, const SessionConfig& config);
     static Session create_server_session(const SessionConfig& config);
+    //  accept one connection on a listener that stays bound across sessions
+    static Session accept_on(Listener& listener, const SessionConfig& config);
+
+    //  true when a CM event (DISCONNECTED, TIMEWAIT_EXIT, ...) is already
+    //  queued. Non-blocking. The data loop calls this instead of inferring
+    //  peer departure from an idle timer.
+    bool cm_event_pending() noexcept { return _ec.get() != nullptr && _ec.wait(0) == 0; }
     //  close all the wrappers, in correct order
     int close() noexcept;
 
@@ -163,6 +199,11 @@ public:
     // recv posts.
     static PendingConnection listen(const SessionConfig&);
 
+    // Same as listen() from CONNECT_REQUEST onward, but takes the bind from a
+    // Listener that stays alive afterwards. The accepted id is migrated to a
+    // fresh event channel so the Session can own and close it independently.
+    static PendingConnection accept_on(Listener& listener, const SessionConfig&);
+
     // Pre-exchange access. Writes here are ordered before the peer can reach
     // the region, because the peer cannot reach ESTABLISHED until finish().
     ibv_mr*      recv_mr() const noexcept { return _recv_mr.get();}
@@ -194,6 +235,14 @@ public:
     int close() noexcept;
 
 private:
+    //  everything from ibv_query_device through the pre-accept recv posts.
+    //  shared by listen() and accept_on(), which differ only in where the
+    //  CONNECT_REQUEST came from and who owns the bind.
+    static PendingConnection build_accepted(EventChannel ec,
+                                            ConnectionId id,
+                                            ConnInfo     peer_info,
+                                            const SessionConfig& config);
+
     EventChannel    _ec;
     ConnectionId     _listen_id;   // server only; must outlive rdma_accept
     ConnectionId    _id;

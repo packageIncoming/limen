@@ -1,0 +1,34 @@
+role: client
+conditions:
+  date            2026-09-12T18:57:42-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    2
+  iterations      100000
+  warmup          5000
+  runs            9
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.18% over 9 of 9 runs (medians us: 3.848 3.849 3.852 3.852 3.854 3.852 3.847 3.853 3.849)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 2.86   3.85   4.04   5.85   9.45  
+mean (us):    3.92   max (us): 19.62  stddev (us): 0.42  
+median/mean:  0.981
+
+json: wrote docs/results/latency-2b.json

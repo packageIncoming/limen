@@ -1,5 +1,6 @@
+role: client
 conditions:
-  date            2026-09-12T18:57:41-0700
+  date            2026-09-12T18:57:59-0700
   os              Ubuntu 24.04.4 LTS
   kernel          Linux 7.0.0-31-generic
   cpus            8
@@ -10,15 +11,21 @@ conditions:
   clocksource     tsc
   device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
   numa_node       -1
-  clock_floor_ns  29
-  mode            latency
-  message_size    4096
-  iterations      100
-  warmup          10
-  runs            1
+  clock_floor_ns  15
+  mode            bandwidth
+  message_size    65536
+  iterations      100000
+  warmup          5000
+  runs            9
   rate            0
   inline          off
   signal_every    1
-  pipeline        1
+  pipeline        64
   reap            poll
 
+noise floor: 10.52% over 9 of 9 runs (elapsed s: 2.684 2.667 2.673 2.678 2.675 2.680 2.955 2.900 2.743)
+
+report: quantity=bandwidth
+bandwidth: 2278.18 MiB/s  19.111 Gbit/s  36451 msg/s  (size=65536 B, 2.743 s, 100000 ops)
+
+json: wrote docs/results/bandwidth-64k.json

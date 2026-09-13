@@ -457,13 +457,19 @@ RunResult run_once(const limen::SessionConfig& cfg, RunConfig& rc, const BenchPl
 
     limen::Session session;
 
-    for (int attempt = 0; attempt < 3; ++attempt)
+    //  a sweep opens ~84 sessions back to back. with a persistent listener on
+    //  the far side this loop should never fire, so a retry here is a signal
+    //  worth printing rather than swallowing.
+    const int MAX_ATTEMPTS = 5;
+    for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt)
     {
         try { session = limen::Session::create_client_session(peer, cfg); break; }
-        catch (const limen::SessionError&)
+        catch (const limen::SessionError& e)
         {
-            if (attempt == 2) throw;
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            if (attempt == MAX_ATTEMPTS - 1) throw;
+            std::fprintf(stderr, "connect attempt %d/%d failed: %s\n",
+                         attempt + 1, MAX_ATTEMPTS, e.what());
+            std::this_thread::sleep_for(std::chrono::milliseconds(100 << attempt));
         }
     }
 
@@ -654,6 +660,8 @@ MultiRunResult run_repeated(const limen::SessionConfig& cfg, RunConfig& rc, cons
 {
     MultiRunResult results{};
 
+    results.requested = runs;
+
     for (uint64_t i = 0; i < runs; i++)
     {
         RunConfig rc_run = rc;
@@ -663,12 +671,14 @@ MultiRunResult run_repeated(const limen::SessionConfig& cfg, RunConfig& rc, cons
         catch (const limen::SessionError& e)
         {
             std::fprintf(stderr, "run %" PRIu64 " failed: %s\n", i + 1, e.what());
+            results.dropped++;
             continue;
         }
 
         if (res.rc != 0)
         {
             std::fprintf(stderr, "run %" PRIu64 " exited %d\n", i + 1, res.rc);
+            results.dropped++;
             continue;
         }
 
@@ -693,23 +703,47 @@ MultiRunResult run_repeated(const limen::SessionConfig& cfg, RunConfig& rc, cons
 
 // ------------------------------------------------------------------ server
 
+//  empty CQ polls between CM event checks. see the comment in the loop below.
+static constexpr uint64_t CM_CHECK_SPINS = 4096;
+
 int serve_forever(const limen::SessionConfig& cfg, RunConfig& rc)
 {
+    //  bind and listen ONCE. PendingConnection::listen() drops the listening id
+    //  when its temporary dies inside finish(), so the old loop left the port
+    //  unbound for the whole life of every session plus the teardown after it.
+    //  A sweep opens ~84 sessions; every one of them raced a rebind.
+    limen::Listener listener = limen::Listener::bind(cfg);
+    std::printf("listening on port %u\n", (unsigned)cfg.tcp_port);
+    std::fflush(stdout);
+
+    //  the per-session reset baseline. serve_forever was handed a RunConfig by
+    //  reference and mutated it in place, so fields it did not reset (notably
+    //  response_size) leaked from one session into the next.
+    const RunConfig rc_template = rc;
+
+    uint64_t session_num = 0;
+
     while (true)
     {
         try
         {
-            limen::Session session = limen::Session::create_server_session(cfg);
+            limen::Session session = limen::Session::accept_on(listener, cfg);
             RunState state{};
 
+            rc = rc_template;
             rc.is_client        = false;
             rc.granted_send_wr  = session.max_send_wr();
             rc.eff_pipeline     = std::min<uint64_t>(cfg.send_slots, session.max_send_wr());
-            rc.eff_signal_every = std::min<uint64_t>(rc.eff_signal_every, rc.eff_pipeline);
+            rc.eff_signal_every = std::min<uint64_t>(rc_template.eff_signal_every, rc.eff_pipeline);
             rc.iterations       = UINT64_MAX;
-            rc.max_outstanding = 0;
+            rc.max_outstanding  = 0;
+            rc.response_size    = 0;
+
+            session_num++;
 
             auto last_progress = std::chrono::steady_clock::now();
+            const char* why = "disconnect";
+            uint64_t    idle_spins = 0;
 
             while (true)
             {
@@ -718,16 +752,44 @@ int serve_forever(const limen::SessionConfig& cfg, RunConfig& rc)
 
                 int n = reap(session, rc, state);
                 if (n < 0) return EXIT_VERB_ERROR;
-                if (n > 0) last_progress = std::chrono::steady_clock::now();
 
-                if (state.first_error_status != IBV_WC_SUCCESS) break;
-                if (state.timeout) break;
+                if (state.first_error_status != IBV_WC_SUCCESS) { why = "wc error"; break; }
+                if (state.timeout)                              { why = "cq timeout"; break; }
 
-                //  the client is gone or idle. tear down and go back to accepting.
-                if (std::chrono::steady_clock::now() - last_progress > std::chrono::seconds(2)) break;
+                if (n > 0)
+                {
+                    last_progress = std::chrono::steady_clock::now();
+                    idle_spins    = 0;
+                    continue;          // traffic is flowing; do not touch the CM fd
+                }
+
+                //  cm_event_pending() is a poll() syscall. Calling it on every
+                //  spin puts a syscall in the server's busy-wait path, which
+                //  shows up as added detection latency on EVERY inbound
+                //  message: measured at +1.3 us on a 3.9 us round trip.
+                //
+                //  A disconnect is always preceded by the completion queue
+                //  going quiet, so the check only has to run once reaps stop
+                //  landing. At ~50 ns per empty poll this is one syscall per
+                //  ~200 us of idle, and detection stays three orders of
+                //  magnitude faster than the 2 s timer it replaced.
+                if (++idle_spins < CM_CHECK_SPINS) continue;
+                idle_spins = 0;
+
+                if (session.cm_event_pending()) break;
+
+                //  backstop only: a wedged peer that never disconnects
+                if (std::chrono::steady_clock::now() - last_progress > std::chrono::seconds(60))
+                {
+                    why = "60s idle";
+                    break;
+                }
             }
 
-            std::printf("session closed, recv=%" PRIu64 "\n", state.recv_count);
+            std::printf("session %" PRIu64 " closed (%s), recv=%" PRIu64
+                        " send=%" PRIu64 " errors=%" PRIu64 "\n",
+                        session_num, why, state.recv_count,
+                        state.send_completions, state.error_count);
             std::fflush(stdout);
 
             try { session.wait_for_disconnect(2000); }
@@ -996,14 +1058,22 @@ void print_schedule(const RunResult& r, uint64_t interval_ns)
 
 void print_noise_floor(const MultiRunResult& m, bool time_units)
 {
+    //  a floor computed from the survivors of a partially failed set is not a
+    //  floor. If runs were dropped, the count goes on the same line as the
+    //  number so it cannot be quoted without it.
+    if (m.dropped > 0)
+        std::printf("WARNING: %" PRIu64 " of %" PRIu64 " runs failed and were excluded\n",
+                    m.dropped, m.requested);
+
     if (m.medians_ns.size() < 2)
     {
         std::printf("noise floor: n/a, %zu run\n\n", m.medians_ns.size());
         return;
     }
 
-    std::printf("noise floor: %.2f%% over %zu runs (%s:",
-                m.noise_pct, m.medians_ns.size(), time_units ? "medians us" : "elapsed s");
+    std::printf("noise floor: %.2f%% over %zu of %" PRIu64 " runs (%s:",
+                m.noise_pct, m.medians_ns.size(), m.requested,
+                time_units ? "medians us" : "elapsed s");
 
     for (double v : m.medians_ns)
         std::printf(" %.3f", time_units ? v / 1000.0 : v / 1e9);
@@ -1188,6 +1258,8 @@ struct CellResult {
     uint64_t runs_ok{0};
     uint64_t eff_pipeline{0};
     uint64_t eff_signal_every{0};
+    bool     inline_applied{false};
+    uint32_t granted_inline{0};
 };
 
 //  runs one configuration `runs` times. the median and p99 come from every
@@ -1213,6 +1285,8 @@ static CellResult run_cell_repeated(const bench_parsed_args& a, const char* peer
 
         out.eff_pipeline     = r.eff_pipeline;
         out.eff_signal_every = r.eff_signal_every;
+        out.inline_applied   = r.inline_applied;
+        out.granted_inline   = r.granted_inline;
     }
 
     if (medians.empty()) return out;
@@ -1230,9 +1304,10 @@ static CellResult run_cell_repeated(const bench_parsed_args& a, const char* peer
     return out;
 }
 
-void sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_pct)
+int sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_pct)
 {
     uint64_t bw_depth = args.pipeline > 1 ? args.pipeline : 64;
+    int      failures = 0;
 
     std::printf("size sweep, latency at depth 1 and bandwidth at depth %" PRIu64
                 " (latency noise floor %.2f%%)\n", bw_depth, noise_pct);
@@ -1253,7 +1328,17 @@ void sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_p
         lat.runs         = 1;
 
         RunResult rl = run_cell(lat, peer);
-        if (rl.rc != 0 || rl.samples.empty()) continue;
+        if (rl.rc != 0 || rl.samples.empty())
+        {
+            //  a skipped row used to vanish silently; a failed bandwidth cell
+            //  used to print 0.000 Gbit/s, which reads as a measurement
+            std::printf("%9" PRIu64 " %8" PRIu64 " %9s %9s %9s %9s %9s %11s %9s   "
+                        "LATENCY CELL FAILED rc=%d\n",
+                        size, iters, "-", "-", "-", "-", "-", "-", "-", rl.rc);
+            std::fflush(stdout);
+            failures++;
+            continue;
+        }
 
         //  bandwidth needs enough ops to fill and drain the pipeline many times
         //  over. the latency count bottoms out at 200, which is only three
@@ -1270,9 +1355,23 @@ void sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_p
 
         Stats st = compute(rl.samples);
 
-        double sec    = rb.elapsed_ns / 1e9;
-        double gbit_s = (rb.rc == 0 && sec > 0) ? (double)rb.bytes * 8.0 / sec / 1e9 : 0.0;
-        double msg_s  = (rb.rc == 0 && sec > 0) ? (double)rb.ops_recorded / sec      : 0.0;
+        double sec       = rb.elapsed_ns / 1e9;
+        bool   bw_ok     = (rb.rc == 0 && sec > 0);
+        double gbit_s    = bw_ok ? (double)rb.bytes * 8.0 / sec / 1e9 : 0.0;
+        double msg_s     = bw_ok ? (double)rb.ops_recorded / sec      : 0.0;
+
+        if (!bw_ok)
+        {
+            //  0.000 Gbit/s is not a measurement of anything. Say so.
+            failures++;
+            std::printf("%9" PRIu64 " %8" PRIu64 " %9" PRIu64 " %9.2f %9.2f %9.2f %9.2f "
+                        "%11s %9s   BANDWIDTH CELL FAILED rc=%d\n",
+                        size, iters, bw_iters,
+                        st.p50 / 1000.0, st.p90 / 1000.0, st.p99 / 1000.0, st.p999 / 1000.0,
+                        "-", "-", rb.rc);
+            std::fflush(stdout);
+            continue;
+        }
 
         std::printf("%9" PRIu64 " %8" PRIu64 " %9" PRIu64 " %9.2f %9.2f %9.2f %9.2f %11.3f %9.0f\n",
                     size, iters, bw_iters,
@@ -1280,7 +1379,19 @@ void sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_p
                     gbit_s, msg_s);
         std::fflush(stdout);
     }
+
+    if (failures > 0)
+        std::printf("\n%d of %d size-sweep cells failed. The rows above are not a complete\n"
+                    "sweep and the table must not be cited as one.\n",
+                    failures, 15 * 2);
+
+    //  the Gbit/s column counts client->server bytes only, but the server echoes
+    //  every message, so the wire carries both directions. perftest ib_send_bw is
+    //  one-way. The two numbers are not the same quantity.
+    std::printf("\nnote: bandwidth counts one direction of a two-sided echo. every message\n");
+    std::printf("      counted here also crossed the wire back as a reply of equal size.\n");
     std::printf("\n");
+    return failures;
 }
 
 static const char* verdict(double delta_pct, double noise_pct)
@@ -1289,7 +1400,7 @@ static const char* verdict(double delta_pct, double noise_pct)
     return delta_pct < 0 ? "SIGNIFICANT" : "SIGNIFICANT (worse)";
 }
 
-void sweep_options(const bench_parsed_args& args, const char* peer)
+int sweep_options(const bench_parsed_args& args, const char* peer)
 {
     struct Cell {
         const char* label;
@@ -1324,12 +1435,14 @@ void sweep_options(const bench_parsed_args& args, const char* peer)
     //  the floor is measured in the baseline configuration itself. a floor taken
     //  at depth 1 says nothing about the repeatability of a depth-16 median, and
     //  using one to gate the other makes every verdict below meaningless.
+    int failures = 0;
+
     CellResult base = run_cell_repeated(configure(cells[0]), peer, runs);
     if (!base.ok)
     {
         std::printf("option sweep at size=%" PRIu64 ": baseline failed, no verdicts\n\n",
                     args.message_size);
-        return;
+        return 1;
     }
 
     std::printf("option sweep at size=%" PRIu64 ", baseline depth %" PRIu64 "\n",
@@ -1352,7 +1465,33 @@ void sweep_options(const bench_parsed_args& args, const char* peer)
         if (!r.ok)
         {
             std::printf("%-18s %9s %10s %9s %9s %9s %9s  %s\n",
-                        c.label, "-", "-", "-", "-", "-", "-", "failed");
+                        c.label, "-", "-", "-", "-", "-", "-", "FAILED");
+            failures++;
+            continue;
+        }
+
+        //  a cell whose runs did not all survive is not comparable to one whose
+        //  runs did, and its "noise" is the spread of whatever was left
+        if (r.runs_ok < runs)
+        {
+            std::printf("  (%-16s %" PRIu64 " of %" PRIu64 " runs completed)\n",
+                        c.label, r.runs_ok, runs);
+            failures++;
+        }
+
+        //  run_once silently drops IBV_SEND_INLINE when the granted inline
+        //  capacity is smaller than the message. The cell then runs the
+        //  baseline configuration twice and its delta is a repeatability
+        //  measurement, not a result. Saying "within noise" there claims the
+        //  option was tested and did nothing.
+        if (c.inline_data && !r.inline_applied)
+        {
+            std::printf("%-18s %9.2f %10s %9.2f %8.2f%% %9" PRIu64 " %9" PRIu64
+                        "  not applied, granted %u B < %" PRIu64 " B\n",
+                        c.label, r.med_us, "-", r.p99_us, r.noise_pct,
+                        r.eff_pipeline, r.eff_signal_every,
+                        r.granted_inline, args.message_size);
+            std::fflush(stdout);
             continue;
         }
 
@@ -1375,7 +1514,11 @@ void sweep_options(const bench_parsed_args& args, const char* peer)
                 "not implemented, post_one emits IBV_WR_SEND only");
     std::printf("\nnote: pipeline=1 also takes the closed-loop branch in run_once, so depth\n");
     std::printf("      and code path are confounded in that row. its delta is queueing\n");
-    std::printf("      delay from 16 in flight, not a property of the send path.\n\n");
+    std::printf("      delay from 16 in flight, not a property of the send path.\n");
+    std::printf("note: every cell above is measured against the echo server. its reply\n");
+    std::printf("      depth bounds what any client-side option can show. check the\n");
+    std::printf("      server's startup 'echo:' line before reading a verdict.\n\n");
+    return failures;
 }
 
 
@@ -1401,6 +1544,14 @@ int main(int argc, char* argv[])
         BenchPlan plan{};
         resolve_plan(plan, args);
 
+        //  The server's echo depth is --pipeline, full stop. resolve_plan()
+        //  maps LATENCY (the default mode) to depth 1, so a server started as
+        //  `-s 1048576 --pipeline 64` with no --mode silently ran with
+        //  send_slots=1 and echoed one reply at a time. That server is the
+        //  ceiling on every pipelined and bandwidth figure the client measures
+        //  against it, and nothing in the output said so.
+        if (args.peer == nullptr && args.pipeline > 0) plan.depth = args.pipeline;
+
         limen::SessionConfig cfg = build_session_config(args, plan);
         RunConfig rc = make_run_config(args, cfg);
 
@@ -1413,6 +1564,10 @@ int main(int argc, char* argv[])
         if (args.peer == nullptr)
         {
             std::printf("role: server\n");
+            //  the echo path is half of every two-sided measurement the client
+            //  reports, so its capacity is printed, not assumed
+            std::printf("echo: send_slots=%u send_wr=%u recv_wr=%u slot_size=%u cqe=%d\n",
+                        cfg.send_slots, cfg.send_wr, cfg.recv_wr, cfg.recv_slot_size, cfg.cqe);
             std::fflush(stdout);
             return serve_forever(cfg, rc);
         }
@@ -1445,8 +1600,16 @@ int main(int argc, char* argv[])
             print_noise_floor(m, true);
             if (args.json_path) write_json(args.json_path, args, m, clock_floor_ns);
 
-            sweep_sizes(args, args.peer, m.noise_pct);
-            sweep_options(args, args.peer);
+            int failures = sweep_sizes(args, args.peer, m.noise_pct);
+            failures    += sweep_options(args, args.peer);
+
+            //  a sweep that lost cells exited 0 before this, so a partial table
+            //  looked identical to a complete one from the shell
+            if (failures > 0)
+            {
+                std::fprintf(stderr, "sweep incomplete: %d cells failed\n", failures);
+                return EXIT_COMPLETION_STATUS_ERROR;
+            }
             return EXIT_SUCCESS;
         }
 

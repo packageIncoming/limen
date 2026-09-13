@@ -58,6 +58,9 @@ struct RunState {
     bool timeout{false};
 
     ibv_wc_status first_error_status{IBV_WC_SUCCESS};
+    uint64_t      error_count{0};        // every error completion, not just the first
+    uint32_t      first_error_vendor{0};
+    uint64_t      first_error_wr_id{0};
 };
 
 
@@ -69,8 +72,14 @@ int post_send(
     ibv_qp* queue_pair, 
     uint32_t message_size,
     uint32_t lkey,
-    bool inline_enabled
+    bool inline_enabled,
+    bool fenced
 );
+
+//  Non-blocking drain of the verbs async event queue. A QP that goes fatal
+//  raises an async event that names the cause; nothing else in the data path
+//  reports it, and an undrained queue is itself a leak.
+int drain_async_events(limen::Session& session);
 
 bool can_post(RunConfig &run_config, RunState &state);
 

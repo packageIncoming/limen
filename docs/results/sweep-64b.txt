@@ -1,6 +1,6 @@
 role: client
 conditions:
-  date            2026-09-12T14:36:52-0700
+  date            2026-09-12T18:58:26-0700
   os              Ubuntu 24.04.4 LTS
   kernel          Linux 7.0.0-31-generic
   cpus            8
@@ -9,9 +9,9 @@ conditions:
   governor        performance
   cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
   clocksource     tsc
-  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=1024
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
   numa_node       -1
-  clock_floor_ns  19
+  clock_floor_ns  21
   mode            sweep
   message_size    64
   iterations      100000
@@ -23,38 +23,44 @@ conditions:
   pipeline        1
   reap            poll
 
-noise floor: 0.21% over 9 runs (medians us: 4.325 4.323 4.330 4.328 4.321 4.326 4.330 4.328 4.327)
+noise floor: 0.28% over 9 of 9 runs (medians us: 4.287 4.299 4.293 4.288 4.290 4.290 4.287 4.290 4.289)
 
 json: wrote docs/results/sweep-64b.json
-size sweep, latency at depth 1 and bandwidth at depth 64 (latency noise floor 0.21%)
+size sweep, latency at depth 1 and bandwidth at depth 64 (latency noise floor 0.28%)
   size(B)    iters  bw_iters   med(us)   p90(us)   p99(us) p99.9(us)      Gbit/s     msg/s
-       64   100000    100000      4.33      5.55      7.77     13.05       0.024     47567
-      128   100000    100000      4.51      5.71      7.84     11.63       0.526    513396
-      256   100000    100000      5.74      5.92      8.16     12.74       1.015    495847
-      512   100000    100000      6.03      6.30      8.93     14.64       1.906    465447
-     1024    65536     65536      6.82      7.82     10.48     14.57       3.343    408031
-     2048    32768     32768      7.63      8.72     11.91     16.76       5.501    335742
-     4096    16384     16384      9.40      9.70     15.96     23.20       8.305    253457
-     8192     8192      8192     12.34     12.80     22.20     32.07      10.644    162412
-    16384     4096      4096     17.63     19.14     33.85     47.51      13.468    102753
-    32768     2048      2048     28.96     33.01     50.10     63.17      16.308     62210
-    65536     1024      2000     52.02     60.52     77.85     93.96      18.369     35036
-   131072      512      2000     97.49    114.70    125.69    138.88      20.023     19095
-   262144      256      2000    189.24    209.58    233.93    258.86      20.435      9744
-   524288      200      2000    372.90    391.94    438.27    472.55      19.165      4569
-  1048576      200      2000    747.68    756.26    760.33    765.11      18.972      2262
+       64   100000    100000      4.29      5.48      7.63     11.61       1.503   2935466
+      128   100000    100000      4.45      5.70      7.75     11.06       3.000   2930103
+      256   100000    100000      5.72      5.90      8.47     17.75       5.940   2900581
+      512   100000    100000      6.03      6.26      8.80     11.94      11.424   2788989
+     1024    65536     65536      6.84      7.84     10.95     15.73      17.511   2137562
+     2048    32768     32768      8.35      8.64     13.38     19.52      13.304    811991
+     4096    16384     16384     11.60     11.88     19.58     24.64      19.779    603611
+     8192     8192      8192     15.86     16.08     26.32     33.52      17.023    259749
+    16384     4096      4096     24.75     25.18     40.83     45.01      19.441    148323
+    32768     2048      2048     39.39     40.05     57.72     60.80      19.747     75327
+    65536     1024      2000     61.27     77.41     96.44    109.94      19.985     38119
+   131072      512      2000    103.64    119.31    125.61    127.52      20.253     19315
+   262144      256      2000    191.06    211.95    229.06    238.83      19.772      9428
+   524288      200      2000    368.58    389.91    394.22    398.15      19.427      4632
+  1048576      200      2000    736.80    743.95    752.68    756.98      19.222      2291
+
+note: bandwidth counts one direction of a two-sided echo. every message
+      counted here also crossed the wire back as a reply of equal size.
 
 option sweep at size=64, baseline depth 16
-floor 0.07% over 9 runs, measured in the baseline configuration
+floor 1.25% over 9 runs, measured in the baseline configuration
 option               med(us)      delta   p99(us)     noise  eff_pipe   eff_sig  verdict
-baseline               31.16          -     43.83     0.07%        16         1  -
-inline=on              31.13      -0.1%     43.28     0.14%        16         1  within noise
-signal_every=16        31.14      -0.1%     43.94     0.12%        16        16  within noise
-pipeline=1              4.33     -86.1%      7.74     0.21%         1         1  SIGNIFICANT
-reap=event             30.66      -1.6%     44.46     0.70%        16         1  SIGNIFICANT
+baseline                7.43          -     12.63     1.25%        16         1  -
+inline=on               6.29     -15.4%     10.30     1.80%        16         1  SIGNIFICANT
+signal_every=16         8.12      +9.2%     12.99     0.74%        16        16  SIGNIFICANT (worse)
+pipeline=1              4.29     -42.3%      7.58     0.26%         1         1  SIGNIFICANT
+reap=event             10.33     +38.9%     14.60     0.44%        16         1  SIGNIFICANT (worse)
 op=write                   -          -         -         -         -         -  not implemented, post_one emits IBV_WR_SEND only
 
 note: pipeline=1 also takes the closed-loop branch in run_once, so depth
       and code path are confounded in that row. its delta is queueing
       delay from 16 in flight, not a property of the send path.
+note: every cell above is measured against the echo server. its reply
+      depth bounds what any client-side option can show. check the
+      server's startup 'echo:' line before reading a verdict.
 
