@@ -1,0 +1,1288 @@
+=== AB perftest -s 2 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep4s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x14e6 PSN 0x745136
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:02
+ remote address: LID 0000 QPN 0x0d35 PSN 0x7e041e
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 2       100000          1.11           10.70        1.24     	       1.48        	0.25   		2.52    		5.62   
+---------------------------------------------------------------------------------------
+=== AB previous build -s 2
+role: client
+conditions:
+  date            2026-09-28T22:29:03-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            latency
+  message_size    2
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.20% over 3 of 3 runs (medians us: 3.529 3.523 3.530)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 2.52   3.53   3.69   5.94   15.96 
+mean (us):    3.63   max (us): 38.88  stddev (us): 0.70  
+median/mean:  0.973
+
+=== AB this build -s 2
+role: client
+conditions:
+  date            2026-09-28T22:29:05-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  22
+  mode            latency
+  message_size    2
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.13% over 3 of 3 runs (medians us: 2.378 2.379 2.376)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 0.74   2.38   3.56   4.94   13.92 
+mean (us):    2.72   max (us): 27.87  stddev (us): 0.84  
+median/mean:  0.875
+
+=== AB perftest -s 64 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep4s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x14ed PSN 0xe96599
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:02
+ remote address: LID 0000 QPN 0x0d3c PSN 0x24b1b1
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 64      100000          1.23           16.54        1.61     	       1.72        	0.36   		2.96    		9.37   
+---------------------------------------------------------------------------------------
+=== AB previous build -s 64
+role: client
+conditions:
+  date            2026-09-28T22:29:07-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            latency
+  message_size    64
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.18% over 3 of 3 runs (medians us: 3.246 3.249 3.252)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 2.80   3.25   3.53   6.63   19.31 
+mean (us):    3.42   max (us): 44.51  stddev (us): 0.98  
+median/mean:  0.951
+
+=== AB this build -s 64
+role: client
+conditions:
+  date            2026-09-28T22:29:08-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            latency
+  message_size    64
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.03% over 3 of 3 runs (medians us: 3.230 3.229 3.229)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 2.42   3.23   3.74   5.50   15.10 
+mean (us):    3.35   max (us): 26.49  stddev (us): 0.72  
+median/mean:  0.963
+
+=== AB perftest -s 128 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep4s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x14f4 PSN 0xd920ca
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:02
+ remote address: LID 0000 QPN 0x0d43 PSN 0x460612
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 128     100000          1.34           17.75        1.62     	       1.70        	0.30   		2.82    		7.95   
+---------------------------------------------------------------------------------------
+=== AB previous build -s 128
+role: client
+conditions:
+  date            2026-09-28T22:29:11-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    128
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.09% over 3 of 3 runs (medians us: 3.256 3.256 3.259)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 2.96   3.26   3.48   6.14   18.87 
+mean (us):    3.41   max (us): 45.56  stddev (us): 0.87  
+median/mean:  0.956
+
+=== AB this build -s 128
+role: client
+conditions:
+  date            2026-09-28T22:29:13-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            latency
+  message_size    128
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.43% over 3 of 3 runs (medians us: 3.233 3.232 3.246)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 0.58   3.25   3.88   7.83   19.26 
+mean (us):    3.50   max (us): 45.41  stddev (us): 1.20  
+median/mean:  0.928
+
+=== AB perftest -s 256 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep4s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x14fb PSN 0xdf2a88
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:02
+ remote address: LID 0000 QPN 0x0d4a PSN 0x7da900
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 256     100000          2.00           22.62        3.31     	       3.18        	0.48   		5.45    		10.93  
+---------------------------------------------------------------------------------------
+=== AB previous build -s 256
+role: client
+conditions:
+  date            2026-09-28T22:29:16-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    256
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.14% over 3 of 3 runs (medians us: 5.902 5.908 5.900)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 4.18   5.90   6.69   9.95   20.30 
+mean (us):    6.14   max (us): 30.73  stddev (us): 1.01  
+median/mean:  0.960
+
+=== AB this build -s 256
+role: client
+conditions:
+  date            2026-09-28T22:29:18-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  30
+  mode            latency
+  message_size    256
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.60% over 3 of 3 runs (medians us: 4.671 4.699 4.692)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 1.09   4.69   6.38   10.27  21.39 
+mean (us):    5.19   max (us): 49.93  stddev (us): 1.39  
+median/mean:  0.904
+
+=== AB perftest -s 512 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep4s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x1502 PSN 0xee8da6
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:02
+ remote address: LID 0000 QPN 0x0d51 PSN 0x5771e6
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 512     100000          2.09           18.02        2.37     	       2.49        	0.37   		4.25    		9.83   
+---------------------------------------------------------------------------------------
+=== AB previous build -s 512
+role: client
+conditions:
+  date            2026-09-28T22:29:21-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    512
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.08% over 3 of 3 runs (medians us: 6.035 6.039 6.040)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 4.60   6.04   6.39   10.08  21.57 
+mean (us):    6.24   max (us): 51.28  stddev (us): 1.06  
+median/mean:  0.968
+
+=== AB this build -s 512
+role: client
+conditions:
+  date            2026-09-28T22:29:24-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            latency
+  message_size    512
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.06% over 3 of 3 runs (medians us: 4.828 4.828 4.825)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 2.85   4.83   5.96   8.43   20.66 
+mean (us):    5.12   max (us): 31.31  stddev (us): 0.99  
+median/mean:  0.943
+
+=== AB perftest -s 1024 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep4s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x1509 PSN 0x86e40f
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:02
+ remote address: LID 0000 QPN 0x0d58 PSN 0xba2e17
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 1024    100000          2.48           24.39        3.32     	       3.22        	0.41   		5.11    		10.40  
+---------------------------------------------------------------------------------------
+=== AB previous build -s 1024
+role: client
+conditions:
+  date            2026-09-28T22:29:27-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    1024
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.16% over 3 of 3 runs (medians us: 6.775 6.773 6.764)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 5.47   6.76   7.87   12.00  22.42 
+mean (us):    7.11   max (us): 27.63  stddev (us): 1.20  
+median/mean:  0.951
+
+=== AB this build -s 1024
+role: client
+conditions:
+  date            2026-09-28T22:29:30-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    1024
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.04% over 3 of 3 runs (medians us: 6.713 6.716 6.716)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 1.38   6.72   7.83   12.11  22.31 
+mean (us):    6.85   max (us): 38.64  stddev (us): 1.35  
+median/mean:  0.980
+
+=== AB perftest -s 4096 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep4s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x1510 PSN 0xf32672
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:02
+ remote address: LID 0000 QPN 0x0d5f PSN 0xf0d642
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 4096    100000          4.90           25.34        5.61     	       5.83        	0.82   		10.71   		16.41  
+---------------------------------------------------------------------------------------
+=== AB previous build -s 4096
+role: client
+conditions:
+  date            2026-09-28T22:29:34-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    4096
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.05% over 3 of 3 runs (medians us: 11.655 11.652 11.649)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 10.26  11.65  11.95  21.53  28.14 
+mean (us):    11.99  max (us): 44.60  stddev (us): 1.61  
+median/mean:  0.972
+
+=== AB this build -s 4096
+role: client
+conditions:
+  date            2026-09-28T22:29:38-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    4096
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.03% over 3 of 3 runs (medians us: 11.374 11.375 11.372)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 1.10   11.37  11.69  21.23  28.13 
+mean (us):    11.70  max (us): 47.75  stddev (us): 1.63  
+median/mean:  0.972
+
+=== AA perftest -s 2 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep1s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x0d66 PSN 0xa7ca1b
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+ remote address: LID 0000 QPN 0x0d67 PSN 0x42430a
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 2       100000          0.72           12.71        0.85     	       0.88        	0.21   		1.59    		4.07   
+---------------------------------------------------------------------------------------
+=== AA previous build -s 2
+role: client
+conditions:
+  date            2026-09-28T22:29:43-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    2
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.11% over 3 of 3 runs (medians us: 1.852 1.851 1.850)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 1.57   1.85   2.06   3.30   7.78  
+mean (us):    1.92   max (us): 23.93  stddev (us): 0.49  
+median/mean:  0.964
+
+=== AA this build -s 2
+role: client
+conditions:
+  date            2026-09-28T22:29:44-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    2
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.31% over 3 of 3 runs (medians us: 1.607 1.608 1.603)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 0.61   1.60   1.75   3.09   10.34 
+mean (us):    1.67   max (us): 25.23  stddev (us): 0.59  
+median/mean:  0.960
+
+=== AA perftest -s 64 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep1s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x0d75 PSN 0xf5ef6f
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+ remote address: LID 0000 QPN 0x0d74 PSN 0xd8f4e6
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 64      100000          0.83           1523.92      1.00     	       1.10        	4.40   		2.31    		7.35   
+---------------------------------------------------------------------------------------
+=== AA previous build -s 64
+role: client
+conditions:
+  date            2026-09-28T22:29:46-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  25
+  mode            latency
+  message_size    64
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.50% over 3 of 3 runs (medians us: 2.184 2.195 2.184)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 1.87   2.18   2.42   4.14   12.58 
+mean (us):    2.29   max (us): 51.78  stddev (us): 0.74  
+median/mean:  0.952
+
+=== AA this build -s 64
+role: client
+conditions:
+  date            2026-09-28T22:29:47-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            latency
+  message_size    64
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.21% over 3 of 3 runs (medians us: 1.929 1.927 1.925)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 0.79   1.93   2.09   3.36   9.28  
+mean (us):    1.99   max (us): 38.87  stddev (us): 0.57  
+median/mean:  0.965
+
+=== AA perftest -s 128 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep1s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x0d82 PSN 0x3f52fa
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+ remote address: LID 0000 QPN 0x0d83 PSN 0x6ae4f8
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 128     100000          0.89           18.27        1.01     	       1.05        	0.24   		1.74    		5.06   
+---------------------------------------------------------------------------------------
+=== AA previous build -s 128
+role: client
+conditions:
+  date            2026-09-28T22:29:49-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    128
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.31% over 3 of 3 runs (medians us: 2.251 2.244 2.250)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 1.98   2.25   2.45   3.90   12.60 
+mean (us):    2.33   max (us): 24.50  stddev (us): 0.60  
+median/mean:  0.964
+
+=== AA this build -s 128
+role: client
+conditions:
+  date            2026-09-28T22:29:51-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            latency
+  message_size    128
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.10% over 3 of 3 runs (medians us: 1.993 1.995 1.994)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 1.05   1.99   2.16   3.55   7.87  
+mean (us):    2.07   max (us): 22.85  stddev (us): 0.53  
+median/mean:  0.965
+
+=== AA perftest -s 256 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep1s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x0d90 PSN 0xc06f9e
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+ remote address: LID 0000 QPN 0x0d91 PSN 0xf767a6
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 256     100000          1.27           12.23        1.70     	       1.65        	0.30   		3.18    		6.11   
+---------------------------------------------------------------------------------------
+=== AA previous build -s 256
+role: client
+conditions:
+  date            2026-09-28T22:29:53-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    256
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.22% over 3 of 3 runs (medians us: 3.130 3.128 3.135)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 2.77   3.13   3.58   6.23   18.51 
+mean (us):    3.29   max (us): 30.46  stddev (us): 0.84  
+median/mean:  0.952
+
+=== AA this build -s 256
+role: client
+conditions:
+  date            2026-09-28T22:29:54-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            latency
+  message_size    256
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          requested
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.14% over 3 of 3 runs (medians us: 2.877 2.874 2.878)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 0.55   2.88   3.31   5.76   16.10 
+mean (us):    3.03   max (us): 25.46  stddev (us): 0.78  
+median/mean:  0.951
+
+=== AA perftest -s 512 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep1s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x0d9f PSN 0x964665
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+ remote address: LID 0000 QPN 0x0d9e PSN 0x15caf4
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 512     100000          1.25           10.23        1.38     	       1.43        	0.20   		2.36    		4.44   
+---------------------------------------------------------------------------------------
+=== AA previous build -s 512
+role: client
+conditions:
+  date            2026-09-28T22:29:57-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    512
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.52% over 3 of 3 runs (medians us: 3.073 3.089 3.080)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 2.76   3.08   3.37   5.65   15.75 
+mean (us):    3.22   max (us): 28.79  stddev (us): 0.77  
+median/mean:  0.958
+
+=== AA this build -s 512
+role: client
+conditions:
+  date            2026-09-28T22:29:58-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            latency
+  message_size    512
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.53% over 3 of 3 runs (medians us: 2.827 2.818 2.833)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 0.63   2.83   3.20   5.77   16.58 
+mean (us):    2.99   max (us): 34.11  stddev (us): 0.85  
+median/mean:  0.947
+
+=== AA perftest -s 1024 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep1s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x0dad PSN 0x786b8b
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+ remote address: LID 0000 QPN 0x0dac PSN 0x35624
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 1024    100000          1.47           15.81        1.59     	       1.66        	0.29   		2.93    		6.48   
+---------------------------------------------------------------------------------------
+=== AA previous build -s 1024
+role: client
+conditions:
+  date            2026-09-28T22:30:00-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            latency
+  message_size    1024
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 2.03% over 3 of 3 runs (medians us: 3.537 3.594 3.522)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 3.24   3.52   3.89   7.14   15.51 
+mean (us):    3.70   max (us): 41.10  stddev (us): 0.87  
+median/mean:  0.951
+
+=== AA this build -s 1024
+role: client
+conditions:
+  date            2026-09-28T22:30:02-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            latency
+  message_size    1024
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.31% over 3 of 3 runs (medians us: 3.251 3.241 3.249)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 1.02   3.25   3.57   6.47   14.16 
+mean (us):    3.39   max (us): 34.83  stddev (us): 0.76  
+median/mean:  0.958
+
+=== AA perftest -s 4096 -I 316
+---------------------------------------------------------------------------------------
+                    Send Latency Test
+ Dual-port       : OFF		Device         : rocep1s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 316[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x0dbb PSN 0x5bdf1b
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+ remote address: LID 0000 QPN 0x0dba PSN 0xf22fbe
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes #iterations    t_min[usec]    t_max[usec]  t_typical[usec]    t_avg[usec]    t_stdev[usec]   99% percentile[usec]   99.9% percentile[usec] 
+ 4096    100000          2.74           13.89        2.86     	       2.96        	0.46   		5.75    		10.34  
+---------------------------------------------------------------------------------------
+=== AA previous build -s 4096
+role: client
+conditions:
+  date            2026-09-28T22:30:05-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  19
+  mode            latency
+  message_size    4096
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.21% over 3 of 3 runs (medians us: 6.130 6.137 6.124)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 5.89   6.12   6.45   13.81  21.80 
+mean (us):    6.38   max (us): 33.46  stddev (us): 1.31  
+median/mean:  0.960
+
+=== AA this build -s 4096
+role: client
+conditions:
+  date            2026-09-28T22:30:07-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep1s0f0 fw=14.28.4512 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  21
+  mode            latency
+  message_size    4096
+  iterations      100000
+  warmup          5000
+  runs            3
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        1
+  reap            poll
+
+noise floor: 0.05% over 3 of 3 runs (medians us: 5.883 5.885 5.882)
+
+report: quantity=service_time
+percentile:   min    50     90     99     99.9
+latency (us): 2.82   5.88   6.17   13.16  21.89 
+mean (us):    6.11   max (us): 35.70  stddev (us): 1.29  
+median/mean:  0.962
+

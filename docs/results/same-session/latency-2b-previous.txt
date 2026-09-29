@@ -1,6 +1,7 @@
+=== previous build, --mode latency -s 2 --inline -n 100000 --warmup 5000 --runs 9
 role: client
 conditions:
-  date            2026-09-28T22:09:00-0700
+  date            2026-09-28T22:13:10-0700
   os              Ubuntu 24.04.4 LTS
   kernel          Linux 7.0.0-31-generic
   cpus            8
@@ -11,7 +12,7 @@ conditions:
   clocksource     tsc
   device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
   numa_node       -1
-  clock_floor_ns  29
+  clock_floor_ns  28
   mode            latency
   message_size    2
   iterations      100000
@@ -23,12 +24,11 @@ conditions:
   pipeline        1
   reap            poll
 
-noise floor: 0.42% over 9 of 9 runs (medians us: 2.379 2.372 2.373 2.372 2.369 2.377 2.370 2.370 2.369)
+noise floor: 0.18% over 9 of 9 runs (medians us: 3.858 3.859 3.860 3.857 3.853 3.854 3.857 3.860 3.855)
 
 report: quantity=service_time
 percentile:   min    50     90     99     99.9
-latency (us): 0.53   2.37   3.54   4.79   12.05 
-mean (us):    2.63   max (us): 25.53  stddev (us): 0.79  
-median/mean:  0.899
+latency (us): 2.88   3.85   4.02   6.30   16.01 
+mean (us):    3.95   max (us): 28.35  stddev (us): 0.70  
+median/mean:  0.976
 
-json: wrote docs/results/latency-2b.json

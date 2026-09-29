@@ -5,7 +5,7 @@
 #
 #   ./scripts/test.sh                                   build + static + local
 #   ./scripts/test.sh --dev rocep1s0f0 --gid 3 \
-#                     --peer 192.168.100.1 --peer-dev rocep4s0f0 \
+#                     --peer 192.168.100.2 --peer-dev rocep4s0f0 \
 #                     --peer-cmd "sudo limen-b"         full suite, one host
 #   ./scripts/test.sh --dev mlx5_0 --gid 3 \
 #                     --peer 10.0.0.2 --ssh you@10.0.0.2   full suite, two hosts
@@ -100,12 +100,18 @@ run() {
 #  --ssh       peer is a second machine
 #  neither     prompt the operator
 
+gid_arg() {
+  case "$(basename "$1")" in
+    limen_pingpong|limen_connect) [[ -n "$GID" ]] && echo "-g $GID" ;;
+  esac
+}
+
 start_peer() {
   local bin="$1" port="$2" extra="${3:-}" ready="${4:-role: server}"
   : >"$SRV_LOG"
   if [[ -n "$PEER_CMD" ]]; then
     # shellcheck disable=SC2086
-    $PEER_CMD "$bin" -d "$PEER_DEV" ${GID:+-g $GID} -t "$port" $extra >"$SRV_LOG" 2>&1 &
+    $PEER_CMD "$bin" -d "$PEER_DEV" $(gid_arg "$bin") -t "$port" $extra >"$SRV_LOG" 2>&1 &
     local i=0
     while [[ $i -lt 80 ]]; do
       grep -q "$ready" "$SRV_LOG" 2>/dev/null && break
@@ -114,11 +120,11 @@ start_peer() {
     sleep 0.3
   elif [[ -n "$SSH_PEER" ]]; then
     ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_PEER" \
-      "cd '$(pwd)' && nohup $bin -d $PEER_DEV ${GID:+-g $GID} -t $port $extra >/tmp/limen-srv.log 2>&1 & disown" \
+      "cd '$(pwd)' && nohup $bin -d $PEER_DEV $(gid_arg "$bin") -t $port $extra >/tmp/limen-srv.log 2>&1 & disown" \
       >/dev/null 2>&1 || true
     sleep 2
   else
-    echo "      on the peer:  $bin -d $PEER_DEV ${GID:+-g $GID} -t $port $extra" >&2
+    echo "      on the peer:  $bin -d $PEER_DEV $(gid_arg "$bin") -t $port $extra" >&2
     read -rp "      press enter once it is running... " >&2
   fi
 }
@@ -155,7 +161,7 @@ pair() {
   port=$(next_port)
   start_peer "$bin" "$port" "$sargs"
   # shellcheck disable=SC2086
-  timeout "$tmo" "$bin" -d "$DEV" ${GID:+-g $GID} -t "$port" $cargs "$PEER" 2>&1
+  timeout "$tmo" "$bin" -d "$DEV" $(gid_arg "$bin") -t "$port" $cargs "$PEER" 2>&1
   local rc=$?
   [[ -n "$PEER_CMD" ]] && sleep 0.5
   kill_peer "$bin" "$port"
@@ -259,13 +265,17 @@ t_copy_rejected() {
 
 t_no_raw_private_data() {
   hdr "static: Event exposes no raw private-data pointer"
-  compiles tests/no_raw_private_data.cpp
-  case $? in
-    0) ok "accessor returns a checked copy" ;;
-    2) sk "tests/no_raw_private_data.cpp not present" ;;
-    3) sk "libibverbs headers not installed" ;;
-    *) no "failed to compile — see $TMPDIR/sc.log" ;;
-  esac
+  [[ -f tests/no_raw_private_data.cpp ]] || { sk "tests/no_raw_private_data.cpp not present"; return; }
+  local log="$TMPDIR/rawpd.log"
+  if g++ -std=c++20 -Iinclude -fsyntax-only tests/no_raw_private_data.cpp >"$log" 2>&1; then
+    no "it compiled — Event exposes get()"
+  elif grep -qE 'infiniband/verbs\.h|rdma/rdma_cma\.h' "$log"; then
+    sk "libibverbs headers not installed"
+  elif grep -qE "has no member named .get" "$log"; then
+    ok "rejected: Event has no get()"
+  else
+    no "rejected, but not because get() is missing — see $log"
+  fi
 }
 
 t_no_raw_release() {
@@ -587,7 +597,7 @@ t_pingpong_completes() {
   [[ "$(exit_of "$PPRUN")" -ne 0 ]] && { no "exited $(exit_of "$PPRUN")"; return; }
   local s r
   s=$(num "$(grep -m1 -oE 'send_completions=[0-9]+' <<<"$out" || echo 0)")
-  r=$(num "$(grep -m1 -oE 'recv_count=[0-9]+'       <<<"$out" || echo 0)")
+  r=$(num "$(grep -m1 '^result:' <<<"$out" | grep -oE ' received=[0-9]+' || echo 0)")
   if [[ "${r:-0}" -eq 100 ]]; then
     ok "100 receives, ${s:-?} send completions"
   else
@@ -621,7 +631,7 @@ t_iteration_count_honoured() {
   hdr "transport: a non-default iteration count is honoured exactly"
   local out r
   out=$(pair "$PINGPONG_BIN" "-n 7" "-n 7" 40)
-  r=$(grep -m1 -oE 'recv_count=[0-9]+' <<<"$(body_of "$out")" | grep -oE '[0-9]+$' || true)
+  r=$(grep -m1 '^result:' <<<"$(body_of "$out")" | grep -oE ' received=[0-9]+' | grep -oE '[0-9]+$' || true)
   [[ "${r:-0}" -eq 7 ]] && ok "7 requested, 7 completed" || no "expected 7, got ${r:-none}"
 }
 
@@ -651,7 +661,7 @@ t_error_completion_fields() {
   out=$(pair "$PINGPONG_BIN" "--no-recv --rnr-retry 1" "--rnr-retry 1 -n 5" 45)
   body=$(body_of "$out")
   local errline
-  errline=$(grep -m1 -E 'status=[A-Z_]*ERR' <<<"$body" || true)
+  errline=$(grep -m1 -E '^wc error:' <<<"$body" || true)
   [[ -n "$errline" ]] || { no "no error completion line"; return; }
   if grep -qE 'opcode=|byte_len=' <<<"$errline"; then
     no "error completion reports opcode or byte_len, which are not valid"
@@ -724,8 +734,9 @@ t_receiver_passive() {
   out=$(pair "$ONESIDED_BIN" "--mode write -n 100" "--mode write -n 100" 60)
   log=$(server_log)
   [[ -z "$log" ]] && { sk "peer log unavailable"; return; }
-  c=$(grep -m1 -oE 'recv_count=[0-9]+' <<<"$log" | grep -oE '[0-9]+$' || echo 0)
-  [[ "${c:-0}" -eq 0 ]] && ok "peer saw no completions" \
+  c=$(grep -m1 '^result:' <<<"$log" | grep -oE ' received=[0-9]+' | grep -oE '[0-9]+$' || true)
+  [[ -z "$c" ]] && { no "peer printed no result line"; return; }
+  [[ "$c" -eq 0 ]] && ok "peer saw no completions" \
                         || no "peer reported ${c} completions for a one-sided write"
 }
 
@@ -754,7 +765,7 @@ t_write_with_imm() {
   [[ "$(exit_of "$out")" -ne 0 ]] && { no "exited $(exit_of "$out")"; return; }
   log=$(server_log)
   if [[ -z "$log" ]]; then sk "peer log unavailable"; return; fi
-  c=$(grep -m1 -oE 'recv_count=[0-9]+' <<<"$log" | grep -oE '[0-9]+$' || echo 0)
+  c=$(grep -m1 '^result:' <<<"$log" | grep -oE ' received=[0-9]+' | grep -oE '[0-9]+$' || echo 0)
   [[ "${c:-0}" -gt 0 ]] && ok "peer consumed ${c} receives" \
                         || no "peer saw no completions — immediate should consume a receive"
 }
@@ -763,7 +774,7 @@ t_read_depth_reported() {
   hdr "onesided: the effective outstanding-read limit is reported"
   local out
   out=$(pair "$ONESIDED_BIN" "--mode read -n 5" "--mode read -n 5" 40)
-  grep -qE '(initiator_depth|max_rd_atomic|read_depth)[^0-9]*[0-9]+' <<<"$(body_of "$out")" \
+  grep -qE '(max_outstanding_reads|initiator_depth|max_rd_atomic|read_depth)[^0-9]*[0-9]+' <<<"$(body_of "$out")" \
     && ok "reported" \
     || no "no outstanding-read limit in the output"
 }
@@ -803,7 +814,7 @@ t_inline_correct() {
 t_signal_every_reduces() {
   hdr "efficiency: --signal-every 16 reaps roughly a sixteenth of the sends"
   local out c
-  out=$(pair "$PINGPONG_BIN" "-n 1000" "--signal-every 16 -n 1000" 90)
+  out=$(pair "$PINGPONG_BIN" "--pipeline 16 -n 1000" "--signal-every 16 --pipeline 16 -n 1000" 90)
   c=$(grep -m1 -oE 'send_completions=[0-9]+' <<<"$(body_of "$out")" | grep -oE '[0-9]+$' || true)
   if   [[ -z "$c"           ]]; then no "no send_completions counter"
   elif [[ "$c" -gt 200      ]]; then no "${c} send completions for 1000 sends — signalling had no effect"
@@ -857,8 +868,8 @@ t_events_all_acked() {
   local out body rcv ack
   out=$(pair "$PINGPONG_BIN" "-n 500 --reap event" "--reap event -n 500" 90)
   body=$(body_of "$out")
-  rcv=$(grep -m1 -oE 'events_received=[0-9]+' <<<"$body" | grep -oE '[0-9]+$' || true)
-  ack=$(grep -m1 -oE 'events_acked=[0-9]+'    <<<"$body" | grep -oE '[0-9]+$' || true)
+  rcv=$(grep -m1 '^events:' <<<"$body" | grep -oE ' received=[0-9]+' | grep -oE '[0-9]+$' || true)
+  ack=$(grep -m1 '^events:' <<<"$body" | grep -oE ' acked=[0-9]+'    | grep -oE '[0-9]+$' || true)
   if   [[ -z "$rcv" || -z "$ack" ]]; then no "event counters not reported"
   elif [[ "$rcv" -ne "$ack"      ]]; then no "received ${rcv}, acknowledged ${ack} — destroy would block"
   else ok "${rcv} received, ${ack} acknowledged"; fi
@@ -922,7 +933,7 @@ t_option_matrix() {
   )
   local c out m bad=""
   for c in "${cells[@]}"; do
-    out=$(pair "$PINGPONG_BIN" "-n 300 ${c##*-s }" "$c -n 300" 90)
+    out=$(pair "$PINGPONG_BIN" "-n 300 $c" "$c -n 300" 90)
     m=$(grep -m1 -oE 'mismatches=[0-9]+' <<<"$(body_of "$out")" | grep -oE '[0-9]+$' || echo 1)
     if [[ "$(exit_of "$out")" -ne 0 || "${m:-1}" -ne 0 ]]; then bad="$bad [$c]"; fi
   done
@@ -1075,7 +1086,7 @@ t_bench_variance() {
   line=$(grep -m1 '^noise floor:' <<<"$(body_of "$BENCHRUN")" || true)
   [[ -n "$line" ]] || { no "no noise floor line"; return; }
   pct=$(grep -oE '[0-9]+\.[0-9]+%' <<<"$line" | head -1 | tr -d '%')
-  local runs; runs=$(grep -oE 'over [0-9]+ runs' <<<"$line" | grep -oE '[0-9]+' || echo 0)
+  local runs; runs=$(grep -oE 'over [0-9]+( of [0-9]+)? runs' <<<"$line" | grep -oE '[0-9]+' | head -1 || echo 0)
   if   [[ "${runs:-0}" -lt 2 ]]; then no "only ${runs} run contributed to the floor"
   elif [[ -z "$pct"          ]]; then no "floor not expressed as a percentage"
   else ok "${pct}% over ${runs} runs"; fi
@@ -1090,7 +1101,7 @@ t_bench_size_sweep() {
   local problems=""
   grep -qE '^[[:space:]]*64[[:space:]]'      <<<"$body" || problems="$problems 64B"
   grep -qE '^[[:space:]]*1048576[[:space:]]' <<<"$body" || problems="$problems 1MB"
-  local rows; rows=$(grep -cE '^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+\.[0-9]+' <<<"$body")
+  local rows; rows=$(grep -cE '^[[:space:]]*[0-9]+([[:space:]]+[0-9]+)+[[:space:]]+[0-9]+\.[0-9]+' <<<"$body")
   [[ "${rows:-0}" -lt 15 ]] && problems="$problems only-${rows}-rows"
   [[ -z "$problems" ]] && ok "${rows} sizes measured" || no "problems:$problems"
   BENCH_SWEEP_OUT="$body"
@@ -1148,7 +1159,7 @@ t_leaks_onesided() {
   command -v valgrind >/dev/null 2>&1 || { sk "valgrind not installed"; return; }
   local port; port=$(next_port)
   start_peer "$ONESIDED_BIN" "$port" "--mode write -n 20"
-  vg_check "onesided" "$ONESIDED_BIN" -d "$DEV" ${GID:+-g $GID} -t "$port" --mode write -n 20 "$PEER"
+  vg_check "onesided" "$ONESIDED_BIN" -d "$DEV" -t "$port" --mode write -n 20 "$PEER"
   kill_peer "$ONESIDED_BIN" "$port"
 }
 

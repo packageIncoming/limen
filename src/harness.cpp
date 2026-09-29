@@ -75,6 +75,7 @@ int post_one(limen::Session &session, RunConfig &run_config, RunState &state)
     bool signal_this_event =  (state.posted % run_config.eff_signal_every == 0 || (state.posted+1 == run_config.iterations));
     
     uint64_t len = run_config.response_size > 0 ? run_config.response_size : run_config.message_size;
+    bool inline_this = run_config.inline_ok || (run_config.auto_inline && len <= run_config.granted_inline);
 
     int rc = post_send(
         signal_this_event,
@@ -84,7 +85,7 @@ int post_one(limen::Session &session, RunConfig &run_config, RunState &state)
         session.qp(),
         (uint32_t)len,
         session.send_mr()->lkey,
-        run_config.inline_ok,
+        inline_this,
         run_config.fenced
     );
     if (rc != 0)
@@ -213,14 +214,61 @@ int drain(limen::Session &session, RunConfig &run_config, RunState &state)
 {
     int handled = 0;
 
-    //  poll->handle() to clear out what's present
-    ibv_wc wc;
-    while (ibv_poll_cq(session.cq(),1,&wc)>0) 
+    ibv_wc wc[16];
+    ibv_cq* rcq = session.cq();
+    ibv_cq* scq = session.send_cq();
+    for (;;)
     {
-        if (handle_wc(wc,session,run_config,state) <0) return -1;
-        handled++;
+        int got = 0;
+        if (scq != rcq)
+        {
+            int s = ibv_poll_cq(scq, 16, wc);
+            for (int i = 0; i < s; i++)
+                if (handle_wc(wc[i],session,run_config,state) <0) return -1;
+            if (s > 0) got += s;
+        }
+        int r = ibv_poll_cq(rcq, 1, wc);
+        if (r > 0)
+        {
+            if (handle_wc(wc[0],session,run_config,state) <0) return -1;
+            got += r;
+        }
+        if (got == 0) break;
+        handled += got;
     }
     return handled;
+}
+
+int poll_one(ibv_cq* cq, limen::Session &session, RunConfig &run_config, RunState &state)
+{
+    ibv_wc wc;
+    int got = ibv_poll_cq(cq, 1, &wc);
+    if (got <= 0) return got < 0 ? -1 : 0;
+    return handle_wc(wc, session, run_config, state) < 0 ? -1 : 1;
+}
+
+int reply_first(ibv_wc& wc, limen::Session &session, RunConfig &run_config, RunState &state)
+{
+    //  the reply leaves before any bookkeeping; the repost and the counters come after
+    run_config.response_size = wc.byte_len;
+    state.responses_owed++;
+    if (post_one(session, run_config, state) != 0) return -1;
+
+    uint32_t recv_slot_num = limen::Session::remove_tags(wc.wr_id);
+    if (run_config.verify_payload)
+    {
+        void* recv_addr = reinterpret_cast<void*>(
+            limen::slot_addr((uint64_t)(uintptr_t)session.recv_mr()->addr, recv_slot_num, run_config.message_size));
+        if (limen::verify_pattern(recv_addr, wc.byte_len, state.recv_count) > 0) state.mismatches++;
+    }
+    int rc = session.repost_recv(recv_slot_num);
+    if (rc != 0)
+    {
+        fprintf(stderr,"reply_first:post_recv %s (%s)\n",strerrorname_np(rc),strerror(rc));
+        return -1;
+    }
+    state.recv_count++;
+    return 0;
 }
 
 //  handles reaping cqe in event mode

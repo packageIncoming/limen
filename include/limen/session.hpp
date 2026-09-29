@@ -32,7 +32,8 @@ struct SessionConfig {
     uint32_t send_wr             = 1;       // send queue depth, clamped to max_qp_wr
     uint32_t send_slots          = 1;       // ring depth for buffer reuse (TRD-07 R4)
     uint32_t send_slot_size      = 0;       // bytes per send slot
-    int      cqe                 = 0;       // completion queue capacity, shared send+recv; 0 = device max
+    int      cqe                 = 0;       // receive CQ capacity; also holds send completions when send_cqe is 0; 0 = device max
+    int      send_cqe            = 0;
 
     //  MR permissions, split by region: minimum privilege per TRD-01 R7
     int recv_access_flags        = IBV_ACCESS_LOCAL_WRITE
@@ -46,6 +47,7 @@ struct SessionConfig {
     uint8_t  responder_resources = 1;       // inbound RDMA READs you will service
     uint8_t  retry_count         = 7;       // transport retries on timeout or NAK
     uint8_t  rnr_retry_count     = 7;       // RNR retries; configures the PEER's QP, set it on the receive-queue owner
+    uint8_t  min_rnr_timer       = 1;       // wait this side asks for in its RNR NAKs; 1 = 0.01 ms. 0 leaves the CM's value (655 ms)
     int      timeout_ms          = 5000;    // per CM step; -1 blocks
 };
 
@@ -117,7 +119,9 @@ public:
     ibv_mr*     send_mr() const noexcept {return _send_mr.get();}
     ibv_mr*      recv_mr() const noexcept {return _recv_mr.get();}
     ibv_pd*     pd() const noexcept {return _pd.get();}
-    ibv_cq*     cq() const noexcept{return _cq.get();}
+    ibv_cq*     cq() const noexcept{return _cq.get();}             //  receives (and sends, unless split)
+    ibv_cq*     send_cq() const noexcept{return _send_cq.get() ? _send_cq.get() : _cq.get();}
+    bool        split_cq() const noexcept{return _send_cq.get() != nullptr;}
     rdma_event_channel* ec() const noexcept {return _ec.get();}
 
     //  the CQ's completion channel, or nullptr when use_comp_channel was false.
@@ -162,6 +166,7 @@ private:
     //  hand-sequenced in close(), where the CQ must go first.
     CompletionChannel _comp_channel;
     CompletionQueue _cq;
+    CompletionQueue _send_cq;      //  empty unless config.send_cqe > 0
 
     bool          _has_peer = false;
     bool          _is_client = false;
@@ -210,6 +215,7 @@ public:
     ibv_mr*      send_mr() const noexcept {return _send_mr.get();}
     ibv_qp*      qp()      const noexcept {return _id.qp();}
     ibv_cq*      cq()      const noexcept {return _cq.get();}
+    ibv_cq*      send_cq() const noexcept {return _send_cq.get() ? _send_cq.get() : _cq.get();}
     ibv_context* verbs()   const noexcept {return _id.get()->verbs;}
     ibv_comp_channel* comp_channel() const noexcept {return _comp_channel.get();}
 
@@ -251,6 +257,7 @@ private:
     MemoryRegion    _send_mr;
     CompletionChannel _comp_channel;   // empty unless config.use_comp_channel
     CompletionQueue _cq;
+    CompletionQueue _send_cq;          // empty unless config.send_cqe > 0
     ConnInfo        _peer{};
     SessionConfig   _config{};
     GrantedCaps     _caps{};    //  holds the granted resource caps (like max_send_wr, max_recv_wr)

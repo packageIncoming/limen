@@ -1,6 +1,6 @@
 role: client
 conditions:
-  date            2026-09-12T18:57:41-0700
+  date            2026-09-28T22:09:00-0700
   os              Ubuntu 24.04.4 LTS
   kernel          Linux 7.0.0-31-generic
   cpus            8
@@ -11,7 +11,7 @@ conditions:
   clocksource     tsc
   device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
   numa_node       -1
-  clock_floor_ns  29
+  clock_floor_ns  30
   mode            latency
   message_size    2
   iterations      5000
@@ -27,8 +27,8 @@ noise floor: n/a, 1 run
 
 report: quantity=service_time
 percentile:   min    50     90     99     99.9
-latency (us): 2.81   3.84   4.13   6.02   15.19 
-mean (us):    3.97   max (us): 35.19  stddev (us): 0.80  
-median/mean:  0.965
+latency (us): 0.77   2.38   3.55   4.93   10.46 
+mean (us):    2.75   max (us): 19.64  stddev (us): 0.81  
+median/mean:  0.863
 
 json: wrote docs/results/warmup-ramp.json

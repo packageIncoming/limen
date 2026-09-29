@@ -1,0 +1,124 @@
+=== previous build, set 1, --mode bandwidth -s 65536 --pipeline 64 -n 100000 --warmup 5000 --runs 9
+role: client
+conditions:
+  date            2026-09-28T22:11:18-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            bandwidth
+  message_size    65536
+  iterations      100000
+  warmup          5000
+  runs            9
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 4.77% over 9 of 9 runs (elapsed s: 2.774 2.790 2.781 2.781 2.838 2.909 2.870 2.868 2.898)
+
+report: quantity=bandwidth
+bandwidth: 2156.72 MiB/s  18.092 Gbit/s  34507 msg/s  (size=65536 B, 2.898 s, 100000 ops)
+
+=== this build, set 1, --mode bandwidth -s 65536 --pipeline 64 -n 100000 --warmup 5000 --runs 9
+role: client
+conditions:
+  date            2026-09-28T22:11:46-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  27
+  mode            bandwidth
+  message_size    65536
+  iterations      100000
+  warmup          5000
+  runs            9
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 7.54% over 9 of 9 runs (elapsed s: 2.981 2.882 2.891 3.063 2.897 2.889 2.875 2.882 2.843)
+
+report: quantity=bandwidth
+bandwidth: 2198.36 MiB/s  18.441 Gbit/s  35174 msg/s  (size=65536 B, 2.843 s, 100000 ops)
+
+=== previous build, set 2, --mode bandwidth -s 65536 --pipeline 64 -n 100000 --warmup 5000 --runs 9
+role: client
+conditions:
+  date            2026-09-28T22:12:14-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            bandwidth
+  message_size    65536
+  iterations      100000
+  warmup          5000
+  runs            9
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 43.81% over 9 of 9 runs (elapsed s: 4.029 2.925 2.852 2.809 2.749 2.746 2.750 2.754 2.746)
+
+report: quantity=bandwidth
+bandwidth: 2275.86 MiB/s  19.091 Gbit/s  36414 msg/s  (size=65536 B, 2.746 s, 100000 ops)
+
+=== this build, set 2, --mode bandwidth -s 65536 --pipeline 64 -n 100000 --warmup 5000 --runs 9
+role: client
+conditions:
+  date            2026-09-28T22:12:43-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            bandwidth
+  message_size    65536
+  iterations      100000
+  warmup          5000
+  runs            9
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 1.22% over 9 of 9 runs (elapsed s: 2.749 2.752 2.749 2.751 2.757 2.752 2.782 2.750 2.757)
+
+report: quantity=bandwidth
+bandwidth: 2266.66 MiB/s  19.014 Gbit/s  36267 msg/s  (size=65536 B, 2.757 s, 100000 ops)
+

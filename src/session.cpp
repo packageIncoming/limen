@@ -91,6 +91,7 @@ namespace limen
     int Session::close() noexcept 
     {
         _id.destroy_qp();
+        _send_cq.close();
         _cq.close();
         _comp_channel.close();
         _send_mr.close();
@@ -113,6 +114,7 @@ namespace limen
         _send_mr = std::move(o._send_mr);
         _comp_channel = std::move(o._comp_channel);
         _cq = std::move(o._cq);
+        _send_cq = std::move(o._send_cq);
         _peer = o._peer;
         _has_peer = o._has_peer;
         _is_client = o._is_client;
@@ -166,6 +168,7 @@ namespace limen
     int PendingConnection::close() noexcept
     {
         _id.destroy_qp();
+        _send_cq.close();
         _cq.close();
         _comp_channel.close();   //  after the CQ; see Session::close()
         _send_mr.close();
@@ -187,6 +190,7 @@ namespace limen
         _send_mr   = std::move(o._send_mr);
         _comp_channel = std::move(o._comp_channel);
         _cq        = std::move(o._cq);
+        _send_cq   = std::move(o._send_cq);
         _peer      = o._peer;
         _config    = o._config;
         _caps      = o._caps;
@@ -206,6 +210,7 @@ namespace limen
         _send_mr   = std::move(o._send_mr);
         _comp_channel = std::move(o._comp_channel);
         _cq        = std::move(o._cq);
+        _send_cq   = std::move(o._send_cq);
         _peer      = o._peer;
         _config    = o._config;
         _caps      = o._caps;
@@ -279,8 +284,14 @@ namespace limen
             comp_channel = CompletionChannel(conn_id.get()->verbs);
         }
         CompletionQueue  cq      = CompletionQueue(conn_id.get()->verbs, cqe, nullptr, comp_channel.get(), 0);
+        //  a dedicated send CQ, sized by the caller to the signaled sends that can be outstanding
+        CompletionQueue  send_cq;
+        if (config.send_cqe > 0 && !config.use_comp_channel)
+        {
+            send_cq = CompletionQueue(conn_id.get()->verbs, std::min(config.send_cqe, device_attr.max_cqe), nullptr, nullptr, 0);
+        }
         GrantedCaps caps{};
-        qp_init_attr.send_cq = cq.get();
+        qp_init_attr.send_cq = send_cq.get() ? send_cq.get() : cq.get();
         qp_init_attr.recv_cq = cq.get();
 
         //  create QP
@@ -314,6 +325,7 @@ namespace limen
         pc._send_mr   = std::move(send_mr);
         pc._comp_channel = std::move(comp_channel);
         pc._cq        = std::move(cq);
+        pc._send_cq   = std::move(send_cq);
         pc._config    = config;
         pc._is_client = true;
         pc._has_peer  = false;   //  client learns the peer at ESTABLISHED
@@ -449,9 +461,15 @@ namespace limen
             comp_channel = CompletionChannel(client_conn_id.get()->verbs);
         }
         CompletionQueue  cq      = CompletionQueue(client_conn_id.get()->verbs, cqe, nullptr, comp_channel.get(), 0);
+        //  a dedicated send CQ, sized by the caller to the signaled sends that can be outstanding
+        CompletionQueue  send_cq;
+        if (config.send_cqe > 0 && !config.use_comp_channel)
+        {
+            send_cq = CompletionQueue(client_conn_id.get()->verbs, std::min(config.send_cqe, device_attr.max_cqe), nullptr, nullptr, 0);
+        }
         GrantedCaps caps{};
 
-        qp_init_attr.send_cq = cq.get();
+        qp_init_attr.send_cq = send_cq.get() ? send_cq.get() : cq.get();
         qp_init_attr.recv_cq = cq.get();
 
         //  create QP on adopted identifier
@@ -486,6 +504,7 @@ namespace limen
         pc._send_mr   = std::move(send_mr);
         pc._comp_channel = std::move(comp_channel);
         pc._cq        = std::move(cq);
+        pc._send_cq   = std::move(send_cq);
         pc._peer      = peer_info;
         pc._config    = config;
         pc._is_client = false;
@@ -535,6 +554,17 @@ namespace limen
                             "PendingConnection::finish:ESTABLISHED");
         }
 
+        if (_config.min_rnr_timer != 0)
+        {
+            ibv_qp_attr qa{};
+            qa.min_rnr_timer = _config.min_rnr_timer;
+            int rc = ibv_modify_qp(_id.qp(), &qa, IBV_QP_MIN_RNR_TIMER);
+            if (rc != 0)
+            {
+                throw SessionError("PendingConnection::finish:min_rnr_timer", rc);
+            }
+        }
+
         Session s;
         s._ec          = std::move(_ec);
         s._id          = std::move(_id);
@@ -543,6 +573,7 @@ namespace limen
         s._send_mr     = std::move(_send_mr);
         s._comp_channel = std::move(_comp_channel);
         s._cq          = std::move(_cq);
+        s._send_cq     = std::move(_send_cq);
         s._peer        = _peer;
         s._has_peer    = _has_peer;
         s._is_client   = _is_client;

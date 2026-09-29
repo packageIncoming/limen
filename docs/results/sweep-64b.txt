@@ -1,6 +1,6 @@
 role: client
 conditions:
-  date            2026-09-12T18:58:26-0700
+  date            2026-09-28T22:09:42-0700
   os              Ubuntu 24.04.4 LTS
   kernel          Linux 7.0.0-31-generic
   cpus            8
@@ -11,7 +11,7 @@ conditions:
   clocksource     tsc
   device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
   numa_node       -1
-  clock_floor_ns  21
+  clock_floor_ns  28
   mode            sweep
   message_size    64
   iterations      100000
@@ -23,38 +23,38 @@ conditions:
   pipeline        1
   reap            poll
 
-noise floor: 0.28% over 9 of 9 runs (medians us: 4.287 4.299 4.293 4.288 4.290 4.290 4.287 4.290 4.289)
+noise floor: 0.17% over 9 of 9 runs (medians us: 4.226 4.223 4.223 4.220 4.219 4.224 4.226 4.222 4.226)
 
 json: wrote docs/results/sweep-64b.json
-size sweep, latency at depth 1 and bandwidth at depth 64 (latency noise floor 0.28%)
+size sweep, latency at depth 1 and bandwidth at depth 64 (latency noise floor 0.17%)
   size(B)    iters  bw_iters   med(us)   p90(us)   p99(us) p99.9(us)      Gbit/s     msg/s
-       64   100000    100000      4.29      5.48      7.63     11.61       1.503   2935466
-      128   100000    100000      4.45      5.70      7.75     11.06       3.000   2930103
-      256   100000    100000      5.72      5.90      8.47     17.75       5.940   2900581
-      512   100000    100000      6.03      6.26      8.80     11.94      11.424   2788989
-     1024    65536     65536      6.84      7.84     10.95     15.73      17.511   2137562
-     2048    32768     32768      8.35      8.64     13.38     19.52      13.304    811991
-     4096    16384     16384     11.60     11.88     19.58     24.64      19.779    603611
-     8192     8192      8192     15.86     16.08     26.32     33.52      17.023    259749
-    16384     4096      4096     24.75     25.18     40.83     45.01      19.441    148323
-    32768     2048      2048     39.39     40.05     57.72     60.80      19.747     75327
-    65536     1024      2000     61.27     77.41     96.44    109.94      19.985     38119
-   131072      512      2000    103.64    119.31    125.61    127.52      20.253     19315
-   262144      256      2000    191.06    211.95    229.06    238.83      19.772      9428
-   524288      200      2000    368.58    389.91    394.22    398.15      19.427      4632
-  1048576      200      2000    736.80    743.95    752.68    756.98      19.222      2291
+       64   100000    100000      4.22      4.67      7.18     20.02       1.305   2548902
+      128   100000    100000      4.30      4.76      6.99     19.91       2.645   2583308
+      256   100000    100000      4.64      6.15     10.54     21.02       5.010   2446319
+      512   100000    100000      4.84      6.09      8.96     20.66       9.587   2340456
+     1024    65536     65536      6.73      7.85     11.90     22.16      13.961   1704255
+     2048    32768     32768      8.13      8.60     14.65     25.38      16.204    989020
+     4096    16384     16384     11.48     13.21     25.04     36.34      15.723    479831
+     8192     8192      8192     15.66     16.25     29.30     38.13      19.474    297148
+    16384     4096      4096     24.93     25.59     41.93     52.26      18.512    141233
+    32768     2048      2048     39.24     40.41     57.05     62.22      18.385     70134
+    65536     1024      2000     60.54     68.64     87.35    101.14      18.470     35228
+   131072      512      2000    103.90    122.12    142.56    148.55      18.798     17928
+   262144      256      2000    190.60    213.71    245.45    258.42      18.590      8864
+   524288      200      2000    373.67    401.71    450.19    461.84      17.959      4282
+  1048576      200      2000    740.58    784.35    877.78    923.87      17.515      2088
 
 note: bandwidth counts one direction of a two-sided echo. every message
       counted here also crossed the wire back as a reply of equal size.
 
 option sweep at size=64, baseline depth 16
-floor 1.25% over 9 runs, measured in the baseline configuration
+floor 5.20% over 9 runs, measured in the baseline configuration
 option               med(us)      delta   p99(us)     noise  eff_pipe   eff_sig  verdict
-baseline                7.43          -     12.63     1.25%        16         1  -
-inline=on               6.29     -15.4%     10.30     1.80%        16         1  SIGNIFICANT
-signal_every=16         8.12      +9.2%     12.99     0.74%        16        16  SIGNIFICANT (worse)
-pipeline=1              4.29     -42.3%      7.58     0.26%         1         1  SIGNIFICANT
-reap=event             10.33     +38.9%     14.60     0.44%        16         1  SIGNIFICANT (worse)
+baseline                6.49          -     13.94     5.20%        16         1  -
+inline=on               5.25     -19.0%     11.98     1.28%        16         1  SIGNIFICANT
+signal_every=16         6.43      -0.9%     12.19     1.13%        16        16  within noise
+pipeline=1              4.22     -34.9%      7.05     0.17%         1         1  SIGNIFICANT
+reap=event             10.44     +60.8%     15.80     1.47%        16         1  SIGNIFICANT (worse)
 op=write                   -          -         -         -         -         -  not implemented, post_one emits IBV_WR_SEND only
 
 note: pipeline=1 also takes the closed-loop branch in run_once, so depth

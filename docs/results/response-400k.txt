@@ -1,6 +1,6 @@
 role: client
 conditions:
-  date            2026-09-12T18:57:54-0700
+  date            2026-09-28T22:09:11-0700
   os              Ubuntu 24.04.4 LTS
   kernel          Linux 7.0.0-31-generic
   cpus            8
@@ -23,16 +23,16 @@ conditions:
   pipeline        1
   reap            poll
 
-noise floor: 1.22% over 9 of 9 runs (medians us: 74429.023 75236.666 75068.641 74404.729 74323.573 74455.381 74668.139 74642.084 75232.966)
+noise floor: 10.38% over 9 of 9 runs (medians us: 26082.366 25081.876 25341.361 26132.340 25838.157 27002.896 24310.720 26611.048 26986.606)
 
 report: quantity=response_time
 percentile:   min    50     90     99     99.9
-latency (us): 3.87   75232.97 135028.69 148516.82 149866.30
-mean (us):    75124.85 max (us): 150017.21 stddev (us): 43301.47
-median/mean:  1.001
+latency (us): 3.81   26986.61 48146.30 52949.42 53360.65
+mean (us):    26901.38 max (us): 53408.11 stddev (us): 15415.56
+median/mean:  1.003
 
-schedule: late=99999/100000 ops  p50=75229.155 us  p99=148512.964 us  max=150012.13 us
-          past a full 2.50 us slot: 99997 (100.00%)
+schedule: late=99999/100000 ops  p50=26984.025 us  p99=52946.781 us  max=53404.14 us
+          past a full 2.50 us slot: 99998 (100.00%)
 batching: max=1 mean=1.00 over 101000 reaps
 
 json: wrote docs/results/response-400k.json

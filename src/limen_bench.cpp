@@ -437,7 +437,18 @@ limen::SessionConfig build_session_config(const bench_parsed_args& args, const B
     cfg.send_slots     = (uint32_t)eff_pipeline;
     cfg.send_wr        = (uint32_t)std::max<uint64_t>(eff_pipeline * 4, 64);
     cfg.send_slot_size = (uint32_t)plan.message_size;
-    cfg.cqe            = (int)(cfg.send_wr + cfg.recv_wr + 16);
+    uint64_t sig = std::max<uint64_t>(1, std::min<uint64_t>(args.signal_every, eff_pipeline));
+    uint64_t signaled_outstanding = (eff_pipeline + sig - 1) / sig + (sig > 1 ? 1 : 0);
+    if (args.reap == reap_mode::POLL)
+    {
+        cfg.send_cqe = (int)signaled_outstanding;
+        cfg.cqe      = (int)(cfg.recv_wr + 16);
+    }
+    else
+    {
+        cfg.send_cqe = 0;                                         // one CQ on one completion channel
+        cfg.cqe      = (int)(cfg.send_wr + cfg.recv_wr + 16);
+    }
 
     cfg.retry_count         = 7;
     cfg.rnr_retry_count     = 7;
@@ -508,7 +519,43 @@ RunResult run_once(const limen::SessionConfig& cfg, RunConfig& rc, const BenchPl
     uint64_t t_start = 0;
     uint64_t t_end   = 0;
 
-    if (plan.depth == 1 && !plan.scheduled && plan.collect_samples)
+    if (plan.depth == 1 && !plan.scheduled && plan.collect_samples && session.split_cq())
+    {
+        if (post_one(session, rc, state) != 0) r.rc = EXIT_VERB_ERROR;
+        uint64_t prev = time_ns();
+        ibv_wc wc;
+        for (uint64_t i = 0; r.rc == 0 && i < total_ops; ++i)
+        {
+            if (i == plan.warmup) t_start = prev;
+
+            while (state.covered < state.posted && state.first_error_status == IBV_WC_SUCCESS)
+                if (poll_one(session.send_cq(), session, rc, state) < 0) { r.rc = EXIT_VERB_ERROR; break; }
+
+            uint64_t target_recv = state.recv_count + 1;
+            bool posted_next = false;
+            while (r.rc == 0 && state.recv_count < target_recv && state.first_error_status == IBV_WC_SUCCESS)
+            {
+                int n = ibv_poll_cq(session.cq(), 1, &wc);
+                if (n < 0) { r.rc = EXIT_VERB_ERROR; break; }
+                if (n == 0) continue;
+                if (!posted_next && wc.status == IBV_WC_SUCCESS && wc.opcode == IBV_WC_RECV && i + 1 < total_ops)
+                {
+                    if (post_one(session, rc, state) != 0) { r.rc = EXIT_VERB_ERROR; break; }
+                    posted_next = true;
+                }
+                if (handle_wc(wc, session, rc, state) < 0) { r.rc = EXIT_VERB_ERROR; break; }
+            }
+            if (r.rc != 0) break;
+            if (state.first_error_status != IBV_WC_SUCCESS) { r.rc = EXIT_COMPLETION_STATUS_ERROR; break; }
+            if (!posted_next && i + 1 < total_ops && post_one(session, rc, state) != 0) { r.rc = EXIT_VERB_ERROR; break; }
+
+            uint64_t now = time_ns();
+            if (i >= plan.warmup) r.samples.push_back(now - prev);
+            prev = now;
+        }
+        t_end = prev;
+    }
+    else if (plan.depth == 1 && !plan.scheduled && plan.collect_samples)
     {
         //  closed loop, one outstanding. service time.
         for (uint64_t i = 0; i < total_ops; ++i)
@@ -565,10 +612,6 @@ RunResult run_once(const limen::SessionConfig& cfg, RunConfig& rc, const BenchPl
                     //  the completion queue still needs draining.
                     if (now < intended) break;
 
-                    //  late. do NOT sleep, the lateness is the measurement.
-                    //  record the magnitude: a spin loop sampling every ~200 ns
-                    //  overshoots by nanoseconds on nearly every slot, which is
-                    //  not the same event as falling a whole interval behind.
                     if (now > intended)
                     {
                         uint64_t late = now - intended;
@@ -708,10 +751,6 @@ static constexpr uint64_t CM_CHECK_SPINS = 4096;
 
 int serve_forever(const limen::SessionConfig& cfg, RunConfig& rc)
 {
-    //  bind and listen ONCE. PendingConnection::listen() drops the listening id
-    //  when its temporary dies inside finish(), so the old loop left the port
-    //  unbound for the whole life of every session plus the teardown after it.
-    //  A sweep opens ~84 sessions; every one of them raced a rebind.
     limen::Listener listener = limen::Listener::bind(cfg);
     std::printf("listening on port %u\n", (unsigned)cfg.tcp_port);
     std::fflush(stdout);
@@ -738,6 +777,8 @@ int serve_forever(const limen::SessionConfig& cfg, RunConfig& rc)
             rc.iterations       = UINT64_MAX;
             rc.max_outstanding  = 0;
             rc.response_size    = 0;
+            rc.auto_inline      = true;     // replies that fit go inline, whatever --inline says
+            rc.granted_inline   = session.max_inline_data();
 
             session_num++;
 
@@ -745,13 +786,50 @@ int serve_forever(const limen::SessionConfig& cfg, RunConfig& rc)
             const char* why = "disconnect";
             uint64_t    idle_spins = 0;
 
+            const bool split = session.split_cq();
+
             while (true)
             {
-                while (can_post(rc, state))
-                    if (post_one(session, rc, state) != 0) return EXIT_VERB_ERROR;
-
-                int n = reap(session, rc, state);
-                if (n < 0) return EXIT_VERB_ERROR;
+                int n;
+                if (split)
+                {
+                    //  requests first; send completions in a batch when idle or when a reply is held back
+                    ibv_wc wc;
+                    n = ibv_poll_cq(session.cq(), 1, &wc);
+                    if (n < 0) return EXIT_VERB_ERROR;
+                    bool held = false;
+                    if (n > 0)
+                    {
+                        if (wc.status == IBV_WC_SUCCESS && wc.opcode == IBV_WC_RECV &&
+                            state.responses_owed == 0 && state.posted - state.covered < rc.eff_pipeline)
+                        {
+                            if (reply_first(wc, session, rc, state) < 0) return EXIT_VERB_ERROR;
+                        }
+                        else
+                        {
+                            if (handle_wc(wc, session, rc, state) < 0) return EXIT_VERB_ERROR;
+                            held = true;
+                        }
+                    }
+                    if (n == 0 || held)
+                    {
+                        ibv_wc swc[16];
+                        int got = ibv_poll_cq(session.send_cq(), 16, swc);
+                        if (got < 0) return EXIT_VERB_ERROR;
+                        for (int i = 0; i < got; i++)
+                            if (handle_wc(swc[i], session, rc, state) < 0) return EXIT_VERB_ERROR;
+                        n += got;
+                        while (can_post(rc, state))
+                            if (post_one(session, rc, state) != 0) return EXIT_VERB_ERROR;
+                    }
+                }
+                else
+                {
+                    while (can_post(rc, state))
+                        if (post_one(session, rc, state) != 0) return EXIT_VERB_ERROR;
+                    n = reap(session, rc, state);
+                    if (n < 0) return EXIT_VERB_ERROR;
+                }
 
                 if (state.first_error_status != IBV_WC_SUCCESS) { why = "wc error"; break; }
                 if (state.timeout)                              { why = "cq timeout"; break; }
@@ -763,16 +841,6 @@ int serve_forever(const limen::SessionConfig& cfg, RunConfig& rc)
                     continue;          // traffic is flowing; do not touch the CM fd
                 }
 
-                //  cm_event_pending() is a poll() syscall. Calling it on every
-                //  spin puts a syscall in the server's busy-wait path, which
-                //  shows up as added detection latency on EVERY inbound
-                //  message: measured at +1.3 us on a 3.9 us round trip.
-                //
-                //  A disconnect is always preceded by the completion queue
-                //  going quiet, so the check only has to run once reaps stop
-                //  landing. At ~50 ns per empty poll this is one syscall per
-                //  ~200 us of idle, and detection stays three orders of
-                //  magnitude faster than the 2 s timer it replaced.
                 if (++idle_spins < CM_CHECK_SPINS) continue;
                 idle_spins = 0;
 
@@ -1385,9 +1453,6 @@ int sweep_sizes(const bench_parsed_args& args, const char* peer, double noise_pc
                     "sweep and the table must not be cited as one.\n",
                     failures, 15 * 2);
 
-    //  the Gbit/s column counts client->server bytes only, but the server echoes
-    //  every message, so the wire carries both directions. perftest ib_send_bw is
-    //  one-way. The two numbers are not the same quantity.
     std::printf("\nnote: bandwidth counts one direction of a two-sided echo. every message\n");
     std::printf("      counted here also crossed the wire back as a reply of equal size.\n");
     std::printf("\n");
@@ -1479,11 +1544,6 @@ int sweep_options(const bench_parsed_args& args, const char* peer)
             failures++;
         }
 
-        //  run_once silently drops IBV_SEND_INLINE when the granted inline
-        //  capacity is smaller than the message. The cell then runs the
-        //  baseline configuration twice and its delta is a repeatability
-        //  measurement, not a result. Saying "within noise" there claims the
-        //  option was tested and did nothing.
         if (c.inline_data && !r.inline_applied)
         {
             std::printf("%-18s %9.2f %10s %9.2f %8.2f%% %9" PRIu64 " %9" PRIu64
@@ -1544,12 +1604,6 @@ int main(int argc, char* argv[])
         BenchPlan plan{};
         resolve_plan(plan, args);
 
-        //  The server's echo depth is --pipeline, full stop. resolve_plan()
-        //  maps LATENCY (the default mode) to depth 1, so a server started as
-        //  `-s 1048576 --pipeline 64` with no --mode silently ran with
-        //  send_slots=1 and echoed one reply at a time. That server is the
-        //  ceiling on every pipelined and bandwidth figure the client measures
-        //  against it, and nothing in the output said so.
         if (args.peer == nullptr && args.pipeline > 0) plan.depth = args.pipeline;
 
         limen::SessionConfig cfg = build_session_config(args, plan);
@@ -1566,8 +1620,8 @@ int main(int argc, char* argv[])
             std::printf("role: server\n");
             //  the echo path is half of every two-sided measurement the client
             //  reports, so its capacity is printed, not assumed
-            std::printf("echo: send_slots=%u send_wr=%u recv_wr=%u slot_size=%u cqe=%d\n",
-                        cfg.send_slots, cfg.send_wr, cfg.recv_wr, cfg.recv_slot_size, cfg.cqe);
+            std::printf("echo: send_slots=%u send_wr=%u recv_wr=%u slot_size=%u cqe=%d send_cqe=%d\n",
+                        cfg.send_slots, cfg.send_wr, cfg.recv_wr, cfg.recv_slot_size, cfg.cqe, cfg.send_cqe);
             std::fflush(stdout);
             return serve_forever(cfg, rc);
         }

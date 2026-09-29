@@ -25,6 +25,8 @@ struct RunConfig {
     uint32_t granted_send_wr;
 
     bool     inline_ok;
+    bool     auto_inline{false};       // inline any send that fits granted_inline (the echo server)
+    uint32_t granted_inline{0};
     bool     is_client;
     bool unsignaled;
     bool broken_arming_enabled;
@@ -86,6 +88,10 @@ bool can_post(RunConfig &run_config, RunState &state);
 int post_one(limen::Session &session, RunConfig &run_config, RunState &state);
 
 int handle_wc(ibv_wc& wc, limen::Session &session, RunConfig &run_config, RunState &state);
+
+int poll_one(ibv_cq* cq, limen::Session &session, RunConfig &run_config, RunState &state);
+
+int reply_first(ibv_wc& wc, limen::Session &session, RunConfig &run_config, RunState &state);
 
 int drain(limen::Session &session, RunConfig &run_config, RunState &state);
 

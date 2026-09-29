@@ -1,0 +1,248 @@
+=== previous build, set 1, --mode bandwidth -s 262144 --pipeline 64 -n 2000 --warmup 200 --runs 5
+role: client
+conditions:
+  date            2026-09-28T22:17:11-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            bandwidth
+  message_size    262144
+  iterations      2000
+  warmup          200
+  runs            5
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 2.88% over 5 of 5 runs (elapsed s: 0.211 0.212 0.210 0.213 0.216)
+
+report: quantity=bandwidth
+bandwidth: 2311.32 MiB/s  19.389 Gbit/s  9245 msg/s  (size=262144 B, 0.216 s, 2000 ops)
+
+=== this build, set 1, --mode bandwidth -s 262144 --pipeline 64 -n 2000 --warmup 200 --runs 5
+role: client
+conditions:
+  date            2026-09-28T22:17:13-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            bandwidth
+  message_size    262144
+  iterations      2000
+  warmup          200
+  runs            5
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 2.93% over 5 of 5 runs (elapsed s: 0.216 0.212 0.218 0.213 0.215)
+
+report: quantity=bandwidth
+bandwidth: 2325.68 MiB/s  19.509 Gbit/s  9303 msg/s  (size=262144 B, 0.215 s, 2000 ops)
+
+=== previous build, set 2, --mode bandwidth -s 262144 --pipeline 64 -n 2000 --warmup 200 --runs 5
+role: client
+conditions:
+  date            2026-09-28T22:17:15-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            bandwidth
+  message_size    262144
+  iterations      2000
+  warmup          200
+  runs            5
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 7.23% over 5 of 5 runs (elapsed s: 0.213 0.228 0.221 0.217 0.212)
+
+report: quantity=bandwidth
+bandwidth: 2353.76 MiB/s  19.745 Gbit/s  9415 msg/s  (size=262144 B, 0.212 s, 2000 ops)
+
+=== this build, set 2, --mode bandwidth -s 262144 --pipeline 64 -n 2000 --warmup 200 --runs 5
+role: client
+conditions:
+  date            2026-09-28T22:17:17-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            bandwidth
+  message_size    262144
+  iterations      2000
+  warmup          200
+  runs            5
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 8.54% over 5 of 5 runs (elapsed s: 0.211 0.221 0.217 0.230 0.220)
+
+report: quantity=bandwidth
+bandwidth: 2269.40 MiB/s  19.037 Gbit/s  9078 msg/s  (size=262144 B, 0.220 s, 2000 ops)
+
+=== previous build, set 1, --mode bandwidth -s 1048576 --pipeline 64 -n 2000 --warmup 200 --runs 5
+role: client
+conditions:
+  date            2026-09-28T22:17:19-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            bandwidth
+  message_size    1048576
+  iterations      2000
+  warmup          200
+  runs            5
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 22.75% over 5 of 5 runs (elapsed s: 0.858 0.924 0.905 1.070 0.904)
+
+report: quantity=bandwidth
+bandwidth: 2213.34 MiB/s  18.567 Gbit/s  2213 msg/s  (size=1048576 B, 0.904 s, 2000 ops)
+
+=== this build, set 1, --mode bandwidth -s 1048576 --pipeline 64 -n 2000 --warmup 200 --runs 5
+role: client
+conditions:
+  date            2026-09-28T22:17:25-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            bandwidth
+  message_size    1048576
+  iterations      2000
+  warmup          200
+  runs            5
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 4.80% over 5 of 5 runs (elapsed s: 0.923 0.913 0.899 0.880 0.882)
+
+report: quantity=bandwidth
+bandwidth: 2268.82 MiB/s  19.032 Gbit/s  2269 msg/s  (size=1048576 B, 0.882 s, 2000 ops)
+
+=== previous build, set 2, --mode bandwidth -s 1048576 --pipeline 64 -n 2000 --warmup 200 --runs 5
+role: client
+conditions:
+  date            2026-09-28T22:17:31-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  28
+  mode            bandwidth
+  message_size    1048576
+  iterations      2000
+  warmup          200
+  runs            5
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 4.11% over 5 of 5 runs (elapsed s: 0.891 0.908 0.885 0.871 0.903)
+
+report: quantity=bandwidth
+bandwidth: 2214.43 MiB/s  18.576 Gbit/s  2214 msg/s  (size=1048576 B, 0.903 s, 2000 ops)
+
+=== this build, set 2, --mode bandwidth -s 1048576 --pipeline 64 -n 2000 --warmup 200 --runs 5
+role: client
+conditions:
+  date            2026-09-28T22:17:36-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-31-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            bandwidth
+  message_size    1048576
+  iterations      2000
+  warmup          200
+  runs            5
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 1.56% over 5 of 5 runs (elapsed s: 0.892 0.902 0.899 0.888 0.891)
+
+report: quantity=bandwidth
+bandwidth: 2245.47 MiB/s  18.836 Gbit/s  2245 msg/s  (size=1048576 B, 0.891 s, 2000 ops)
+
