@@ -125,7 +125,7 @@ public:
     ibv_comp_channel* comp_channel() const noexcept {return _comp_channel.get();}
     int comp_channel_fd() const noexcept {return _comp_channel.fd();}
     int req_notify_cq(int solicited_only)   {return _cq.req_notify_cq(solicited_only);}
-    int get_cq_event()  noexcept {return _comp_channel.get_cq_event(nullptr, nullptr);}
+    int get_cq_event()  noexcept {_cq.inc_received_events();return _comp_channel.get_cq_event(nullptr, nullptr);}
     int ack_cq_events(int nevents) noexcept {return _cq.ack_cq_events(nevents);};
 
     //  replenish recvs

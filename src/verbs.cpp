@@ -237,6 +237,11 @@ limen::CompletionQueue::CompletionQueue(ibv_context* device_context, int cqe, vo
 int limen::CompletionQueue::close() noexcept
 {
     if (_h.get()) { trace_release("cq"); }
+    //  drain the completion queue before closing
+
+    int owed = _events_received - _events_acked;
+    if (owed > 0) ibv_ack_cq_events(_h.get(), owed);
+
     int rc = _h.close();
     if (rc != 0)
     {
@@ -258,6 +263,7 @@ int limen::CompletionQueue::ack_cq_events(int nevents) noexcept
     if (_h.get() == nullptr) return EINVAL;
     if (_h.get()->channel == nullptr) return ENOTSUP;
     ibv_ack_cq_events(_h.get(), nevents);
+    _events_acked+=nevents;
     return 0;
 }
 
@@ -313,10 +319,10 @@ limen::MemoryRegion::MemoryRegion(const ProtectionDomain& pd, std::size_t bytes,
     if (mr == nullptr) {
         int e = errno;
         free(_buf);
-        _buf = nullptr;
-        _buf_size = 0;
         std::fprintf(stderr, "ibv_reg_mr: %s (buf=%p bytes=%zu access=0x%x)\n",
                     strerror(e), _buf, bytes, access);
+        _buf = nullptr;
+        _buf_size = 0;
         throw VerbsError("ibv_reg_mr", e);
     }
     _h = ResourceHandle<ibv_mr, ibv_dereg_mr>(mr);

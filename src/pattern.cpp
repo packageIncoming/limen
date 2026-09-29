@@ -1,4 +1,3 @@
-#pragma once
 #include "limen/pattern.hpp"
 #include <cstdio>
 

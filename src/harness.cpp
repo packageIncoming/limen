@@ -2,8 +2,6 @@
 #include "limen/app/exit_codes.hpp"
 #include "limen/format.hpp"
 #include "limen/pattern.hpp"
-#include <format>
-#include <iostream>
 #include <sys/poll.h>
 #include <cinttypes>
 
@@ -220,7 +218,6 @@ int drain(limen::Session &session, RunConfig &run_config, RunState &state)
     while (ibv_poll_cq(session.cq(),1,&wc)>0) 
     {
         if (handle_wc(wc,session,run_config,state) <0) return -1;
-        // std::cout << limen::wc_to_str(wc) << std::endl;
         handled++;
     }
     return handled;
@@ -273,7 +270,6 @@ int reap_event(limen::Session &session, RunConfig &run_config, RunState &state)
     while (ibv_poll_cq(session.cq(),1,&wc)>0) 
     {
         if (handle_wc(wc,session,run_config,state) <0) return -1;
-        // std::cout << limen::wc_to_str(wc) << std::endl;
         handled++;
     }
     if (start_count == handled)

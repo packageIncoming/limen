@@ -121,9 +121,13 @@ public:
 
     int req_notify_cq(int solicited_only) noexcept;
     int ack_cq_events(int nevents) noexcept;
+    void inc_received_events() { _events_received++;}
+
   
 private:
-    limen::ResourceHandle<ibv_cq, ibv_destroy_cq> _h;               
+    limen::ResourceHandle<ibv_cq, ibv_destroy_cq> _h;        
+    int _events_received = 0;   //  NEEDS TO BE EXTERNALLY INCREMENTED WITH inc_received_events()
+    int _events_acked = 0;      //  INTERNALLY INCREMENTED ON ack_cq_events() CALL
 };
 
 
