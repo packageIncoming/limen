@@ -1,0 +1,42 @@
+ WARNING: BW peak won't be measured in this run.
+
+************************************
+* Waiting for client to connect... *
+************************************
+---------------------------------------------------------------------------------------
+                    Send Bidirectional BW Test
+ Dual-port       : OFF		Device         : rocep1s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 64
+ RX depth        : 512
+ CQ Moderation   : 1
+ Mtu             : 4096[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 0[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x0152 PSN 0x87c876
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+ remote address: LID 0000 QPN 0x0923 PSN 0x9c45b6
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:02
+---------------------------------------------------------------------------------------
+ #bytes     #iterations    BW peak[MB/sec]    BW average[MB/sec]   MsgRate[Mpps]
+ 65536      100000           0.00               4679.73		   0.074876
+---------------------------------------------------------------------------------------
+
+ Local results: 
+---------------------------------------------------------------------------------------
+ #bytes     #iterations    BW peak[MB/sec]    BW average[MB/sec]   MsgRate[Mpps]
+ 65536      100000           0.00               2339.86		   0.037438
+---------------------------------------------------------------------------------------
+
+ Remote results: 
+---------------------------------------------------------------------------------------
+ #bytes     #iterations    BW peak[MB/sec]    BW average[MB/sec]   MsgRate[Mpps]
+ 65536      100000           0.00               2339.87		   0.037438
+---------------------------------------------------------------------------------------

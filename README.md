@@ -170,11 +170,17 @@ difference smaller than that floor is marked significant.
 | `ib_send_lat` median in the same session, doubled for `rtt_factor` | 2.48 µs |
 | 64 KiB throughput, per direction | 17.6 to 18.9 Gbit/s over 9 runs, median 18.8 |
 | previous build, same session | 3.85 µs round trip, 18.5 and 19.1 Gbit/s in two 9-run sets |
+| bidirectional `ib_send_bw`, per direction, separate session | 19.8 and 19.9 Gbit/s in two 9-run sets, Limen 19.2 in both |
 
 The throughput figure is per direction of a two-sided echo: every message counted also
 crossed the wire back as a reply of equal size. `ib_send_bw` is one way and reports
 22.51 Gbit/s in the same session. Those are not the same quantity and the report does not
 divide them.
+
+`ib_send_bw -b` makes both ends send, which is the closer quantity. It was run next to
+`limen_bench` in a later session, 2026-10-08, and Limen is 3.0 to 3.4% under it per
+direction, which is larger than the noise floor of both sets. Those runs are kept apart
+from the suite's, in [`docs/results/bidir-2026-10-08/`](docs/results/bidir-2026-10-08/).
 
 Methods, every table, and the conditions everything was taken under are in
 [`docs/benchmark-report.md`](docs/benchmark-report.md). Raw JSON for every run is in

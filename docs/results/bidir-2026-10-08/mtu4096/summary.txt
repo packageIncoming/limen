@@ -1,0 +1,41 @@
+18:59:38  start, output in /home/mert/limen/docs/results/bidir-2026-10-08/mtu4096
+18:59:41  perftest-bidir-set1 run 1: client rc=0 server rc=0 BW average MiB/s: 4725.87 2362.96 2362.91
+18:59:44  perftest-bidir-set1 run 2: client rc=0 server rc=0 BW average MiB/s: 4743.36 2371.67 2371.68
+18:59:47  perftest-bidir-set1 run 3: client rc=0 server rc=0 BW average MiB/s: 4679.73 2339.87 2339.86
+18:59:50  perftest-bidir-set1 run 4: client rc=0 server rc=0 BW average MiB/s: 4704.62 2352.30 2352.32
+18:59:53  perftest-bidir-set1 run 5: client rc=0 server rc=0 BW average MiB/s: 4729.56 2364.80 2364.77
+18:59:56  perftest-bidir-set1 run 6: client rc=0 server rc=0 BW average MiB/s: 4736.68 2368.35 2368.33
+18:59:59  perftest-bidir-set1 run 7: client rc=0 server rc=0 BW average MiB/s: 4721.89 2360.93 2360.96
+19:00:01  perftest-bidir-set1 run 8: client rc=0 server rc=0 BW average MiB/s: 4746.19 2373.10 2373.09
+19:00:04  perftest-bidir-set1 run 9: client rc=0 server rc=0 BW average MiB/s: 4723.10 2361.53 2361.57
+19:00:31  limen-bw-set1: client rc=0 noise floor: 1.82% over 9 of 9 runs (elapsed s: 2.770 2.728 2.726 2.727 2.726 2.730 2.736 2.726 2.721)
+19:00:34  perftest-oneway-set1 run 1: client rc=0 server rc=0 BW average MiB/s: 2688.27
+19:00:37  perftest-oneway-set1 run 2: client rc=0 server rc=0 BW average MiB/s: 2638.27
+19:00:39  perftest-oneway-set1 run 3: client rc=0 server rc=0 BW average MiB/s: 2692.05
+19:00:42  perftest-oneway-set1 run 4: client rc=0 server rc=0 BW average MiB/s: 2689.58
+19:00:45  perftest-oneway-set1 run 5: client rc=0 server rc=0 BW average MiB/s: 2694.36
+19:00:47  perftest-oneway-set1 run 6: client rc=0 server rc=0 BW average MiB/s: 2692.72
+19:00:50  perftest-oneway-set1 run 7: client rc=0 server rc=0 BW average MiB/s: 2689.79
+19:00:52  perftest-oneway-set1 run 8: client rc=0 server rc=0 BW average MiB/s: 2693.17
+19:00:55  perftest-oneway-set1 run 9: client rc=0 server rc=0 BW average MiB/s: 2692.21
+19:00:58  perftest-bidir-set2 run 1: client rc=0 server rc=0 BW average MiB/s: 4742.19 2371.09 2371.10
+19:01:01  perftest-bidir-set2 run 2: client rc=0 server rc=0 BW average MiB/s: 4737.44 2368.73 2368.71
+19:01:04  perftest-bidir-set2 run 3: client rc=0 server rc=0 BW average MiB/s: 4776.01 2388.01 2388.00
+19:01:07  perftest-bidir-set2 run 4: client rc=0 server rc=0 BW average MiB/s: 4659.14 2329.55 2329.59
+19:01:10  perftest-bidir-set2 run 5: client rc=0 server rc=0 BW average MiB/s: 4740.99 2370.48 2370.50
+19:01:13  perftest-bidir-set2 run 6: client rc=0 server rc=0 BW average MiB/s: 4762.84 2381.44 2381.39
+19:01:16  perftest-bidir-set2 run 7: client rc=0 server rc=0 BW average MiB/s: 4758.12 2379.05 2379.07
+19:01:19  perftest-bidir-set2 run 8: client rc=0 server rc=0 BW average MiB/s: 4727.68 2363.90 2363.78
+19:01:22  perftest-bidir-set2 run 9: client rc=0 server rc=0 BW average MiB/s: 4743.86 2371.94 2371.93
+19:01:49  limen-bw-set2: client rc=0 noise floor: 2.41% over 9 of 9 runs (elapsed s: 2.726 2.729 2.730 2.719 2.785 2.722 2.736 2.729 2.724)
+19:01:51  perftest-oneway-set2 run 1: client rc=0 server rc=0 BW average MiB/s: 2693.31
+19:01:54  perftest-oneway-set2 run 2: client rc=0 server rc=0 BW average MiB/s: 2692.55
+19:01:57  perftest-oneway-set2 run 3: client rc=0 server rc=0 BW average MiB/s: 2689.91
+19:01:59  perftest-oneway-set2 run 4: client rc=0 server rc=0 BW average MiB/s: 2685.44
+19:02:02  perftest-oneway-set2 run 5: client rc=0 server rc=0 BW average MiB/s: 2693.78
+19:02:04  perftest-oneway-set2 run 6: client rc=0 server rc=0 BW average MiB/s: 2694.98
+19:02:07  perftest-oneway-set2 run 7: client rc=0 server rc=0 BW average MiB/s: 2680.70
+19:02:10  perftest-oneway-set2 run 8: client rc=0 server rc=0 BW average MiB/s: 2689.60
+19:02:12  perftest-oneway-set2 run 9: client rc=0 server rc=0 BW average MiB/s: 2687.20
+19:02:12  done
+19:02:12  restored: governor=powersave, C-states enabled

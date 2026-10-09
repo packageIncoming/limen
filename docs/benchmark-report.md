@@ -9,6 +9,11 @@ latency changes described [below](#where-the-latency-went). Raw JSON is in
 compared with the previous build, the previous build was run in the same session with the
 same arguments and pinning, and its logs are in [`results/same-session/`](results/same-session/).
 
+The [bidirectional perftest comparison](#bidirectional-perftest-64-kib-depth-64) is a
+separate session on 2026-10-08. It states its own conditions and its logs are in
+[`results/bidir-2026-10-08/`](results/bidir-2026-10-08/). Nothing from the suite run was
+rerun or replaced for it.
+
 ---
 
 ## Conditions
@@ -123,6 +128,12 @@ without `-b` is one way. The server posts receives and never replies. Limen's se
 replies to every message, so its throughput figures are per direction with an equal volume
 crossing back. The two throughput numbers are listed but not divided.
 
+With `-b` both ends send and both receive. The line `ib_send_bw` prints is then the sum of
+the two directions, because `print_full_bw_report` adds the remote side's figure to the
+local one, and `--report-both` prints each direction after it. One direction of that is the
+quantity Limen's figure can be set against. It was measured in a later session and is
+[below](#bidirectional-perftest-64-kib-depth-64).
+
 ---
 
 ## Results
@@ -203,6 +214,70 @@ p99.9 is higher.
 Both programs now use a send CQ sized to the one outstanding send at depth 1 and wait for
 the send completion before looking for the reply. perftest uses the `ibv_wr_*` API; Limen
 uses `ibv_post_send`.
+
+The throughput pair above is not like for like. A bidirectional `ib_send_bw` run from a
+later session is in the next section.
+
+### Bidirectional perftest, 64 KiB, depth 64
+
+A separate session on 2026-10-08, not part of the suite run. Same devices, GID index,
+pinning, governor, C-states, size, depth, and iteration count as the suite. The kernel is
+7.0.0-34 instead of 7.0.0-31, and both clients ran unprivileged inside the namespace
+instead of as root. `limen_bench` is a build of the commit that carries the suite results.
+
+Each set is 9 runs of `ib_send_bw -b --report-both`, then one 9-run `--mode bandwidth`
+measurement with the suite's arguments against a fresh echo server, then 9 runs of the
+suite's one-way `ib_send_bw`. Two sets, back to back. perftest gets a new process pair for
+every run. Logs, port counters, and both scripts are in
+[`results/bidir-2026-10-08/`](results/bidir-2026-10-08/).
+
+Median of 9 runs, Gbit/s, `active_mtu` 4096:
+
+| | set 1 | set 2 | range over 18 runs |
+|---|---:|---:|---:|
+| perftest `-b`, per direction | 19.82 | 19.89 | 19.54 to 20.03 |
+| Limen, per direction of the echo | 19.23 | 19.21 | 18.82 to 19.28 |
+| perftest, one way | 22.58 | 22.56 | 22.13 to 22.61 |
+
+Limen is 3.0% under bidirectional perftest in set 1 and 3.4% in set 2. The range of
+perftest's runs over their mean was 1.41% and 2.47%, and Limen's noise floor was 1.82% and
+2.41%, so the difference is larger than the floor in both sets. The two programs' ranges
+do not overlap. The slowest of perftest's 18 runs is faster than the fastest of Limen's 18.
+
+perftest's two directions agreed within 0.12 MiB/s in every run, and the line it prints by
+default, the sum, was 39.64 and 39.78 Gbit/s. The port counters on both cards show the same
+volume in each direction for both programs.
+
+perftest gives up about 12% per direction when the other end sends as well, 22.6 to
+19.9 Gbit/s. The suite's table sets 22.51 against 18.83, and most of that distance is
+perftest's own cost of carrying return traffic. Its one-way figure here reproduces the
+suite's 22.51. Limen's median is 2% above the suite's 18.83, on a different day and kernel.
+
+The same script at `active_mtu` 1024, earlier in that session:
+
+| | set 1 | set 2 | range over 18 runs |
+|---|---:|---:|---:|
+| perftest `-b`, per direction | 19.88 | 19.90 | 17.80 to 20.03 |
+| Limen, per direction of the echo | 19.60 | 19.57 | 18.02 to 19.64 |
+| perftest, one way | 22.52 | 22.54 | 22.03 to 22.58 |
+
+There Limen is 1.4% and 1.7% under. perftest's range was 1.45% and 11.35% and Limen's
+floor 2.07% and 8.70%, so neither difference is larger than the floor. perftest does not
+move with the MTU. Limen is 1.8 to 1.9% slower at 4096 than at 1024, which was not
+investigated.
+
+Bidirectional perftest is closer to what Limen measures than one-way perftest, but it is
+not the same measurement:
+
+- perftest has no warmup for SEND and times each side from its first post to its last send
+  completion. Limen discards 5,000 operations and stops the clock at the last reply.
+- perftest's two ends send independently. Limen's return traffic is an echo, posted only
+  after the request arrives.
+- perftest posts 512 receives on both ends. Limen's client posts 512 and its echo server
+  64. The second Limen set at MTU 1024 recorded 11 receiver-not-ready NAKs. No other phase
+  at either MTU recorded any.
+
+How much of the 3% those account for was not measured.
 
 ### By size, inline where it fits
 
@@ -520,6 +595,12 @@ arguments and pinning. The delay sweep, the patched perftest, the per-placement 
 the forced receiver-not-ready case come from the investigation and were measured with
 separate scripts; their raw logs are not in this repository.
 
+The bidirectional perftest figures are from a separate session on 2026-10-08, recorded in
+`results/bidir-2026-10-08/` together with `run.sh`, which produced them, and
+`summarize.py`, which computes the medians and ranges quoted above from the logs. The
+MTU 1024 runs started at 18:48 and the MTU 4096 runs at 18:59. No file from the suite run
+was changed.
+
 The 2026-09-12 report and its results are superseded and are in the git history.
 
 ---
@@ -586,6 +667,16 @@ exit code on that row, prints a count at the end, and exits non-zero. A run that
 inside a repeated measurement is excluded and the exclusion is printed next to the noise
 floor.
 
+The bidirectional comparison has its own script. It starts both ends itself, writes under
+`mtu<active_mtu>/` next to itself, refuses to overwrite a folder that already holds a run,
+and leaves the rest of `results/` alone. It does not set the MTU. About three minutes for
+two sets.
+
+```sh
+./docs/results/bidir-2026-10-08/run.sh
+python3 docs/results/bidir-2026-10-08/summarize.py docs/results/bidir-2026-10-08/mtu4096
+```
+
 ---
 
 ## Notes
@@ -594,6 +685,12 @@ The scripts encode one development environment. Device names (`rocep1s0f0`,
 `rocep4s0f0`), the peer address `192.168.100.1`, GID index 3, and the namespace wrapper
 `limen-b` are defaults matching the machine this was built on. They are environment
 variables for a reason.
+
+The bidirectional script does not use `sudo limen-b`. It enters the namespace through
+`limen-b-user` and tunes the CPU through `limen-tune`, two root-owned wrappers in
+`/usr/local/sbin` that sudo runs without a password on this machine. The first runs a
+command inside `limen-b` as the calling user. The second switches the governor and the
+C-states between benchmark settings and normal.
 
 `rdma system show` must report `netns exclusive` for the namespace split to work. If it
 reports `shared`, `rdma_bind_addr` fails with `EADDRNOTAVAIL` and only `limen_bench`

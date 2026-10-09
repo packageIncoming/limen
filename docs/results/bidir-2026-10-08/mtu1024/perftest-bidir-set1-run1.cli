@@ -1,0 +1,38 @@
+ WARNING: BW peak won't be measured in this run.
+---------------------------------------------------------------------------------------
+                    Send Bidirectional BW Test
+ Dual-port       : OFF		Device         : rocep4s0f0
+ Number of qps   : 1		Transport type : IB
+ Connection type : RC		Using SRQ      : OFF
+ PCIe relax order: ON
+ ibv_wr* API     : ON
+ TX depth        : 64
+ RX depth        : 512
+ CQ Moderation   : 1
+ Mtu             : 1024[B]
+ Link type       : Ethernet
+ GID index       : 3
+ Max inline data : 0[B]
+ rdma_cm QPs	 : OFF
+ Data ex. method : Ethernet
+---------------------------------------------------------------------------------------
+ local address: LID 0000 QPN 0x08eb PSN 0xc7ff53
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:02
+ remote address: LID 0000 QPN 0x011a PSN 0xde954f
+ GID: 00:00:00:00:00:00:00:00:00:00:255:255:192:168:100:01
+---------------------------------------------------------------------------------------
+ #bytes     #iterations    BW peak[MB/sec]    BW average[MB/sec]   MsgRate[Mpps]
+ 65536      100000           0.00               4689.13		   0.075026
+---------------------------------------------------------------------------------------
+
+ Local results: 
+---------------------------------------------------------------------------------------
+ #bytes     #iterations    BW peak[MB/sec]    BW average[MB/sec]   MsgRate[Mpps]
+ 65536      100000           0.00               2344.47		   0.037512
+---------------------------------------------------------------------------------------
+
+ Remote results: 
+---------------------------------------------------------------------------------------
+ #bytes     #iterations    BW peak[MB/sec]    BW average[MB/sec]   MsgRate[Mpps]
+ 65536      100000           0.00               2344.66		   0.037514
+---------------------------------------------------------------------------------------

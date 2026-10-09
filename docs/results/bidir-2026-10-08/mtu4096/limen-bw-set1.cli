@@ -1,0 +1,31 @@
+role: client
+conditions:
+  date            2026-10-08T19:00:05-0700
+  os              Ubuntu 24.04.4 LTS
+  kernel          Linux 7.0.0-34-generic
+  cpus            8
+  affinity        2
+  smt             on, siblings 2,6
+  governor        performance
+  cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off
+  clocksource     tsc
+  device          rocep4s0f0 fw=14.27.6122 max_qp_wr=8192 max_cqe=4194303 active_mtu=4096
+  numa_node       -1
+  clock_floor_ns  29
+  mode            bandwidth
+  message_size    65536
+  iterations      100000
+  warmup          5000
+  runs            9
+  rate            0
+  inline          off
+  signal_every    1
+  pipeline        64
+  reap            poll
+
+noise floor: 1.82% over 9 of 9 runs (elapsed s: 2.770 2.728 2.726 2.727 2.726 2.730 2.736 2.726 2.721)
+
+report: quantity=bandwidth
+bandwidth: 2297.27 MiB/s  19.271 Gbit/s  36756 msg/s  (size=65536 B, 2.721 s, 100000 ops)
+
+json: wrote /home/mert/limen/docs/results/bidir-2026-10-08/mtu4096/limen-bw-set1.json

@@ -1,0 +1,12 @@
+role: server
+echo: send_slots=64 send_wr=256 recv_wr=64 slot_size=1048576 cqe=80 send_cqe=64
+listening on port 18515
+session 1 closed (disconnect), recv=105000 send=105000 errors=0
+session 2 closed (disconnect), recv=105000 send=105000 errors=0
+session 3 closed (disconnect), recv=105000 send=105000 errors=0
+session 4 closed (disconnect), recv=105000 send=105000 errors=0
+session 5 closed (disconnect), recv=105000 send=105000 errors=0
+session 6 closed (disconnect), recv=105000 send=105000 errors=0
+session 7 closed (disconnect), recv=105000 send=105000 errors=0
+session 8 closed (disconnect), recv=105000 send=105000 errors=0
+session 9 closed (disconnect), recv=105000 send=105000 errors=0

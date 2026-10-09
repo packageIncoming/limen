@@ -1,0 +1,12 @@
+date            2026-10-08T18:59:38-0700
+os / kernel     Ubuntu 24.04.4 LTS, Linux 7.0.0-34-generic
+perftest        Version: 6.20
+limen           a452091 2026-09-28 23:26:19 -0700
+pinning         server cpu1 (core 1), client cpu2 (core 2)
+governor        performance
+cstates         POLL:off C1:off C1E:off C3:off C6:off C7s:off C8:off 
+clocksource     tsc
+server card     rocep1s0f0, active_mtu 4096, netdev mtu 4200
+client card     rocep4s0f0, active_mtu 4096, netdev mtu 4200 (netns limen-b)
+loadavg         0.28 0.37 0.61 1/940 7568
+message / depth 65536 B, tx depth 64, 100000 iterations, 9 runs, 2 sets
